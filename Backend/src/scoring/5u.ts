@@ -406,17 +406,144 @@ function computeCatchingScore(metrics: MetricMap): {
 
 
 /**
- * Placeholder scoring for 5U Fielding.
+ * REAL scoring for 5U Fielding.
+ *
+ * Tests (from BPOP 5U-6U Eval, rows 34–37):
+ *  - Grounders 2B       (FG2B)
+ *  - Grounders SS       (FGSS)
+ *  - Grounders 3B       (FG3B)
+ *  - Grounders Pitcher  (FGP)
+ *
+ * Each test:
+ *  - 3 grounders, 0–2 points each → 0–6 total points.
+ *
+ * Sheet (5U):
+ *  - W34 = 6, W35 = 6, W36 = 6, W37 = 6
+ *  - W39 = 24 (total max points for Fielding)
+ *  - X39 = 50 (category max)
+ *  - FIELDINGSCORE_5U = (TOTAL_POINTS / 24) * 50
+ *
+ * Backend:
+ *  - We expect the app to send per-test totals (0–6) as numeric metrics:
+ *      - m_grounders_2b_points
+ *      - m_grounders_ss_points
+ *      - m_grounders_3b_points
+ *      - m_grounders_pitcher_points
  */
-function computeFieldingScore(_metrics: MetricMap): {
+function computeFieldingScore(metrics: MetricMap): {
   categoryScore: number | null;
-  breakdown: Record<string, unknown>;
+  breakdown: {
+    total_points: number | null;
+    max_points: number;
+    tests: {
+      f2b_points: number | null;
+      fss_points: number | null;
+      f3b_points: number | null;
+      fpitcher_points: number | null;
+      f2b_raw_points: number | null;
+      fss_raw_points: number | null;
+      f3b_raw_points: number | null;
+      fpitcher_raw_points: number | null;
+    };
+  };
 } {
+  const f2bRaw = metrics["m_grounders_2b_points"];
+  const fssRaw = metrics["m_grounders_ss_points"];
+  const f3bRaw = metrics["m_grounders_3b_points"];
+  const fpitcherRaw = metrics["m_grounders_pitcher_points"];
+
+  // Per-test max points from W34–W37
+  const F2B_MAX_POINTS = 6;
+  const FSS_MAX_POINTS = 6;
+  const F3B_MAX_POINTS = 6;
+  const FPITCHER_MAX_POINTS = 6;
+
+  // Category totals from row 39
+  const CATEGORY_MAX_POINTS = 24;   // W39 = 6 + 6 + 6 + 6
+  const CATEGORY_NORMALIZED_MAX = 50; // X39
+
+  // Normalize raw inputs
+  const f2bRawPts =
+    f2bRaw == null || typeof f2bRaw !== "number" || Number.isNaN(f2bRaw)
+      ? null
+      : f2bRaw;
+
+  const fssRawPts =
+    fssRaw == null || typeof fssRaw !== "number" || Number.isNaN(fssRaw)
+      ? null
+      : fssRaw;
+
+  const f3bRawPts =
+    f3bRaw == null || typeof f3bRaw !== "number" || Number.isNaN(f3bRaw)
+      ? null
+      : f3bRaw;
+
+  const fpitcherRawPts =
+    fpitcherRaw == null || typeof fpitcherRaw !== "number" || Number.isNaN(fpitcherRaw)
+      ? null
+      : fpitcherRaw;
+
+  // Clamp each to 0–6
+  const f2bPoints = clamp(f2bRawPts, 0, F2B_MAX_POINTS);
+  const fssPoints = clamp(fssRawPts, 0, FSS_MAX_POINTS);
+  const f3bPoints = clamp(f3bRawPts, 0, F3B_MAX_POINTS);
+  const fpitcherPoints = clamp(fpitcherRawPts, 0, FPITCHER_MAX_POINTS);
+
+  const components: number[] = [];
+  if (typeof f2bPoints === "number") components.push(f2bPoints);
+  if (typeof fssPoints === "number") components.push(fssPoints);
+  if (typeof f3bPoints === "number") components.push(f3bPoints);
+  if (typeof fpitcherPoints === "number") components.push(fpitcherPoints);
+
+  if (components.length === 0) {
+    return {
+      categoryScore: null,
+      breakdown: {
+        total_points: null,
+        max_points: CATEGORY_MAX_POINTS,
+        tests: {
+          f2b_points: f2bPoints,
+          fss_points: fssPoints,
+          f3b_points: f3bPoints,
+          fpitcher_points: fpitcherPoints,
+          f2b_raw_points: f2bRawPts,
+          fss_raw_points: fssRawPts,
+          f3b_raw_points: f3bRawPts,
+          fpitcher_raw_points: fpitcherRawPts,
+        },
+      },
+    };
+  }
+
+  const totalPoints = components.reduce((sum, v) => sum + v, 0);
+
+  const ratio =
+    CATEGORY_MAX_POINTS > 0 ? totalPoints / CATEGORY_MAX_POINTS : 0;
+  const rawCategoryScore = ratio * CATEGORY_NORMALIZED_MAX;
+  const categoryScore =
+    Number.isFinite(rawCategoryScore)
+      ? Math.round(rawCategoryScore * 10) / 10
+      : null;
+
   return {
-    categoryScore: null,
-    breakdown: {},
+    categoryScore,
+    breakdown: {
+      total_points: totalPoints,
+      max_points: CATEGORY_MAX_POINTS,
+      tests: {
+        f2b_points: f2bPoints,
+        fss_points: fssPoints,
+        f3b_points: f3bPoints,
+        fpitcher_points: fpitcherPoints,
+        f2b_raw_points: f2bRawPts,
+        fss_raw_points: fssRawPts,
+        f3b_raw_points: f3bRawPts,
+        fpitcher_raw_points: fpitcherRawPts,
+      },
+    },
   };
 }
+
 
 /**
  * Main scoring for 5U assessments.
