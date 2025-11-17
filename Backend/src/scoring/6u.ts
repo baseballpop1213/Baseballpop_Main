@@ -1,18 +1,9 @@
-// Backend/src/scoring/5u6u.ts
+// Backend/src/scoring/6u.ts
 
-export type MetricMap = Record<string, number | null | undefined>;
-
-export interface RatingResult {
-  overall_score: number | null;
-  offense_score: number | null;
-  defense_score: number | null;
-  pitching_score: number | null;
-  breakdown: Record<string, unknown>;
-}
+import type { MetricMap, RatingResult } from "./5u";
 
 /**
  * Helper: average of numbers, ignoring null/undefined.
- * Returns null if there are no valid numbers.
  */
 function average(values: Array<number | null | undefined>): number | null {
   const nums = values.filter(
@@ -25,7 +16,6 @@ function average(values: Array<number | null | undefined>): number | null {
 
 /**
  * Clamp a numeric value between [min, max].
- * Returns null if the input is null/undefined/NaN.
  */
 function clamp(
   value: number | null | undefined,
@@ -41,17 +31,7 @@ function clamp(
 }
 
 /**
- * Normalize a value to [0, 1] given a max.
- */
-function normalize(value: number | null, max: number): number | null {
-  if (value == null) return null;
-  if (max <= 0) return null;
-  return value / max;
-}
-
-/**
- * Placeholder scoring for 5U-6U Athletic Skills.
- * TODO: implement based on spreadsheet.
+ * Placeholder 6U Athletic Skills scoring.
  */
 function computeAthleticSkillsScore(_metrics: MetricMap): {
   categoryScore: number | null;
@@ -64,20 +44,20 @@ function computeAthleticSkillsScore(_metrics: MetricMap): {
 }
 
 /**
- * REAL scoring for 5U-6U Hitting.
+ * REAL scoring for 6U Hitting.
  *
- * Inputs (from Supabase metrics):
- *  - m_10_swing_tee_contact_test: total points for H10TEE (0–10 for 5U)
- *  - m_10_swing_pitch_matrix: total points for H10PITCH (0–20 for 5U)
- *  - max_bat_speed: raw mph (HBSPEED)
+ * 6U sheet (AR column):
+ *  - AR18 = 10 (max tee points)
+ *  - AR19 = 20 (max pitch points)
+ *  - AR20 = 10 (max bat speed points)
+ *  - AR23 = 40 (total max points)
+ *  - X23  = 50 (category max is still 50)
  *
- * Spreadsheet pattern for 5U:
- *  - W18 (max H10TEE points)  = 10
- *  - W19 (max H10PITCH pts)   = 20
- *  - W20 (max HBSPEED pts)    = 9  (HBSPEED / 5, capped)
- *  - W23 (total max points)   = 39 = 10 + 20 + 9
- *  - X23 (category max)       = 50
- *  - Hitting category score   = (TOTAL_POINTS / W23) * X23
+ * So:
+ *  - tee:  0–10 points
+ *  - pitch: 0–20 points
+ *  - bat speed points: HBSPEED / 5, capped at 10 (50 mph -> 10 points)
+ *  - HITSCORE_6U = (TOTAL_POINTS / 40) * 50
  */
 function computeHittingScore(metrics: MetricMap): {
   categoryScore: number | null;
@@ -98,21 +78,16 @@ function computeHittingScore(metrics: MetricMap): {
   const pitchRaw = metrics["m_10_swing_pitch_matrix"];
   const batSpeedRaw = metrics["max_bat_speed"];
 
-  // Per-test max points for 5U Hitting (from W18, W19, W20)
   const TEE_MAX_POINTS = 10;
   const PITCH_MAX_POINTS = 20;
-  const HBSPEED_MAX_POINTS = 9; // points when bat speed is at or above the 5U target (45 mph)
+  const HBSPEED_MAX_POINTS = 10; // 50 mph -> 10 points
 
-  // Total max points for the category (W23) and normalized category max (X23)
-  const CATEGORY_MAX_POINTS = 39; // 10 + 20 + 9
+  const CATEGORY_MAX_POINTS = 40; // AR23
   const CATEGORY_NORMALIZED_MAX = 50;
 
-  // 1) Clamp tee & pitch to their max point ranges
   const teePoints = clamp(teeRaw, 0, TEE_MAX_POINTS);
   const pitchPoints = clamp(pitchRaw, 0, PITCH_MAX_POINTS);
 
-  // 2) Convert bat speed (mph) to points using the sheet logic for 5U:
-  //    HBSPEED points = HBSPEED / 5, capped at 9 (45 mph -> 9 points)
   const batSpeedMph =
     batSpeedRaw == null || typeof batSpeedRaw !== "number" || Number.isNaN(batSpeedRaw)
       ? null
@@ -125,7 +100,6 @@ function computeHittingScore(metrics: MetricMap): {
     batSpeedPoints = clamped;
   }
 
-  // 3) Sum per-test points if we have at least one
   const components: number[] = [];
   if (typeof teePoints === "number") components.push(teePoints);
   if (typeof pitchPoints === "number") components.push(pitchPoints);
@@ -150,8 +124,6 @@ function computeHittingScore(metrics: MetricMap): {
   }
 
   const totalPoints = components.reduce((sum, v) => sum + v, 0);
-
-  // 4) Normalize to the category max (0–50) using Excel pattern
   const ratio =
     CATEGORY_MAX_POINTS > 0 ? totalPoints / CATEGORY_MAX_POINTS : 0;
   const rawCategoryScore = ratio * CATEGORY_NORMALIZED_MAX;
@@ -178,8 +150,7 @@ function computeHittingScore(metrics: MetricMap): {
 }
 
 /**
- * Placeholder scoring for 5U-6U Throwing.
- * TODO: implement based on spreadsheet using per-test points and W29/X29.
+ * Placeholder 6U Throwing.
  */
 function computeThrowingScore(_metrics: MetricMap): {
   categoryScore: number | null;
@@ -192,8 +163,7 @@ function computeThrowingScore(_metrics: MetricMap): {
 }
 
 /**
- * Placeholder scoring for 5U-6U Catching.
- * TODO: implement based on spreadsheet.
+ * Placeholder 6U Catching.
  */
 function computeCatchingScore(_metrics: MetricMap): {
   categoryScore: number | null;
@@ -206,8 +176,7 @@ function computeCatchingScore(_metrics: MetricMap): {
 }
 
 /**
- * Placeholder scoring for 5U-6U Fielding.
- * TODO: implement based on spreadsheet.
+ * Placeholder 6U Fielding.
  */
 function computeFieldingScore(_metrics: MetricMap): {
   categoryScore: number | null;
@@ -220,13 +189,9 @@ function computeFieldingScore(_metrics: MetricMap): {
 }
 
 /**
- * Main scoring function for 5U-6U assessments.
- * For now:
- *  - offense_score = hitting categoryScore
- *  - overall_score = average of available category scores
- *    (but falls back to hitting if others are missing)
+ * Main scoring for 6U assessments.
  */
-export function compute5U6URatings(metrics: MetricMap): RatingResult {
+export function compute6URatings(metrics: MetricMap): RatingResult {
   const athleticResult = computeAthleticSkillsScore(metrics);
   const hittingResult = computeHittingScore(metrics);
   const throwingResult = computeThrowingScore(metrics);
@@ -239,9 +204,9 @@ export function compute5U6URatings(metrics: MetricMap): RatingResult {
   const catching = catchingResult.categoryScore;
   const fielding = fieldingResult.categoryScore;
 
-  const offense = hitting; // for now, offense = Hitting for 5U-6U
+  const offense = hitting;
   const defense = average([catching, fielding, throwing]);
-  const pitching = throwing; // later we can refine pitching-specific logic
+  const pitching = throwing;
   const overall = average([athletic, offense, defense, pitching]);
 
   const breakdown: Record<string, unknown> = {

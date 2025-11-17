@@ -4,10 +4,11 @@ import cors from "cors";
 import { supabase } from "./supabaseClient";
 import { requireAuth, AuthedRequest } from "./middleware/auth";
 import {
-  compute5U6URatings,
+  compute5URatings,
   MetricMap,
   RatingResult,
-} from "./scoring/5u6u";
+} from "./scoring/5u";
+import { compute6URatings } from "./scoring/6u";
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -45,8 +46,10 @@ app.get("/me", requireAuth, async (req: AuthedRequest, res) => {
 
 /**
  * Create an assessment (official or practice) + store raw values.
- * Then, if the template belongs to the 5U-6U age group, compute ratings
+ * Then, if the template belongs to the 5U or 6U age group, compute ratings
  * and write to player_ratings.
+ *
+ * TEMP: no auth required on this route while we wire up scoring.
  *
  * Expected JSON body:
  * {
@@ -54,6 +57,7 @@ app.get("/me", requireAuth, async (req: AuthedRequest, res) => {
  *   "team_id": <bigint | null>,
  *   "template_id": <bigint>,
  *   "kind": "official" | "practice",
+ *   "performed_by": "<uuid | null>",
  *   "values": [
  *     { "metric_id": <bigint>, "value_numeric": 12.3, "value_text": null },
  *     ...
@@ -67,11 +71,17 @@ app.post("/assessments", async (req: AuthedRequest, res) => {
     template_id,
     kind, // 'official' or 'practice'
     values,
-    performed_by
+    performed_by,
   } = req.body;
 
-  const performerId = performed_by || null;
-  // ...rest of the handler stays the same
+  // For now, allow performed_by to come from the body (test only)
+  const performerId: string | null = performed_by || null;
+
+  if (!player_id || !template_id || !kind) {
+    return res.status(400).json({
+      error: "player_id, template_id, and kind are required",
+    });
+  }
 
   // 1) Create assessment session
   const { data: assessment, error: assessmentError } = await supabase
@@ -120,7 +130,7 @@ app.post("/assessments", async (req: AuthedRequest, res) => {
     }
   }
 
-  // 3) Determine if this template is part of the 5U-6U age group
+  // 3) Determine which age group this template belongs to
   const { data: template, error: templateError } = await supabase
     .from("assessment_templates")
     .select("id, age_group_id")
@@ -144,14 +154,12 @@ app.post("/assessments", async (req: AuthedRequest, res) => {
     return res.status(201).json({ assessment_id: assessmentId });
   }
 
-  const is5U6U = ageGroup.label === "5U-6U";
-
-  // If not 5U-6U, we’re done for now (no ratings yet)
-  if (!is5U6U) {
+  // Only 5U and 6U are implemented right now
+  if (ageGroup.label !== "5U" && ageGroup.label !== "6U") {
     return res.status(201).json({ assessment_id: assessmentId });
   }
 
-  // 4) For 5U-6U: load metric definitions (id -> metric_key)
+  // 4) For this template: load metric definitions (id -> metric_key)
   const { data: metricDefs, error: metricsError } = await supabase
     .from("assessment_metrics")
     .select("id, metric_key, template_id")
@@ -194,12 +202,19 @@ app.post("/assessments", async (req: AuthedRequest, res) => {
     }
   }
 
-  // 7) Compute ratings for 5U-6U using scoring module
+  // 7) Compute ratings using age-specific scoring
   let ratings: RatingResult;
   try {
-    ratings = compute5U6URatings(metricMap);
+    if (ageGroup.label === "5U") {
+      ratings = compute5URatings(metricMap);
+    } else if (ageGroup.label === "6U") {
+      ratings = compute6URatings(metricMap);
+    } else {
+      // Shouldn't happen given the earlier check, but just in case:
+      return res.status(201).json({ assessment_id: assessmentId });
+    }
   } catch (err) {
-    console.error("Error computing 5U-6U ratings:", err);
+    console.error(`Error computing ${ageGroup.label} ratings:`, err);
     // Don’t block the assessment just because scoring failed
     return res.status(201).json({ assessment_id: assessmentId });
   }
