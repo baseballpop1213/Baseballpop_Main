@@ -308,17 +308,102 @@ function computeThrowingScore(metrics: MetricMap): {
 
 
 /**
- * Placeholder scoring for 5U Catching.
+ * PROVISIONAL scoring for 5U Catching.
+ *
+ * Assumptions (to be aligned with the spreadsheet later):
+ *  - Two tests:
+ *      - m_10_catch_test_20ft: total points from 10 throws at 20 ft (0–10)
+ *      - m_10_catch_test_40ft: total points from 10 throws at 40 ft (0–10)
+ *  - Each test is worth up to 10 points.
+ *  - Category total max points = 20.
+ *  - Category normalized max = 50.
+ *
+ * Category score = (TOTAL_POINTS / 20) * 50.
+ *
+ * Once we plug in the exact sheet logic (W-values, any extra tests),
+ * we can just update the constants + formulas here — the shape of the
+ * breakdown will already be correct for the app.
  */
-function computeCatchingScore(_metrics: MetricMap): {
+function computeCatchingScore(metrics: MetricMap): {
   categoryScore: number | null;
-  breakdown: Record<string, unknown>;
+  breakdown: {
+    total_points: number | null;
+    max_points: number;
+    tests: {
+      c20ft_points: number | null;
+      c40ft_points: number | null;
+      c20ft_raw_points: number | null;
+      c40ft_raw_points: number | null;
+    };
+  };
 } {
+  const c20ftRaw = metrics["m_10_catch_test_20ft"];
+  const c40ftRaw = metrics["m_10_catch_test_40ft"];
+
+  const C20FT_MAX_POINTS = 10;
+  const C40FT_MAX_POINTS = 10;
+
+  const CATEGORY_MAX_POINTS = 20; // 10 + 10
+  const CATEGORY_NORMALIZED_MAX = 50;
+
+  const c20ftRawPts =
+    c20ftRaw == null || typeof c20ftRaw !== "number" || Number.isNaN(c20ftRaw)
+      ? null
+      : c20ftRaw;
+
+  const c40ftRawPts =
+    c40ftRaw == null || typeof c40ftRaw !== "number" || Number.isNaN(c40ftRaw)
+      ? null
+      : c40ftRaw;
+
+  const c20ftPoints = clamp(c20ftRawPts, 0, C20FT_MAX_POINTS);
+  const c40ftPoints = clamp(c40ftRawPts, 0, C40FT_MAX_POINTS);
+
+  const components: number[] = [];
+  if (typeof c20ftPoints === "number") components.push(c20ftPoints);
+  if (typeof c40ftPoints === "number") components.push(c40ftPoints);
+
+  if (components.length === 0) {
+    return {
+      categoryScore: null,
+      breakdown: {
+        total_points: null,
+        max_points: CATEGORY_MAX_POINTS,
+        tests: {
+          c20ft_points: c20ftPoints,
+          c40ft_points: c40ftPoints,
+          c20ft_raw_points: c20ftRawPts,
+          c40ft_raw_points: c40ftRawPts,
+        },
+      },
+    };
+  }
+
+  const totalPoints = components.reduce((sum, v) => sum + v, 0);
+
+  const ratio =
+    CATEGORY_MAX_POINTS > 0 ? totalPoints / CATEGORY_MAX_POINTS : 0;
+  const rawCategoryScore = ratio * CATEGORY_NORMALIZED_MAX;
+  const categoryScore =
+    Number.isFinite(rawCategoryScore)
+      ? Math.round(rawCategoryScore * 10) / 10
+      : null;
+
   return {
-    categoryScore: null,
-    breakdown: {},
+    categoryScore,
+    breakdown: {
+      total_points: totalPoints,
+      max_points: CATEGORY_MAX_POINTS,
+      tests: {
+        c20ft_points: c20ftPoints,
+        c40ft_points: c40ftPoints,
+        c20ft_raw_points: c20ftRawPts,
+        c40ft_raw_points: c40ftRawPts,
+      },
+    },
   };
 }
+
 
 /**
  * Placeholder scoring for 5U Fielding.
