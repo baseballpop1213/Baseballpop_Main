@@ -24,70 +24,117 @@ function average(values: Array<number | null | undefined>): number | null {
 }
 
 /**
- * Placeholder scoring for 5U-6U Athletic Skills.
- * For now this is a stub; we’ll replace the logic with your Excel formulas.
+ * Clamp a numeric value between [min, max].
+ * Returns null if the input is null/undefined/NaN.
  */
-function computeAthleticSkillsScore(metrics: MetricMap): number | null {
-  // Examples of metrics we have available (per Supabase setup):
-  // timed_run_1b, timed_run_4b,
-  // sls_eyes_open_right, sls_eyes_open_left,
-  // sls_eyes_closed_right, sls_eyes_closed_left,
-  // toe_touch, deep_squat
+function clamp(
+  value: number | null | undefined,
+  min: number,
+  max: number
+): number | null {
+  if (value == null || typeof value !== "number" || Number.isNaN(value)) {
+    return null;
+  }
+  if (value < min) return min;
+  if (value > max) return max;
+  return value;
+}
 
-  // TODO: implement real logic based on Excel ranges.
-  // For now, return null to indicate “not computed yet”.
+/**
+ * Normalize a value to [0, 1] given a max.
+ */
+function normalize(value: number | null, max: number): number | null {
+  if (value == null) return null;
+  if (max <= 0) return null;
+  return value / max;
+}
+
+/**
+ * Placeholder scoring for 5U-6U Athletic Skills.
+ * TODO: implement based on spreadsheet.
+ */
+function computeAthleticSkillsScore(_metrics: MetricMap): number | null {
   return null;
 }
 
 /**
- * Placeholder scoring for 5U-6U Hitting.
+ * REAL scoring for 5U-6U Hitting.
+ *
+ * Inputs (from Supabase metrics):
+ *  - m_10_swing_tee_contact_test: 0–20 points (10 swings total)
+ *  - m_10_swing_pitch_matrix: 0–20 points (10 swings total)
+ *  - max_bat_speed: raw mph
+ *
+ * For 5U:
+ *  - Age-calibrated max bat speed for 100% score = 45 mph.
+ *  - Category total normalized to 0–50 points.
  */
 function computeHittingScore(metrics: MetricMap): number | null {
-  // m_10_swing_tee_contact_test
-  // m_10_swing_pitch_matrix
-  // max_bat_speed
+  const teeRaw = metrics["m_10_swing_tee_contact_test"];
+  const pitchRaw = metrics["m_10_swing_pitch_matrix"];
+  const batSpeedRaw = metrics["max_bat_speed"];
 
-  // TODO: implement real logic based on Excel (e.g., BPOPHITSCORE).
-  return null;
+  // Clamp to expected ranges from the spec
+  const teePoints = clamp(teeRaw, 0, 20);   // 0–20 total points
+  const pitchPoints = clamp(pitchRaw, 0, 20); // 0–20 total points
+
+  // For 5U scoring: treat 45 mph as "perfect".
+  // If they swing faster than 45, we still cap the score at the 5U max.
+  const BAT_SPEED_5U_MAX = 45;
+  const batSpeed = clamp(batSpeedRaw, 0, BAT_SPEED_5U_MAX);
+
+  // Normalize each component to [0, 1]
+  const teeScore = normalize(teePoints, 20);
+  const pitchScore = normalize(pitchPoints, 20);
+  const batSpeedScore = normalize(batSpeed, BAT_SPEED_5U_MAX);
+
+  // Average all available components (ignore missing/null)
+  const components = [teeScore, pitchScore, batSpeedScore].filter(
+    (v): v is number => typeof v === "number" && !Number.isNaN(v)
+  );
+  if (components.length === 0) return null;
+
+  const avg = components.reduce((sum, v) => sum + v, 0) / components.length;
+
+  // Scale to category max (50 points total for Hitting in the spec)
+  const CATEGORY_MAX = 50;
+  const rawScore = avg * CATEGORY_MAX;
+
+  // Round to 1 decimal place for nicer display
+  const finalScore = Math.round(rawScore * 10) / 10;
+  return finalScore;
 }
 
 /**
  * Placeholder scoring for 5U-6U Throwing.
+ * TODO: implement based on spreadsheet.
  */
-function computeThrowingScore(metrics: MetricMap): number | null {
-  // max_throwing_speed
-  // max_throwing_speed_small_ball
-  // m_10_throw_test_20ft
-  // m_10_throw_test_40ft
-
-  // TODO: implement logic based on TSPEED, TSPDSMALL, T20FT, T40FT, etc.
+function computeThrowingScore(_metrics: MetricMap): number | null {
   return null;
 }
 
 /**
  * Placeholder scoring for 5U-6U Catching.
+ * TODO: implement based on spreadsheet.
  */
-function computeCatchingScore(metrics: MetricMap): number | null {
-  // m_20ft_catching_test
-  // m_40_ft_catching_test
-
-  // TODO: implement logic based on C20FT, C40FT and derived scores in Excel.
+function computeCatchingScore(_metrics: MetricMap): number | null {
   return null;
 }
 
 /**
  * Placeholder scoring for 5U-6U Fielding.
+ * TODO: implement based on spreadsheet.
  */
-function computeFieldingScore(metrics: MetricMap): number | null {
-  // grounders_2b, grounders_ss, grounders_3b, grounders_pitcher
-
-  // TODO: implement logic based on FG2B, FGSS, FG3B, FGP etc.
+function computeFieldingScore(_metrics: MetricMap): number | null {
   return null;
 }
 
 /**
  * Main scoring function for 5U-6U assessments.
- * This is where we’ll mirror your Excel logic (overall, offense, defense, pitching).
+ * For now:
+ *  - offense_score = hitting score
+ *  - overall_score = average of available category scores
+ *    (currently mostly hitting, until we implement others)
  */
 export function compute5U6URatings(metrics: MetricMap): RatingResult {
   const athletic = computeAthleticSkillsScore(metrics);
@@ -96,16 +143,10 @@ export function compute5U6URatings(metrics: MetricMap): RatingResult {
   const catching = computeCatchingScore(metrics);
   const fielding = computeFieldingScore(metrics);
 
-  // Very rough structure for now:
-  // - offense ~ hitting (later + speed)
-  // - defense ~ catching + fielding (and maybe throwing)
-  // - pitching ~ subset of throwing
-  // These are placeholders; the weights will be replaced by your Excel logic.
-
-  const offense = hitting; // TODO: incorporate speed/throwing if desired
+  const offense = hitting; // for 5U-6U, offense = hitting for now
   const defense = average([catching, fielding, throwing]);
-  const pitching = throwing; // TODO: refine based on pitching-specific parts
-  const overall = average([offense, defense, pitching, athletic]);
+  const pitching = throwing; // later we may split pitching-specific
+  const overall = average([athletic, offense, defense, pitching]);
 
   const breakdown: Record<string, unknown> = {
     athletic,
@@ -116,7 +157,7 @@ export function compute5U6URatings(metrics: MetricMap): RatingResult {
   };
 
   return {
-    overall_score: overall,
+    overall_score: overall ?? hitting ?? null, // fallback to hitting if others null
     offense_score: offense,
     defense_score: defense,
     pitching_score: pitching,

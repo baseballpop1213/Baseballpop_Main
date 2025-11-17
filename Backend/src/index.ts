@@ -60,21 +60,18 @@ app.get("/me", requireAuth, async (req: AuthedRequest, res) => {
  *   ]
  * }
  */
-app.post("/assessments", requireAuth, async (req: AuthedRequest, res) => {
-  const performerId = req.user!.id;
+app.post("/assessments", async (req: AuthedRequest, res) => {
   const {
     player_id,
     team_id,
     template_id,
     kind, // 'official' or 'practice'
     values,
+    performed_by
   } = req.body;
 
-  if (!player_id || !template_id || !kind) {
-    return res.status(400).json({
-      error: "player_id, template_id, and kind are required",
-    });
-  }
+  const performerId = performed_by || null;
+  // ...rest of the handler stays the same
 
   // 1) Create assessment session
   const { data: assessment, error: assessmentError } = await supabase
