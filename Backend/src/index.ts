@@ -10,6 +10,7 @@ import {
 } from "./scoring/5u";
 import { compute6URatings } from "./scoring/6u";
 import { compute7URatings } from "./scoring/7u";
+import { compute8URatings } from "./scoring/8u";
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -686,11 +687,14 @@ app.post("/assessments", async (req: AuthedRequest, res) => {
     return res.status(201).json({ assessment_id: assessmentId });
   }
 
-  // Only 5U, 6U, 7U are implemented with scoring right now
+  const ageLabel = ageGroup.label;
+
+  // Only 5U, 6U, 7U, 8U are implemented with scoring right now
   if (
-    ageGroup.label !== "5U" &&
-    ageGroup.label !== "6U" &&
-    ageGroup.label !== "7U"
+    ageLabel !== "5U" &&
+    ageLabel !== "6U" &&
+    ageLabel !== "7U" &&
+    ageLabel !== "8U"
   ) {
     return res.status(201).json({ assessment_id: assessmentId });
   }
@@ -740,21 +744,19 @@ app.post("/assessments", async (req: AuthedRequest, res) => {
 
   // 7) Compute ratings using age-specific scoring
   let ratings: RatingResult;
-  try {
-    if (ageGroup.label === "5U") {
-      ratings = compute5URatings(metricMap);
-    } else if (ageGroup.label === "6U") {
-      ratings = compute6URatings(metricMap);
-    } else if (ageGroup.label === "7U") {
-      ratings = compute7URatings(metricMap);
-    } else {
-      // Shouldn't happen given the earlier check
-      return res.status(201).json({ assessment_id: assessmentId });
-    }
-  } catch (err) {
-    console.error(`Error computing ${ageGroup.label} ratings:`, err);
-    // Don’t block the assessment just because scoring failed
-    return res.status(201).json({ assessment_id: assessmentId });
+
+  if (ageLabel === "5U") {
+    ratings = compute5URatings(metricMap);
+  } else if (ageLabel === "6U") {
+    ratings = compute6URatings(metricMap);
+  } else if (ageLabel === "7U") {
+    ratings = compute7URatings(metricMap);
+  } else if (ageLabel === "8U") {
+    ratings = compute8URatings(metricMap);
+  } else {
+    // Should be unreachable because of the earlier guard,
+    // but keep this for safety.
+    throw new Error(`Unsupported age group: ${ageLabel}`);
   }
 
   // 8) Insert into player_ratings
@@ -1138,6 +1140,124 @@ app.get("/players/:playerId/evals/7u-full", async (req, res) => {
   } catch (err) {
     console.error("Error building 7U full eval:", err);
     return res.status(500).json({ error: "Failed to build 7U full eval" });
+  }
+});
+
+app.get("/players/:id/evals/8u-full", async (req, res) => {
+  const playerId = req.params.id;
+
+  try {
+    const [athletic, hitting, throwing, catching, fielding] =
+      await Promise.all([
+        fetchLatestCategoryRating(playerId, "8U Athletic Skills", "athletic"),
+        fetchLatestCategoryRating(playerId, "8U Hitting Skills", "hitting"),
+        fetchLatestCategoryRating(playerId, "8U Throwing Skills", "throwing"),
+        fetchLatestCategoryRating(playerId, "8U Catching Skills", "catching"),
+        fetchLatestCategoryRating(playerId, "8U Fielding Skills", "fielding"),
+      ]);
+
+    const components = { athletic, hitting, throwing, catching, fielding };
+
+    const athleticScore = athletic.score;
+    const hittingScore = hitting.score;
+    const throwingScore = throwing.score;
+    const catchingScore = catching.score;
+    const fieldingScore = fielding.score;
+
+    const hittingTests =
+      hitting.breakdown && hitting.breakdown.hitting
+        ? hitting.breakdown.hitting.tests || {}
+        : {};
+
+    const athleticTests =
+      athletic.breakdown && athletic.breakdown.athletic
+        ? athletic.breakdown.athletic.tests || {}
+        : {};
+
+    const contactScore =
+      typeof hittingTests.contact_score === "number"
+        ? hittingTests.contact_score
+        : null;
+    const powerScore =
+      typeof hittingTests.power_score === "number"
+        ? hittingTests.power_score
+        : null;
+    const strikeChancePercent =
+      typeof hittingTests.strike_chance_percent === "number"
+        ? hittingTests.strike_chance_percent
+        : null;
+
+    const speedScore =
+      typeof athleticTests.speed_score === "number"
+        ? athleticTests.speed_score
+        : null;
+
+    // Offense: 80% hitting + 20% speed
+    let offenseFull: number | null = null;
+    if (hittingScore != null && speedScore != null) {
+      offenseFull = Math.round((0.8 * hittingScore + 0.2 * speedScore) * 10) / 10;
+    } else if (hittingScore != null) {
+      offenseFull = hittingScore;
+    }
+
+    const positionScores = compute7UPositionScores(
+      athletic,
+      throwing,
+      catching,
+      fielding
+    );
+
+    const defenseFull = positionScores.defense_score;
+    const pitchingFull = throwingScore ?? null;
+
+    const overallFull = averageNonNull([
+      athleticScore,
+      hittingScore,
+      throwingScore,
+      catchingScore,
+      fieldingScore,
+    ]);
+
+    const allDates = [
+      athletic.performedAt,
+      hitting.performedAt,
+      throwing.performedAt,
+      catching.performedAt,
+      fielding.performedAt,
+    ].filter((d): d is string => !!d);
+
+    const lastUpdated =
+      allDates.length > 0 ? allDates.sort().slice(-1)[0] : null;
+
+    return res.json({
+      player_id: playerId,
+      age_group: "8U",
+      last_updated: lastUpdated,
+      components,
+      aggregates: {
+        overall_full_eval_score: overallFull,
+        offense_full_eval_score: offenseFull,
+        offense_hitting_component: hittingScore,
+        offense_speed_component: speedScore,
+        defense_full_eval_score: defenseFull,
+        pitching_full_eval_score: pitchingFull,
+        athletic_score: athleticScore,
+        hitting_score: hittingScore,
+        throwing_score: throwingScore,
+        catching_score: catchingScore,
+        fielding_score: fieldingScore,
+        derived: {
+          contact_score: contactScore,
+          power_score: powerScore,
+          strike_chance_percent: strikeChancePercent,
+          speed_score: speedScore,
+          position_scores: positionScores,
+        },
+      },
+    });
+  } catch (err) {
+    console.error("Error building 8U full eval:", err);
+    return res.status(500).json({ error: "Failed to build 8U full eval" });
   }
 });
 
