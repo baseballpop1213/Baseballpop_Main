@@ -524,32 +524,256 @@ function computeThrowingScore(metrics: MetricMap): {
 }
 
 
-/**
- * 7U CATCHING – placeholder
- */
-function computeCatchingScore(_metrics: MetricMap): {
+function computeCatchingScore(metrics: MetricMap): {
   categoryScore: number | null;
-  breakdown: Record<string, unknown>;
+  breakdown: {
+    total_points: number | null;
+    max_points: number;
+    tests: {
+      c5x5_level_raw: number | null;
+      c5x5_points: number | null;
+      c51b_raw_points: number | null;
+      c51b_points: number | null;
+      iffld2b_raw_points: number | null;
+      iffld2b_points: number | null;
+      iffld3b_raw_points: number | null;
+      iffld3b_points: number | null;
+      iffldss_raw_points: number | null;
+      iffldss_points: number | null;
+    };
+  };
 } {
+  const c5x5LevelRaw = metrics["c5x5_fly_ball_ladder_level"];
+  const c51bRaw = metrics["c51b_catching_test"];
+  const iffld2bRaw = metrics["infield_fly_ld_2b"];
+  const iffld3bRaw = metrics["infield_fly_ld_3b"];
+  const iffldssRaw = metrics["infield_fly_ld_ss"];
+
+  // Map C5x5 ladder level (1–6) to points per your spec:
+  // 1 → 0, 2 → 5, 3 → 10, 4 → 15, 5 → 20, 6 → 25
+  function mapC5x5LevelToPoints(levelRaw: number | null): number | null {
+    if (
+      levelRaw == null ||
+      typeof levelRaw !== "number" ||
+      Number.isNaN(levelRaw)
+    ) {
+      return null;
+    }
+    const level = Math.round(levelRaw);
+    switch (level) {
+      case 1:
+        return 0;
+      case 2:
+        return 5;
+      case 3:
+        return 10;
+      case 4:
+        return 15;
+      case 5:
+        return 20;
+      case 6:
+        return 25;
+      default:
+        return null; // invalid level
+    }
+  }
+
+  // Maxima per test (from your notes)
+  const C5X5_MAX = 25; // level 6 → 25
+  const C51B_MAX = 15; // 5 throws, up to 3 pts each
+  const IFFLD_MAX = 6; // 3 balls * 2 pts each
+
+  const CATEGORY_MAX_POINTS = C5X5_MAX + C51B_MAX + 3 * IFFLD_MAX; // 25+15+6+6+6=58
+  const CATEGORY_NORMALIZED_MAX = 50; // score scale 0–50
+
+  const c5x5Points = mapC5x5LevelToPoints(
+    typeof c5x5LevelRaw === "number" ? c5x5LevelRaw : null
+  );
+
+  const c51bPoints = clamp(
+    typeof c51bRaw === "number" ? c51bRaw : null,
+    0,
+    C51B_MAX
+  );
+
+  const iffld2bPoints = clamp(
+    typeof iffld2bRaw === "number" ? iffld2bRaw : null,
+    0,
+    IFFLD_MAX
+  );
+
+  const iffld3bPoints = clamp(
+    typeof iffld3bRaw === "number" ? iffld3bRaw : null,
+    0,
+    IFFLD_MAX
+  );
+
+  const iffldssPoints = clamp(
+    typeof iffldssRaw === "number" ? iffldssRaw : null,
+    0,
+    IFFLD_MAX
+  );
+
+  const components: number[] = [];
+  if (typeof c5x5Points === "number") components.push(c5x5Points);
+  if (typeof c51bPoints === "number") components.push(c51bPoints);
+  if (typeof iffld2bPoints === "number") components.push(iffld2bPoints);
+  if (typeof iffld3bPoints === "number") components.push(iffld3bPoints);
+  if (typeof iffldssPoints === "number") components.push(iffldssPoints);
+
+  if (components.length === 0) {
+    return {
+      categoryScore: null,
+      breakdown: {
+        total_points: null,
+        max_points: CATEGORY_MAX_POINTS,
+        tests: {
+          c5x5_level_raw: c5x5LevelRaw ?? null,
+          c5x5_points: c5x5Points,
+          c51b_raw_points: c51bRaw ?? null,
+          c51b_points: c51bPoints,
+          iffld2b_raw_points: iffld2bRaw ?? null,
+          iffld2b_points: iffld2bPoints,
+          iffld3b_raw_points: iffld3bRaw ?? null,
+          iffld3b_points: iffld3bPoints,
+          iffldss_raw_points: iffldssRaw ?? null,
+          iffldss_points: iffldssPoints,
+        },
+      },
+    };
+  }
+
+  const totalPoints = components.reduce((sum, v) => sum + v, 0);
+  const ratio =
+    CATEGORY_MAX_POINTS > 0 ? totalPoints / CATEGORY_MAX_POINTS : 0;
+
+  const rawCategoryScore = ratio * CATEGORY_NORMALIZED_MAX;
+  const categoryScore = Number.isFinite(rawCategoryScore)
+    ? Math.round(rawCategoryScore * 10) / 10
+    : null;
+
   return {
-    categoryScore: null,
-    breakdown: {},
+    categoryScore,
+    breakdown: {
+      total_points: totalPoints,
+      max_points: CATEGORY_MAX_POINTS,
+      tests: {
+        c5x5_level_raw: c5x5LevelRaw ?? null,
+        c5x5_points: c5x5Points,
+        c51b_raw_points: c51bRaw ?? null,
+        c51b_points: c51bPoints,
+        iffld2b_raw_points: iffld2bRaw ?? null,
+        iffld2b_points: iffld2bPoints,
+        iffld3b_raw_points: iffld3bRaw ?? null,
+        iffld3b_points: iffld3bPoints,
+        iffldss_raw_points: iffldssRaw ?? null,
+        iffldss_points: iffldssPoints,
+      },
+    },
   };
 }
 
-/**
- * 7U FIELDING – placeholder
- * (Later we’ll use the new R/L/C grounders + position formulas.)
- */
-function computeFieldingScore(_metrics: MetricMap): {
+
+
+function computeFieldingScore(metrics: MetricMap): {
   categoryScore: number | null;
-  breakdown: Record<string, unknown>;
+  breakdown: {
+    total_points: number | null;
+    max_points: number;
+    tests: {
+      rlc1_points: number | null;
+      rlc2_points: number | null;
+      rlc3_points: number | null;
+      rlc4_points: number | null;
+      rlc5_points: number | null;
+      rlc6_points: number | null;
+      rlc1_raw_points: number | null;
+      rlc2_raw_points: number | null;
+      rlc3_raw_points: number | null;
+      rlc4_raw_points: number | null;
+      rlc5_raw_points: number | null;
+      rlc6_raw_points: number | null;
+    };
+  };
 } {
+  // Raw per-rep scores from the 6 R/L/C grounders (0, 1, or 2)
+  const g1 = metrics["rlc_grounder_1_points"];
+  const g2 = metrics["rlc_grounder_2_points"];
+  const g3 = metrics["rlc_grounder_3_points"];
+  const g4 = metrics["rlc_grounder_4_points"];
+  const g5 = metrics["rlc_grounder_5_points"];
+  const g6 = metrics["rlc_grounder_6_points"];
+
+  // Each rep is 0–2 points → 6 reps → 12 raw max.
+  const PER_REP_MAX = 2;
+  const CATEGORY_MAX_POINTS = PER_REP_MAX * 6; // 12
+  const CATEGORY_NORMALIZED_MAX = 50;
+
+  const repValuesRaw = [g1, g2, g3, g4, g5, g6];
+
+  const repPoints: number[] = [];
+  for (const v of repValuesRaw) {
+    if (typeof v === "number" && !Number.isNaN(v)) {
+      const clamped = clamp(v, 0, PER_REP_MAX);
+      if (clamped != null) repPoints.push(clamped);
+    }
+  }
+
+  if (repPoints.length === 0) {
+    return {
+      categoryScore: null,
+      breakdown: {
+        total_points: null,
+        max_points: CATEGORY_MAX_POINTS,
+        tests: {
+          rlc1_points: g1 ?? null,
+          rlc2_points: g2 ?? null,
+          rlc3_points: g3 ?? null,
+          rlc4_points: g4 ?? null,
+          rlc5_points: g5 ?? null,
+          rlc6_points: g6 ?? null,
+          rlc1_raw_points: g1 ?? null,
+          rlc2_raw_points: g2 ?? null,
+          rlc3_raw_points: g3 ?? null,
+          rlc4_raw_points: g4 ?? null,
+          rlc5_raw_points: g5 ?? null,
+          rlc6_raw_points: g6 ?? null,
+        },
+      },
+    };
+  }
+
+  const totalPoints = repPoints.reduce((sum, v) => sum + v, 0);
+  const ratio =
+    CATEGORY_MAX_POINTS > 0 ? totalPoints / CATEGORY_MAX_POINTS : 0;
+  const rawCategoryScore = ratio * CATEGORY_NORMALIZED_MAX;
+  const categoryScore = Number.isFinite(rawCategoryScore)
+    ? Math.round(rawCategoryScore * 10) / 10
+    : null;
+
   return {
-    categoryScore: null,
-    breakdown: {},
+    categoryScore,
+    breakdown: {
+      total_points: totalPoints,
+      max_points: CATEGORY_MAX_POINTS,
+      tests: {
+        rlc1_points: g1 ?? null,
+        rlc2_points: g2 ?? null,
+        rlc3_points: g3 ?? null,
+        rlc4_points: g4 ?? null,
+        rlc5_points: g5 ?? null,
+        rlc6_points: g6 ?? null,
+        rlc1_raw_points: g1 ?? null,
+        rlc2_raw_points: g2 ?? null,
+        rlc3_raw_points: g3 ?? null,
+        rlc4_raw_points: g4 ?? null,
+        rlc5_raw_points: g5 ?? null,
+        rlc6_raw_points: g6 ?? null,
+      },
+    },
   };
 }
+
 
 /**
  * Main scoring for 7U assessments.
