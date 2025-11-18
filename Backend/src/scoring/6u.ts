@@ -30,7 +30,7 @@ function clamp(
   return value;
 }
 
-function computeAthleticSkillsScore(metrics: MetricMap): {
+export function compute6UAthleticSkillsScore(metrics: MetricMap): {
   categoryScore: number | null;
   breakdown: Record<string, unknown>;
 } {
@@ -689,7 +689,7 @@ function computeFieldingScore(metrics: MetricMap): {
  * Main scoring for 6U assessments.
  */
 export function compute6URatings(metrics: MetricMap): RatingResult {
-  const athleticResult = computeAthleticSkillsScore(metrics);
+  const athleticResult = compute6UAthleticSkillsScore(metrics);
   const hittingResult = computeHittingScore(metrics);
   const throwingResult = computeThrowingScore(metrics);
   const catchingResult = computeCatchingScore(metrics);

@@ -9,6 +9,7 @@ import {
   RatingResult,
 } from "./scoring/5u";
 import { compute6URatings } from "./scoring/6u";
+import { compute7URatings } from "./scoring/7u";
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -499,12 +500,16 @@ app.post("/assessments", async (req: AuthedRequest, res) => {
     return res.status(201).json({ assessment_id: assessmentId });
   }
 
-  // Only 5U and 6U are implemented right now
-  if (ageGroup.label !== "5U" && ageGroup.label !== "6U") {
+  // Only 5U, 6U, 7U are implemented with scoring right now
+  if (
+    ageGroup.label !== "5U" &&
+    ageGroup.label !== "6U" &&
+    ageGroup.label !== "7U"
+  ) {
     return res.status(201).json({ assessment_id: assessmentId });
   }
 
-  // 4) For this template: load metric definitions (id -> metric_key)
+  // 4) Load metric definitions (id -> metric_key) for this template
   const { data: metricDefs, error: metricsError } = await supabase
     .from("assessment_metrics")
     .select("id, metric_key, template_id")
@@ -554,8 +559,10 @@ app.post("/assessments", async (req: AuthedRequest, res) => {
       ratings = compute5URatings(metricMap);
     } else if (ageGroup.label === "6U") {
       ratings = compute6URatings(metricMap);
+    } else if (ageGroup.label === "7U") {
+      ratings = compute7URatings(metricMap);
     } else {
-      // Shouldn't happen given the earlier check, but just in case:
+      // Shouldn't happen given the earlier check
       return res.status(201).json({ assessment_id: assessmentId });
     }
   } catch (err) {
@@ -568,7 +575,7 @@ app.post("/assessments", async (req: AuthedRequest, res) => {
   const { error: ratingsError } = await supabase.from("player_ratings").insert([
     {
       player_assessment_id: assessmentId,
-      assessment_id: assessmentId,          // ✅ optional but nice to have
+      assessment_id: assessmentId, // extra column you added, fine
       player_id,
       team_id,
       age_group_id: ageGroup.id,
@@ -579,7 +586,6 @@ app.post("/assessments", async (req: AuthedRequest, res) => {
       breakdown: ratings.breakdown,
     },
   ]);
-
 
   if (ratingsError) {
     console.error("Error inserting player_ratings:", ratingsError);
@@ -592,6 +598,7 @@ app.post("/assessments", async (req: AuthedRequest, res) => {
     ratings_inserted: true,
   });
 });
+
 
 app.get("/players/:playerId/evals/5u-full", async (req, res) => {
   const playerId = req.params.playerId;
