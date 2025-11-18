@@ -232,7 +232,7 @@ function computeAthleticSkillsScore(
  * NOTE: The per-test max point values here are best-guess defaults.
  * You can adjust them to match your 7U sheet (column W) without changing the logic.
  */
-function computeHittingScore7U(metrics: MetricMap): {
+function computeHittingScore(metrics: MetricMap): {
   categoryScore: number | null;
   breakdown: {
     total_points: number | null;
@@ -395,24 +395,139 @@ function computeHittingScore7U(metrics: MetricMap): {
   };
 }
 
-/**
- * 7U THROWING – placeholder for now
- * (We’ll later wire 7U-specific maxima + pitching-score details.)
- */
-function computeThrowingScore7U(_metrics: MetricMap): {
+function computeThrowingScore(metrics: MetricMap): {
   categoryScore: number | null;
   breakdown: Record<string, unknown>;
 } {
+  // Raw inputs from metrics
+  const t20Raw = metrics["m_10_throw_test_20ft"];          // 10-throw accuracy at 20 ft
+  const t40Raw = metrics["m_10_throw_test_40ft"];          // 10-throw accuracy at 40 ft
+  const speedRaw = metrics["max_throwing_speed"];          // pitch speed (40 ft) in MPH
+  const smallBallRaw = metrics["max_throwing_speed_small_ball"]; // small-ball speed in MPH
+
+  // Maxima (column W-style assumptions, consistent with 5U/6U style)
+  const T20FT_MAX_POINTS = 10;
+  const T40FT_MAX_POINTS = 10;
+  const TSPEED40_MAX_POINTS = 10;
+  const TSPEED_SMALL_MAX_POINTS = 10;
+
+  const CATEGORY_MAX_POINTS = 40;      // 10 + 10 + 10 + 10
+  const CATEGORY_NORMALIZED_MAX = 50;  // scale to 0–50 like other categories
+
+  // Accuracy points
+  const t20ftPoints = clamp(t20Raw, 0, T20FT_MAX_POINTS);
+  const t40ftPoints = clamp(t40Raw, 0, T40FT_MAX_POINTS);
+
+  // Pitch speed (40 ft) → points
+  const tspeed40Mph =
+    speedRaw == null || typeof speedRaw !== "number" || Number.isNaN(speedRaw)
+      ? null
+      : speedRaw;
+
+  let tspeed40Points: number | null = null;
+  if (tspeed40Mph != null) {
+    // Same style as younger ages: mph / 4.5, capped at 10 pts (~45 mph → 10 pts)
+    const rawPoints = tspeed40Mph / 4.5;
+    tspeed40Points = clamp(rawPoints, 0, TSPEED40_MAX_POINTS);
+  }
+
+  // Small-ball speed → points
+  const smallBallMph =
+    smallBallRaw == null ||
+    typeof smallBallRaw !== "number" ||
+    Number.isNaN(smallBallRaw)
+      ? null
+      : smallBallRaw;
+
+  let smallBallPoints: number | null = null;
+  if (smallBallMph != null) {
+    // Same style as younger ages: mph / 5, capped at 10 pts (~50 mph → 10 pts)
+    const rawPoints = smallBallMph / 5;
+    smallBallPoints = clamp(rawPoints, 0, TSPEED_SMALL_MAX_POINTS);
+  }
+
+  // Aggregate throwing points for the category score
+  const components: number[] = [];
+  if (typeof t20ftPoints === "number") components.push(t20ftPoints);
+  if (typeof t40ftPoints === "number") components.push(t40ftPoints);
+  if (typeof tspeed40Points === "number") components.push(tspeed40Points);
+  if (typeof smallBallPoints === "number") components.push(smallBallPoints);
+
+  let totalPoints: number | null = null;
+  let categoryScore: number | null = null;
+
+  if (components.length > 0) {
+    totalPoints = components.reduce((sum, v) => sum + v, 0);
+    const ratio =
+      CATEGORY_MAX_POINTS > 0 ? totalPoints / CATEGORY_MAX_POINTS : 0;
+    const rawCategoryScore = ratio * CATEGORY_NORMALIZED_MAX;
+    categoryScore = Number.isFinite(rawCategoryScore)
+      ? Math.round(rawCategoryScore * 10) / 10
+      : null;
+  }
+
+  // 🎯 Pitching-specific percentages (these are your PITCHINGSCORE, etc.)
+
+  // PITCHINGSCORE = (TSPEED40 + T40FT) / (max of those tests)
+  let pitchScorePercent: number | null = null;
+  let pitchSpeedScorePercent: number | null = null;
+  let pitchAccScorePercent: number | null = null;
+
+  const speedPointsForPitch = tspeed40Points ?? 0;
+  const accPointsForPitch = t40ftPoints ?? 0;
+  const pitchDen = TSPEED40_MAX_POINTS + T40FT_MAX_POINTS; // 10 + 10 = 20
+
+  if (pitchDen > 0 && (speedPointsForPitch > 0 || accPointsForPitch > 0)) {
+    const pitchRatio = (speedPointsForPitch + accPointsForPitch) / pitchDen;
+    pitchScorePercent = Math.round(pitchRatio * 1000) / 10; // 1 decimal (%)
+  }
+
+  // PITCHSPEEDSCORE = TSPEED40 / max score for that test
+  if (tspeed40Points != null && TSPEED40_MAX_POINTS > 0) {
+    const ratio = tspeed40Points / TSPEED40_MAX_POINTS;
+    pitchSpeedScorePercent = Math.round(ratio * 1000) / 10;
+  }
+
+  // PITCHACCSCORE = T40FT / max score for that test
+  if (t40ftPoints != null && T40FT_MAX_POINTS > 0) {
+    const ratio = t40ftPoints / T40FT_MAX_POINTS;
+    pitchAccScorePercent = Math.round(ratio * 1000) / 10;
+  }
+
+  const breakdown: Record<string, unknown> = {
+    max_points: CATEGORY_MAX_POINTS,
+    total_points: totalPoints,
+    tests: {
+      // core throwing tests
+      t20ft_points: t20ftPoints,
+      t40ft_points: t40ftPoints,
+      tspeed40_points: tspeed40Points,
+      tspdsmall_points: smallBallPoints,
+
+      t20ft_raw_points: t20Raw ?? null,
+      t40ft_raw_points: t40Raw ?? null,
+      tspeed40_raw_mph: tspeed40Mph,
+      tspdsmall_raw_mph: smallBallMph,
+
+      // new pitching metrics
+      pitch_score_percent: pitchScorePercent,          // PITCHINGSCORE (%)
+      pitch_speed_score_percent: pitchSpeedScorePercent, // PITCHSPEEDSCORE (%)
+      pitch_acc_score_percent: pitchAccScorePercent,     // PITCHACCSCORE (%)
+      pitch_speed_mph: tspeed40Mph,                   // raw PITCHSPEED
+    },
+  };
+
   return {
-    categoryScore: null,
-    breakdown: {},
+    categoryScore,
+    breakdown,
   };
 }
+
 
 /**
  * 7U CATCHING – placeholder
  */
-function computeCatchingScore7U(_metrics: MetricMap): {
+function computeCatchingScore(_metrics: MetricMap): {
   categoryScore: number | null;
   breakdown: Record<string, unknown>;
 } {
@@ -426,7 +541,7 @@ function computeCatchingScore7U(_metrics: MetricMap): {
  * 7U FIELDING – placeholder
  * (Later we’ll use the new R/L/C grounders + position formulas.)
  */
-function computeFieldingScore7U(_metrics: MetricMap): {
+function computeFieldingScore(_metrics: MetricMap): {
   categoryScore: number | null;
   breakdown: Record<string, unknown>;
 } {
@@ -446,10 +561,10 @@ function computeFieldingScore7U(_metrics: MetricMap): {
  */
 export function compute7URatings(metrics: MetricMap): RatingResult {
   const athleticResult = computeAthleticSkillsScore(metrics);
-  const hittingResult = computeHittingScore7U(metrics);
-  const throwingResult = computeThrowingScore7U(metrics);
-  const catchingResult = computeCatchingScore7U(metrics);
-  const fieldingResult = computeFieldingScore7U(metrics);
+  const hittingResult = computeHittingScore(metrics);
+  const throwingResult = computeThrowingScore(metrics);
+  const catchingResult = computeCatchingScore(metrics);
+  const fieldingResult = computeFieldingScore(metrics);
 
   const athletic = athleticResult.categoryScore;
   const hitting = hittingResult.categoryScore;
