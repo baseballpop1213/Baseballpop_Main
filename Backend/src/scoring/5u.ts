@@ -53,46 +53,37 @@ function computeAthleticSkillsScore(metrics: MetricMap): {
       toe_touch_points: number | null;
       deep_squat_points: number | null;
 
-      run_1b_speed_fps: number | null;
-      run_4b_speed_fps: number | null;
-      run_1b_time_seconds: number | null;
-      run_1b_base_distance_ft: number | null;
-      run_4b_time_seconds: number | null;
-      run_4b_base_distance_ft: number | null;
-
-      sls_open_avg_seconds: number | null;
+      // raw values
+      run_1b_fps: number | null;
+      run_4b_fps: number | null;
       sls_open_right_seconds: number | null;
       sls_open_left_seconds: number | null;
-      sls_closed_avg_seconds: number | null;
+      sls_open_avg_seconds: number | null;
       sls_closed_right_seconds: number | null;
       sls_closed_left_seconds: number | null;
-
+      sls_closed_avg_seconds: number | null;
       toe_touch_raw_points: number | null;
       deep_squat_raw_points: number | null;
     };
   };
 } {
-  // --- Raw metrics from Supabase ---
+  // --- Raw metrics from Supabase using YOUR keys ---
 
-  // Speed
-  const run1bFpsRaw = metrics["run_1b_speed_fps"];
-  const run4bFpsRaw = metrics["run_4b_speed_fps"];
-  const run1bTimeRaw = metrics["run_1b_time_seconds"];
-  const run1bBaseRaw = metrics["run_1b_base_distance_ft"];
-  const run4bTimeRaw = metrics["run_4b_time_seconds"];
-  const run4bBaseRaw = metrics["run_4b_base_distance_ft"];
+  // Speed (we treat these as ft/sec)
+  const run1bFpsRaw = metrics["timed_run_1b"];
+  const run4bFpsRaw = metrics["timed_run_4b"];
 
   // Balance - SLS (Right/Left) for Eyes Open/Closed
-  const slsOpenRightRaw = metrics["sls_eyes_open_right_seconds"];
-  const slsOpenLeftRaw = metrics["sls_eyes_open_left_seconds"];
-  const slsClosedRightRaw = metrics["sls_eyes_closed_right_seconds"];
-  const slsClosedLeftRaw = metrics["sls_eyes_closed_left_seconds"];
+  const slsOpenRightRaw = metrics["sls_eyes_open_right"];
+  const slsOpenLeftRaw = metrics["sls_eyes_open_left"];
+  const slsClosedRightRaw = metrics["sls_eyes_closed_right"];
+  const slsClosedLeftRaw = metrics["sls_eyes_closed_left"];
 
   // Mobility
-  const toeTouchRaw = metrics["toe_touch_points"];
-  const deepSquatRaw = metrics["deep_squat_points"];
+  const toeTouchRaw = metrics["toe_touch"];
+  const deepSquatRaw = metrics["deep_squat"];
 
-  // --- Constants from W5, W7, W11, W12, W14, W15 ---
+  // --- Constants from spreadsheet (W5, W7, W11, W12, W14, W15) ---
 
   const RUN_1B_MAX_POINTS = 20;     // W5
   const RUN_4B_MAX_POINTS = 25;     // W7
@@ -115,26 +106,6 @@ function computeAthleticSkillsScore(metrics: MetricMap): {
     run4bFpsRaw == null || typeof run4bFpsRaw !== "number" || Number.isNaN(run4bFpsRaw)
       ? null
       : run4bFpsRaw;
-
-  const run1bTimeSeconds =
-    run1bTimeRaw == null || typeof run1bTimeRaw !== "number" || Number.isNaN(run1bTimeRaw)
-      ? null
-      : run1bTimeRaw;
-
-  const run1bBaseFt =
-    run1bBaseRaw == null || typeof run1bBaseRaw !== "number" || Number.isNaN(run1bBaseRaw)
-      ? null
-      : run1bBaseRaw;
-
-  const run4bTimeSeconds =
-    run4bTimeRaw == null || typeof run4bTimeRaw !== "number" || Number.isNaN(run4bTimeRaw)
-      ? null
-      : run4bTimeRaw;
-
-  const run4bBaseFt =
-    run4bBaseRaw == null || typeof run4bBaseRaw !== "number" || Number.isNaN(run4bBaseRaw)
-      ? null
-      : run4bBaseRaw;
 
   const slsOpenRightSeconds =
     slsOpenRightRaw == null || typeof slsOpenRightRaw !== "number" || Number.isNaN(slsOpenRightRaw)
@@ -167,10 +138,7 @@ function computeAthleticSkillsScore(metrics: MetricMap): {
       : deepSquatRaw;
 
   // Helper: average of left/right (using available values)
-  function avgSeconds(
-    a: number | null,
-    b: number | null
-  ): number | null {
+  function avgSeconds(a: number | null, b: number | null): number | null {
     const vals = [a, b].filter(
       (v): v is number => typeof v === "number" && !Number.isNaN(v)
     );
@@ -179,10 +147,7 @@ function computeAthleticSkillsScore(metrics: MetricMap): {
     return sum / vals.length;
   }
 
-  const slsOpenAvgSeconds = avgSeconds(
-    slsOpenRightSeconds,
-    slsOpenLeftSeconds
-  );
+  const slsOpenAvgSeconds = avgSeconds(slsOpenRightSeconds, slsOpenLeftSeconds);
   const slsClosedAvgSeconds = avgSeconds(
     slsClosedRightSeconds,
     slsClosedLeftSeconds
@@ -244,18 +209,14 @@ function computeAthleticSkillsScore(metrics: MetricMap): {
           sls_closed_points: slsClosedPoints,
           toe_touch_points: toeTouchPoints,
           deep_squat_points: deepSquatPoints,
-          run_1b_speed_fps: run1bFps,
-          run_4b_speed_fps: run4bFps,
-          run_1b_time_seconds: run1bTimeSeconds,
-          run_1b_base_distance_ft: run1bBaseFt,
-          run_4b_time_seconds: run4bTimeSeconds,
-          run_4b_base_distance_ft: run4bBaseFt,
-          sls_open_avg_seconds: slsOpenAvgSeconds,
+          run_1b_fps: run1bFps,
+          run_4b_fps: run4bFps,
           sls_open_right_seconds: slsOpenRightSeconds,
           sls_open_left_seconds: slsOpenLeftSeconds,
-          sls_closed_avg_seconds: slsClosedAvgSeconds,
+          sls_open_avg_seconds: slsOpenAvgSeconds,
           sls_closed_right_seconds: slsClosedRightSeconds,
           sls_closed_left_seconds: slsClosedLeftSeconds,
+          sls_closed_avg_seconds: slsClosedAvgSeconds,
           toe_touch_raw_points: toeTouchRawPts,
           deep_squat_raw_points: deepSquatRawPts,
         },
@@ -284,18 +245,14 @@ function computeAthleticSkillsScore(metrics: MetricMap): {
         sls_closed_points: slsClosedPoints,
         toe_touch_points: toeTouchPoints,
         deep_squat_points: deepSquatPoints,
-        run_1b_speed_fps: run1bFps,
-        run_4b_speed_fps: run4bFps,
-        run_1b_time_seconds: run1bTimeSeconds,
-        run_1b_base_distance_ft: run1bBaseFt,
-        run_4b_time_seconds: run4bTimeSeconds,
-        run_4b_base_distance_ft: run4bBaseFt,
-        sls_open_avg_seconds: slsOpenAvgSeconds,
+        run_1b_fps: run1bFps,
+        run_4b_fps: run4bFps,
         sls_open_right_seconds: slsOpenRightSeconds,
         sls_open_left_seconds: slsOpenLeftSeconds,
-        sls_closed_avg_seconds: slsClosedAvgSeconds,
+        sls_open_avg_seconds: slsOpenAvgSeconds,
         sls_closed_right_seconds: slsClosedRightSeconds,
         sls_closed_left_seconds: slsClosedLeftSeconds,
+        sls_closed_avg_seconds: slsClosedAvgSeconds,
         toe_touch_raw_points: toeTouchRawPts,
         deep_squat_raw_points: deepSquatRawPts,
       },
@@ -304,95 +261,137 @@ function computeAthleticSkillsScore(metrics: MetricMap): {
 }
 
 
-/**
- * REAL scoring for 5U Hitting.
- *
- * Inputs:
- *  - m_10_swing_tee_contact_test: total points (H10TEE), 0–10
- *  - m_10_swing_pitch_matrix: total points (H10PITCH), 0–20
- *  - max_bat_speed: raw mph (HBSPEED)
- *
- * 5U sheet:
- *  - W18 = 10 (max tee points)
- *  - W19 = 20 (max pitch points)
- *  - W20 = 9  (max bat speed points, HBSPEED / 5 capped)
- *  - W23 = 39 (total max points)
- *  - X23 = 50 (category max)
- *  - HITSCORE = (TOTAL_POINTS / 39) * 50
- */
+
 function computeHittingScore(metrics: MetricMap): {
   categoryScore: number | null;
   breakdown: {
     total_points: number | null;
     max_points: number;
     tests: {
-      tee_points: number | null;
-      pitch_points: number | null;
-      bat_speed_points: number | null;
       tee_raw: number | null;
       pitch_raw: number | null;
+      tee_points: number | null;
+      pitch_points: number | null;
       bat_speed_mph: number | null;
-      // future: contact_score, power_score, etc.
+      bat_speed_points: number | null;
+
+      // Derived from spreadsheet
+      contact_raw_points: number | null;    // H10TEE + H10PITCH points
+      contact_score: number | null;         // 0–90 (CONTACTSCORE)
+      power_raw_points: number | null;      // H10PITCH + HBSPEED/5 points
+      power_score: number | null;           // 0–90 (POWERSCORE)
+      strike_chance_percent: number | null; // 0–100 %, based on CONTACTSCORE/90
     };
   };
 } {
+  // Raw metrics from Supabase
   const teeRaw = metrics["m_10_swing_tee_contact_test"];
   const pitchRaw = metrics["m_10_swing_pitch_matrix"];
   const batSpeedRaw = metrics["max_bat_speed"];
 
-  const TEE_MAX_POINTS = 10;
-  const PITCH_MAX_POINTS = 20;
-  const HBSPEED_MAX_POINTS = 9; // 45 mph -> 9 points
+  // Maxes for 5U from sheet
+  const TEE_MAX_POINTS = 10;             // H10TEE max
+  const PITCH_MAX_POINTS = 20;           // H10PITCH max
+  const BATSPEED_POINTS_MAX = 9;         // HBSPEED/5 => 45 mph → 9 points
+  const CATEGORY_MAX_POINTS = 39;        // 10 + 20 + 9
+  const CATEGORY_NORMALIZED_MAX = 50;    // BPOP Hitting Score scale
 
-  const CATEGORY_MAX_POINTS = 39; // W23
-  const CATEGORY_NORMALIZED_MAX = 50; // X23
+  const teeRawPts =
+    teeRaw == null || typeof teeRaw !== "number" || Number.isNaN(teeRaw)
+      ? null
+      : teeRaw;
 
-  const teePoints = clamp(teeRaw, 0, TEE_MAX_POINTS);
-  const pitchPoints = clamp(pitchRaw, 0, PITCH_MAX_POINTS);
+  const pitchRawPts =
+    pitchRaw == null || typeof pitchRaw !== "number" || Number.isNaN(pitchRaw)
+      ? null
+      : pitchRaw;
 
   const batSpeedMph =
     batSpeedRaw == null || typeof batSpeedRaw !== "number" || Number.isNaN(batSpeedRaw)
       ? null
       : batSpeedRaw;
 
+  // Clamp raw test points to allowed ranges
+  const teePoints = clamp(teeRawPts, 0, TEE_MAX_POINTS);
+  const pitchPoints = clamp(pitchRawPts, 0, PITCH_MAX_POINTS);
+
   let batSpeedPoints: number | null = null;
   if (batSpeedMph != null) {
-    const rawPoints = batSpeedMph / 5; // same conversion as sheet
-    const clamped = clamp(rawPoints, 0, HBSPEED_MAX_POINTS);
-    batSpeedPoints = clamped;
+    const rawPts = batSpeedMph / 5; // HBSPEED/5 for 5U
+    batSpeedPoints = clamp(rawPts, 0, BATSPEED_POINTS_MAX);
   }
+
+  // ---------- BPOP Hitting Score (categoryScore, 0–50) ----------
 
   const components: number[] = [];
   if (typeof teePoints === "number") components.push(teePoints);
   if (typeof pitchPoints === "number") components.push(pitchPoints);
   if (typeof batSpeedPoints === "number") components.push(batSpeedPoints);
 
-  if (components.length === 0) {
-    return {
-      categoryScore: null,
-      breakdown: {
-        total_points: null,
-        max_points: CATEGORY_MAX_POINTS,
-        tests: {
-          tee_points: teePoints,
-          pitch_points: pitchPoints,
-          bat_speed_points: batSpeedPoints,
-          tee_raw: teeRaw ?? null,
-          pitch_raw: pitchRaw ?? null,
-          bat_speed_mph: batSpeedMph,
-        },
-      },
-    };
+  let totalPoints: number | null = null;
+  let categoryScore: number | null = null;
+
+  if (components.length > 0) {
+    totalPoints = components.reduce((sum, v) => sum + v, 0);
+    const ratio =
+      CATEGORY_MAX_POINTS > 0 ? totalPoints / CATEGORY_MAX_POINTS : 0;
+    const rawScore = ratio * CATEGORY_NORMALIZED_MAX; // 0–50
+    categoryScore = Number.isFinite(rawScore)
+      ? Math.round(rawScore * 10) / 10
+      : null;
   }
 
-  const totalPoints = components.reduce((sum, v) => sum + v, 0);
-  const ratio =
-    CATEGORY_MAX_POINTS > 0 ? totalPoints / CATEGORY_MAX_POINTS : 0;
-  const rawCategoryScore = ratio * CATEGORY_NORMALIZED_MAX;
-  const categoryScore =
-    Number.isFinite(rawCategoryScore)
-      ? Math.round(rawCategoryScore * 10) / 10
-      : null;
+  // ---------- CONTACTSCORE (0–90 scale) ----------
+  //
+  // CONTACTSCORE = ((H10TEE + H10PITCH) / (TEE_MAX + PITCH_MAX)) * 90
+
+  let contactRawPoints: number | null = null;
+  let contactScore: number | null = null;
+
+  if (typeof teePoints === "number" && typeof pitchPoints === "number") {
+    contactRawPoints = teePoints + pitchPoints; // 0–30
+    const maxContact = TEE_MAX_POINTS + PITCH_MAX_POINTS; // 30
+    const frac = maxContact > 0 ? contactRawPoints / maxContact : 0;
+    const rawContactScore = frac * 90; // 0–90
+    contactScore = Math.round(rawContactScore * 10) / 10;
+  }
+
+  // ---------- POWERSCORE (0–90 scale) ----------
+  //
+  // POWERSCORE = ((H10PITCH + (HBSPEED/5)) / (PITCH_MAX + BATSPEED_POINTS_MAX)) * 90
+
+  let powerRawPoints: number | null = null;
+  let powerScore: number | null = null;
+
+  if (
+    typeof pitchPoints === "number" &&
+    typeof batSpeedPoints === "number"
+  ) {
+    powerRawPoints = pitchPoints + batSpeedPoints; // 0–29
+    const maxPower = PITCH_MAX_POINTS + BATSPEED_POINTS_MAX; // 29
+    const frac = maxPower > 0 ? powerRawPoints / maxPower : 0;
+    const rawPowerScore = frac * 90; // 0–90
+    powerScore = Math.round(rawPowerScore * 10) / 10;
+  }
+
+  // ---------- STRIKEOUTCHANCE ----------
+  //
+  // STRIKEOUTCHANCE = 1 - (CONTACTSCORE / 90)
+  // We store as a percentage:
+  //   strike_chance_percent = (1 - CONTACTSCORE/90) * 100
+
+  let strikeChancePercent: number | null = null;
+
+  if (typeof contactScore === "number") {
+    const frac = 1 - contactScore / 90; // 0–1
+    let rawPercent = frac * 100;
+
+    // Manual clamp to 0–100 so TS knows it's a number
+    if (rawPercent < 0) rawPercent = 0;
+    if (rawPercent > 100) rawPercent = 100;
+
+    strikeChancePercent = Math.round(rawPercent * 10) / 10;
+  }
 
   return {
     categoryScore,
@@ -400,16 +399,23 @@ function computeHittingScore(metrics: MetricMap): {
       total_points: totalPoints,
       max_points: CATEGORY_MAX_POINTS,
       tests: {
+        tee_raw: teeRawPts,
+        pitch_raw: pitchRawPts,
         tee_points: teePoints,
         pitch_points: pitchPoints,
-        bat_speed_points: batSpeedPoints,
-        tee_raw: teeRaw ?? null,
-        pitch_raw: pitchRaw ?? null,
         bat_speed_mph: batSpeedMph,
+        bat_speed_points: batSpeedPoints,
+
+        contact_raw_points: contactRawPoints,
+        contact_score: contactScore,      // 0–90
+        power_raw_points: powerRawPoints,
+        power_score: powerScore,          // 0–90
+        strike_chance_percent: strikeChancePercent, // 0–100
       },
     },
   };
 }
+
 
 /**
  * REAL scoring for 5U Throwing.
@@ -557,23 +563,6 @@ function computeThrowingScore(metrics: MetricMap): {
 }
 
 
-/**
- * PROVISIONAL scoring for 5U Catching.
- *
- * Assumptions (to be aligned with the spreadsheet later):
- *  - Two tests:
- *      - m_10_catch_test_20ft: total points from 10 throws at 20 ft (0–10)
- *      - m_10_catch_test_40ft: total points from 10 throws at 40 ft (0–10)
- *  - Each test is worth up to 10 points.
- *  - Category total max points = 20.
- *  - Category normalized max = 50.
- *
- * Category score = (TOTAL_POINTS / 20) * 50.
- *
- * Once we plug in the exact sheet logic (W-values, any extra tests),
- * we can just update the constants + formulas here — the shape of the
- * breakdown will already be correct for the app.
- */
 function computeCatchingScore(metrics: MetricMap): {
   categoryScore: number | null;
   breakdown: {
@@ -587,13 +576,13 @@ function computeCatchingScore(metrics: MetricMap): {
     };
   };
 } {
-  const c20ftRaw = metrics["m_10_catch_test_20ft"];
-  const c40ftRaw = metrics["m_10_catch_test_40ft"];
+  const c20ftRaw = metrics["m_20ft_catching_test"];
+  const c40ftRaw = metrics["m_40_ft_catching_test"];
 
   const C20FT_MAX_POINTS = 10;
   const C40FT_MAX_POINTS = 10;
 
-  const CATEGORY_MAX_POINTS = 20; // 10 + 10
+  const CATEGORY_MAX_POINTS = 20;
   const CATEGORY_NORMALIZED_MAX = 50;
 
   const c20ftRawPts =
@@ -630,7 +619,6 @@ function computeCatchingScore(metrics: MetricMap): {
   }
 
   const totalPoints = components.reduce((sum, v) => sum + v, 0);
-
   const ratio =
     CATEGORY_MAX_POINTS > 0 ? totalPoints / CATEGORY_MAX_POINTS : 0;
   const rawCategoryScore = ratio * CATEGORY_NORMALIZED_MAX;
@@ -655,101 +643,101 @@ function computeCatchingScore(metrics: MetricMap): {
 }
 
 
-/**
- * REAL scoring for 5U Fielding.
- *
- * Tests (from BPOP 5U-6U Eval, rows 34–37):
- *  - Grounders 2B       (FG2B)
- *  - Grounders SS       (FGSS)
- *  - Grounders 3B       (FG3B)
- *  - Grounders Pitcher  (FGP)
- *
- * Each test:
- *  - 3 grounders, 0–2 points each → 0–6 total points.
- *
- * Sheet (5U):
- *  - W34 = 6, W35 = 6, W36 = 6, W37 = 6
- *  - W39 = 24 (total max points for Fielding)
- *  - X39 = 50 (category max)
- *  - FIELDINGSCORE_5U = (TOTAL_POINTS / 24) * 50
- *
- * Backend:
- *  - We expect the app to send per-test totals (0–6) as numeric metrics:
- *      - m_grounders_2b_points
- *      - m_grounders_ss_points
- *      - m_grounders_3b_points
- *      - m_grounders_pitcher_points
- */
-function computeFieldingScore(metrics: MetricMap): {
-  categoryScore: number | null;
-  breakdown: {
-    total_points: number | null;
-    max_points: number;
-    tests: {
-      f2b_points: number | null;
-      fss_points: number | null;
-      f3b_points: number | null;
-      fpitcher_points: number | null;
-      f2b_raw_points: number | null;
-      fss_raw_points: number | null;
-      f3b_raw_points: number | null;
-      fpitcher_raw_points: number | null;
+
+  function computeFieldingScore(metrics: MetricMap): {
+    categoryScore: number | null;
+    breakdown: {
+      total_points: number | null;
+      max_points: number;
+      tests: {
+        f2b_points: number | null;
+        fss_points: number | null;
+        f3b_points: number | null;
+        fpitcher_points: number | null;
+        f2b_raw_points: number | null;
+        fss_raw_points: number | null;
+        f3b_raw_points: number | null;
+        fpitcher_raw_points: number | null;
+      };
     };
-  };
-} {
-  const f2bRaw = metrics["m_grounders_2b_points"];
-  const fssRaw = metrics["m_grounders_ss_points"];
-  const f3bRaw = metrics["m_grounders_3b_points"];
-  const fpitcherRaw = metrics["m_grounders_pitcher_points"];
+  } {
+    const f2bRaw = metrics["grounders_2b"];
+    const fssRaw = metrics["grounders_ss"];
+    const f3bRaw = metrics["grounders_3b"];
+    const fpitcherRaw = metrics["grounders_pitcher"];
 
-  // Per-test max points from W34–W37
-  const F2B_MAX_POINTS = 6;
-  const FSS_MAX_POINTS = 6;
-  const F3B_MAX_POINTS = 6;
-  const FPITCHER_MAX_POINTS = 6;
+    const F2B_MAX_POINTS = 6;
+    const FSS_MAX_POINTS = 6;
+    const F3B_MAX_POINTS = 6;
+    const FPITCHER_MAX_POINTS = 6;
 
-  // Category totals from row 39
-  const CATEGORY_MAX_POINTS = 24;   // W39 = 6 + 6 + 6 + 6
-  const CATEGORY_NORMALIZED_MAX = 50; // X39
+    const CATEGORY_MAX_POINTS = 24; // 6+6+6+6
+    const CATEGORY_NORMALIZED_MAX = 50;
 
-  // Normalize raw inputs
-  const f2bRawPts =
-    f2bRaw == null || typeof f2bRaw !== "number" || Number.isNaN(f2bRaw)
-      ? null
-      : f2bRaw;
+    const f2bRawPts =
+      f2bRaw == null || typeof f2bRaw !== "number" || Number.isNaN(f2bRaw)
+        ? null
+        : f2bRaw;
 
-  const fssRawPts =
-    fssRaw == null || typeof fssRaw !== "number" || Number.isNaN(fssRaw)
-      ? null
-      : fssRaw;
+    const fssRawPts =
+      fssRaw == null || typeof fssRaw !== "number" || Number.isNaN(fssRaw)
+        ? null
+        : fssRaw;
 
-  const f3bRawPts =
-    f3bRaw == null || typeof f3bRaw !== "number" || Number.isNaN(f3bRaw)
-      ? null
-      : f3bRaw;
+    const f3bRawPts =
+      f3bRaw == null || typeof f3bRaw !== "number" || Number.isNaN(f3bRaw)
+        ? null
+        : f3bRaw;
 
-  const fpitcherRawPts =
-    fpitcherRaw == null || typeof fpitcherRaw !== "number" || Number.isNaN(fpitcherRaw)
-      ? null
-      : fpitcherRaw;
+    const fpitcherRawPts =
+      fpitcherRaw == null || typeof fpitcherRaw !== "number" || Number.isNaN(fpitcherRaw)
+        ? null
+        : fpitcherRaw;
 
-  // Clamp each to 0–6
-  const f2bPoints = clamp(f2bRawPts, 0, F2B_MAX_POINTS);
-  const fssPoints = clamp(fssRawPts, 0, FSS_MAX_POINTS);
-  const f3bPoints = clamp(f3bRawPts, 0, F3B_MAX_POINTS);
-  const fpitcherPoints = clamp(fpitcherRawPts, 0, FPITCHER_MAX_POINTS);
+    const f2bPoints = clamp(f2bRawPts, 0, F2B_MAX_POINTS);
+    const fssPoints = clamp(fssRawPts, 0, FSS_MAX_POINTS);
+    const f3bPoints = clamp(f3bRawPts, 0, F3B_MAX_POINTS);
+    const fpitcherPoints = clamp(fpitcherRawPts, 0, FPITCHER_MAX_POINTS);
 
-  const components: number[] = [];
-  if (typeof f2bPoints === "number") components.push(f2bPoints);
-  if (typeof fssPoints === "number") components.push(fssPoints);
-  if (typeof f3bPoints === "number") components.push(f3bPoints);
-  if (typeof fpitcherPoints === "number") components.push(fpitcherPoints);
+    const components: number[] = [];
+    if (typeof f2bPoints === "number") components.push(f2bPoints);
+    if (typeof fssPoints === "number") components.push(fssPoints);
+    if (typeof f3bPoints === "number") components.push(f3bPoints);
+    if (typeof fpitcherPoints === "number") components.push(fpitcherPoints);
 
-  if (components.length === 0) {
+    if (components.length === 0) {
+      return {
+        categoryScore: null,
+        breakdown: {
+          total_points: null,
+          max_points: CATEGORY_MAX_POINTS,
+          tests: {
+            f2b_points: f2bPoints,
+            fss_points: fssPoints,
+            f3b_points: f3bPoints,
+            fpitcher_points: fpitcherPoints,
+            f2b_raw_points: f2bRawPts,
+            fss_raw_points: fssRawPts,
+            f3b_raw_points: f3bRawPts,
+            fpitcher_raw_points: fpitcherRawPts,
+          },
+        },
+      };
+    }
+
+    const totalPoints = components.reduce((sum, v) => sum + v, 0);
+    const ratio =
+      CATEGORY_MAX_POINTS > 0 ? totalPoints / CATEGORY_MAX_POINTS : 0;
+    const rawCategoryScore = ratio * CATEGORY_NORMALIZED_MAX;
+    const categoryScore =
+      Number.isFinite(rawCategoryScore)
+        ? Math.round(rawCategoryScore * 10) / 10
+        : null;
+
     return {
-      categoryScore: null,
+      categoryScore,
       breakdown: {
-        total_points: null,
+        total_points: totalPoints,
         max_points: CATEGORY_MAX_POINTS,
         tests: {
           f2b_points: f2bPoints,
@@ -764,36 +752,6 @@ function computeFieldingScore(metrics: MetricMap): {
       },
     };
   }
-
-  const totalPoints = components.reduce((sum, v) => sum + v, 0);
-
-  const ratio =
-    CATEGORY_MAX_POINTS > 0 ? totalPoints / CATEGORY_MAX_POINTS : 0;
-  const rawCategoryScore = ratio * CATEGORY_NORMALIZED_MAX;
-  const categoryScore =
-    Number.isFinite(rawCategoryScore)
-      ? Math.round(rawCategoryScore * 10) / 10
-      : null;
-
-  return {
-    categoryScore,
-    breakdown: {
-      total_points: totalPoints,
-      max_points: CATEGORY_MAX_POINTS,
-      tests: {
-        f2b_points: f2bPoints,
-        fss_points: fssPoints,
-        f3b_points: f3bPoints,
-        fpitcher_points: fpitcherPoints,
-        f2b_raw_points: f2bRawPts,
-        fss_raw_points: fssRawPts,
-        f3b_raw_points: f3bRawPts,
-        fpitcher_raw_points: fpitcherRawPts,
-      },
-    },
-  };
-}
-
 
 /**
  * Main scoring for 5U assessments.
