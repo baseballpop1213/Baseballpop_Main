@@ -712,6 +712,124 @@ app.get("/players/:playerId/evals/5u-full", async (req, res) => {
   }
 );
 
+app.get("/players/:playerId/evals/6u-full", async (req, res) => {
+  const playerId = req.params.playerId;
+
+  try {
+    const [athletic, hitting, throwing, catching, fielding] =
+      await Promise.all([
+        fetchLatestCategoryRating(playerId, "6U Athletic Skills", "athletic"),
+        fetchLatestCategoryRating(playerId, "6U Hitting Skills", "hitting"),
+        fetchLatestCategoryRating(playerId, "6U Throwing Skills", "throwing"),
+        fetchLatestCategoryRating(playerId, "6U Catching Skills", "catching"),
+        fetchLatestCategoryRating(playerId, "6U Fielding Skills", "fielding"),
+      ]);
+
+    const components = { athletic, hitting, throwing, catching, fielding };
+
+    const athleticScore = athletic.score;
+    const hittingScore = hitting.score;
+    const throwingScore = throwing.score;
+    const catchingScore = catching.score;
+    const fieldingScore = fielding.score;
+
+    const hittingTests =
+      hitting.breakdown && hitting.breakdown.hitting
+        ? hitting.breakdown.hitting.tests || {}
+        : {};
+
+    const athleticTests =
+      athletic.breakdown && athletic.breakdown.athletic
+        ? athletic.breakdown.athletic.tests || {}
+        : {};
+
+    const contactScore =
+      typeof hittingTests.contact_score === "number"
+        ? hittingTests.contact_score
+        : null;
+    const powerScore =
+      typeof hittingTests.power_score === "number"
+        ? hittingTests.power_score
+        : null;
+    const strikeChancePercent =
+      typeof hittingTests.strike_chance_percent === "number"
+        ? hittingTests.strike_chance_percent
+        : null;
+
+    const speedScore =
+      typeof athleticTests.speed_score === "number"
+        ? athleticTests.speed_score
+        : null;
+
+    // Offense: 80% Hitting + 20% Speed (when both available)
+    let offenseFull: number | null = null;
+    if (hittingScore != null && speedScore != null) {
+      offenseFull = Math.round((0.8 * hittingScore + 0.2 * speedScore) * 10) / 10;
+    } else if (hittingScore != null) {
+      offenseFull = hittingScore;
+    }
+
+    const positionScores = compute5UPositionScores(
+      athletic,
+      throwing,
+      catching,
+      fielding
+    );
+
+    const defenseFull = positionScores.defense_score;
+    const pitchingFull = throwingScore ?? null;
+
+    const overallFull = averageNonNull([
+      athleticScore,
+      hittingScore,
+      throwingScore,
+      catchingScore,
+      fieldingScore,
+    ]);
+
+    const allDates = [
+      athletic.performedAt,
+      hitting.performedAt,
+      throwing.performedAt,
+      catching.performedAt,
+      fielding.performedAt,
+    ].filter((d): d is string => !!d);
+
+    const lastUpdated =
+      allDates.length > 0 ? allDates.sort().slice(-1)[0] : null;
+
+    return res.json({
+      player_id: playerId,
+      age_group: "6U",
+      last_updated: lastUpdated,
+      components,
+      aggregates: {
+        overall_full_eval_score: overallFull,
+        offense_full_eval_score: offenseFull,
+        offense_hitting_component: hittingScore,
+        offense_speed_component: speedScore,
+        defense_full_eval_score: defenseFull,
+        pitching_full_eval_score: pitchingFull,
+        athletic_score: athleticScore,
+        hitting_score: hittingScore,
+        throwing_score: throwingScore,
+        catching_score: catchingScore,
+        fielding_score: fieldingScore,
+        derived: {
+          contact_score: contactScore,
+          power_score: powerScore,
+          strike_chance_percent: strikeChancePercent,
+          speed_score: speedScore,
+          position_scores: positionScores,
+        },
+      },
+    });
+  } catch (err) {
+    console.error("Error building 6U full eval:", err);
+    return res.status(500).json({ error: "Failed to build 6U full eval" });
+  }
+});
+
 
 app.listen(port, () => {
   console.log(`BPOP backend listening on port ${port}`);
