@@ -388,6 +388,192 @@ function compute5UPositionScores(
   };
 }
 
+function compute7UPositionScores(
+  athletic: CategoryComponent,
+  throwing: CategoryComponent,
+  catching: CategoryComponent,
+  fielding: CategoryComponent
+): PositionScores5U {
+  const FIELD_MAX = 50;
+  const CATCH_MAX = 50;
+  const SPEED_MAX = 50;
+  const T40_MAX = 10;   // 10-throw 40 ft max points
+  const GROUND_MAX = 12; // new RLC max (6 reps × 2 pts)
+  const C51B_MAX = 15;  // 5 throws, 3 pts each
+
+  const athleticTests =
+    athletic.breakdown && athletic.breakdown.athletic
+      ? athletic.breakdown.athletic.tests || {}
+      : {};
+
+  const throwingTests =
+    throwing.breakdown && throwing.breakdown.throwing
+      ? throwing.breakdown.throwing.tests || {}
+      : {};
+
+  const catchingTests =
+    catching.breakdown && catching.breakdown.catching
+      ? catching.breakdown.catching.tests || {}
+      : {};
+
+  const fieldingSection =
+    fielding.breakdown && fielding.breakdown.fielding
+      ? fielding.breakdown.fielding
+      : null;
+
+  const fieldingScore =
+    typeof fielding.score === "number" ? fielding.score : null;
+  const catchingScore =
+    typeof catching.score === "number" ? catching.score : null;
+  const throwingScore =
+    typeof throwing.score === "number" ? throwing.score : null;
+
+  const speedScore =
+    typeof athleticTests.speed_score === "number"
+      ? athleticTests.speed_score
+      : null;
+
+  const c51bPoints =
+    typeof catchingTests.c51b_points === "number"
+      ? catchingTests.c51b_points
+      : null;
+
+  const t40ftPoints =
+    typeof throwingTests.t40ft_points === "number"
+      ? throwingTests.t40ft_points
+      : null;
+
+  const rlcTotal =
+    fieldingSection && typeof (fieldingSection as any).total_points === "number"
+      ? (fieldingSection as any).total_points as number
+      : null;
+
+  // Pitcher = Throwing score
+  const pitcher = throwingScore ?? null;
+
+  // Catcher = Catching score
+  const catcherPos = catchingScore ?? null;
+
+  // 1B = (C51B * 3 + CatchingScore) / (3*C51B_MAX + CATCH_MAX) → 0–50
+  let firstBase: number | null = null;
+  if (catchingScore != null && c51bPoints != null) {
+    const num = c51bPoints * 3 + catchingScore;
+    const den = C51B_MAX * 3 + CATCH_MAX; // 45 + 50 = 95
+    firstBase = ratioToScore(num, den);
+  }
+
+  // 2B / 3B / SS / PH:
+  // same weighting pattern as 5U/6U:
+  // (2*Fielding + 1*Catching + 2*Grounders) / (2*FIELD_MAX + CATCH_MAX + 2*GROUND_MAX)
+  function infieldSpotFromRLC(): number | null {
+    if (fieldingScore == null || catchingScore == null || rlcTotal == null) {
+      return null;
+    }
+    const num = fieldingScore * 2 + catchingScore * 1 + rlcTotal * 2;
+    const den = FIELD_MAX * 2 + CATCH_MAX * 1 + GROUND_MAX * 2;
+    return ratioToScore(num, den);
+  }
+
+  const secondBase = infieldSpotFromRLC();
+  const thirdBase = infieldSpotFromRLC();
+  const shortstop = infieldSpotFromRLC();
+  const pitchersHelper = infieldSpotFromRLC();
+
+  // Outfield:
+  // For now we keep the same structure as 5U/6U,
+  // still using CatchingScore + T40 / RLC / Speed.
+  // (Later we can swap CatchingScore → C10X10LD when that test is wired.)
+
+  // LF = (CatchingScore + T40FT) / (CATCH_MAX + T40_MAX)
+  let leftField: number | null = null;
+  if (catchingScore != null && t40ftPoints != null) {
+    const num = catchingScore + t40ftPoints;
+    const den = CATCH_MAX + T40_MAX;
+    leftField = ratioToScore(num, den);
+  }
+
+  // RF = (CatchingScore + RLC) / (CATCH_MAX + GROUND_MAX)
+  let rightField: number | null = null;
+  if (catchingScore != null && rlcTotal != null) {
+    const num = catchingScore + rlcTotal;
+    const den = CATCH_MAX + GROUND_MAX;
+    rightField = ratioToScore(num, den);
+  }
+
+  // CF = (CatchingScore + SpeedScore) / (CATCH_MAX + SPEED_MAX)
+  let centerField: number | null = null;
+  if (catchingScore != null && speedScore != null) {
+    const num = catchingScore + speedScore;
+    const den = CATCH_MAX + SPEED_MAX;
+    centerField = ratioToScore(num, den);
+  }
+
+  // LC = (CatchingScore + RLC) / (CATCH_MAX + GROUND_MAX)
+  let leftCenter: number | null = null;
+  if (catchingScore != null && rlcTotal != null) {
+    const num = catchingScore + rlcTotal;
+    const den = CATCH_MAX + GROUND_MAX;
+    leftCenter = ratioToScore(num, den);
+  }
+
+  // RC = (CatchingScore + SpeedScore) / (CATCH_MAX + SPEED_MAX)
+  let rightCenter: number | null = null;
+  if (catchingScore != null && speedScore != null) {
+    const num = catchingScore + speedScore;
+    const den = CATCH_MAX + SPEED_MAX;
+    rightCenter = ratioToScore(num, den);
+  }
+
+  const infieldScore = averageNonNull([
+    catcherPos,
+    firstBase,
+    secondBase,
+    thirdBase,
+    shortstop,
+    pitchersHelper,
+  ]);
+
+  const outfieldScore = averageNonNull([
+    leftField,
+    rightField,
+    leftCenter,
+    rightCenter,
+    centerField,
+  ]);
+
+  const defenseScore = averageNonNull([
+    pitcher,
+    catcherPos,
+    firstBase,
+    secondBase,
+    thirdBase,
+    shortstop,
+    pitchersHelper,
+    leftField,
+    rightField,
+    leftCenter,
+    rightCenter,
+    centerField,
+  ]);
+
+  return {
+    pitcher,
+    catcher: catcherPos,
+    first_base: firstBase,
+    second_base: secondBase,
+    third_base: thirdBase,
+    shortstop,
+    pitchers_helper: pitchersHelper,
+    left_field: leftField,
+    right_field: rightField,
+    left_center: leftCenter,
+    right_center: rightCenter,
+    center_field: centerField,
+    infield_score: infieldScore,
+    outfield_score: outfieldScore,
+    defense_score: defenseScore,
+  };
+}
 
 
 /**
@@ -834,6 +1020,124 @@ app.get("/players/:playerId/evals/6u-full", async (req, res) => {
   } catch (err) {
     console.error("Error building 6U full eval:", err);
     return res.status(500).json({ error: "Failed to build 6U full eval" });
+  }
+});
+
+app.get("/players/:playerId/evals/7u-full", async (req, res) => {
+  const playerId = req.params.playerId;
+
+  try {
+    const [athletic, hitting, throwing, catching, fielding] =
+      await Promise.all([
+        fetchLatestCategoryRating(playerId, "7U Athletic Skills", "athletic"),
+        fetchLatestCategoryRating(playerId, "7U Hitting Skills", "hitting"),
+        fetchLatestCategoryRating(playerId, "7U Throwing Skills", "throwing"),
+        fetchLatestCategoryRating(playerId, "7U Catching Skills", "catching"),
+        fetchLatestCategoryRating(playerId, "7U Fielding Skills", "fielding"),
+      ]);
+
+    const components = { athletic, hitting, throwing, catching, fielding };
+
+    const athleticScore = athletic.score;
+    const hittingScore = hitting.score;
+    const throwingScore = throwing.score;
+    const catchingScore = catching.score;
+    const fieldingScore = fielding.score;
+
+    const hittingTests =
+      hitting.breakdown && hitting.breakdown.hitting
+        ? hitting.breakdown.hitting.tests || {}
+        : {};
+
+    const athleticTests =
+      athletic.breakdown && athletic.breakdown.athletic
+        ? athletic.breakdown.athletic.tests || {}
+        : {};
+
+    const contactScore =
+      typeof hittingTests.contact_score === "number"
+        ? hittingTests.contact_score
+        : null;
+    const powerScore =
+      typeof hittingTests.power_score === "number"
+        ? hittingTests.power_score
+        : null;
+    const strikeChancePercent =
+      typeof hittingTests.strike_chance_percent === "number"
+        ? hittingTests.strike_chance_percent
+        : null;
+
+    const speedScore =
+      typeof athleticTests.speed_score === "number"
+        ? athleticTests.speed_score
+        : null;
+
+    // Offense: 80% hitting + 20% speed
+    let offenseFull: number | null = null;
+    if (hittingScore != null && speedScore != null) {
+      offenseFull = Math.round((0.8 * hittingScore + 0.2 * speedScore) * 10) / 10;
+    } else if (hittingScore != null) {
+      offenseFull = hittingScore;
+    }
+
+    const positionScores = compute7UPositionScores(
+      athletic,
+      throwing,
+      catching,
+      fielding
+    );
+
+    const defenseFull = positionScores.defense_score;
+    const pitchingFull = throwingScore ?? null;
+
+    const overallFull = averageNonNull([
+      athleticScore,
+      hittingScore,
+      throwingScore,
+      catchingScore,
+      fieldingScore,
+    ]);
+
+    const allDates = [
+      athletic.performedAt,
+      hitting.performedAt,
+      throwing.performedAt,
+      catching.performedAt,
+      fielding.performedAt,
+    ].filter((d): d is string => !!d);
+
+    const lastUpdated =
+      allDates.length > 0 ? allDates.sort().slice(-1)[0] : null;
+
+    return res.json({
+      player_id: playerId,
+      age_group: "7U",
+      last_updated: lastUpdated,
+      components,
+      aggregates: {
+        overall_full_eval_score: overallFull,
+        offense_full_eval_score: offenseFull,
+        offense_hitting_component: hittingScore,
+        offense_speed_component: speedScore,
+        defense_full_eval_score: defenseFull,
+        pitching_full_eval_score: pitchingFull,
+        athletic_score: athleticScore,
+        hitting_score: hittingScore,
+        throwing_score: throwingScore,
+        catching_score: catchingScore,
+        fielding_score: fieldingScore,
+        derived: {
+          contact_score: contactScore,
+          power_score: powerScore,
+          strike_chance_percent: strikeChancePercent,
+          speed_score: speedScore,
+          position_scores: positionScores,
+        },
+      },
+    });
+  } catch (err) {
+    console.error("Error building 7U full eval:", err);
+    return res.status(500).json({ error: "Failed to build 7U full eval" });
   }
 });
 
