@@ -53,7 +53,6 @@ function computeAthleticSkillsScore(metrics: MetricMap): {
       toe_touch_points: number | null;
       deep_squat_points: number | null;
 
-      // raw values
       run_1b_fps: number | null;
       run_4b_fps: number | null;
       sls_open_right_seconds: number | null;
@@ -64,26 +63,24 @@ function computeAthleticSkillsScore(metrics: MetricMap): {
       sls_closed_avg_seconds: number | null;
       toe_touch_raw_points: number | null;
       deep_squat_raw_points: number | null;
+
+      // NEW:
+      speed_points_total: number | null;
+      speed_score: number | null; // 0–50
     };
   };
 } {
-  // --- Raw metrics from Supabase using YOUR keys ---
-
-  // Speed (we treat these as ft/sec)
+  // Raw metrics
   const run1bFpsRaw = metrics["timed_run_1b"];
   const run4bFpsRaw = metrics["timed_run_4b"];
 
-  // Balance - SLS (Right/Left) for Eyes Open/Closed
   const slsOpenRightRaw = metrics["sls_eyes_open_right"];
   const slsOpenLeftRaw = metrics["sls_eyes_open_left"];
   const slsClosedRightRaw = metrics["sls_eyes_closed_right"];
   const slsClosedLeftRaw = metrics["sls_eyes_closed_left"];
 
-  // Mobility
   const toeTouchRaw = metrics["toe_touch"];
   const deepSquatRaw = metrics["deep_squat"];
-
-  // --- Constants from spreadsheet (W5, W7, W11, W12, W14, W15) ---
 
   const RUN_1B_MAX_POINTS = 20;     // W5
   const RUN_4B_MAX_POINTS = 25;     // W7
@@ -92,10 +89,8 @@ function computeAthleticSkillsScore(metrics: MetricMap): {
   const TOE_TOUCH_MAX_POINTS = 6;   // W14
   const DEEP_SQUAT_MAX_POINTS = 9;  // W15
 
-  const CATEGORY_MAX_POINTS = 85;    // W17 = 20+25+10+15+6+9
+  const CATEGORY_MAX_POINTS = 85;     // W17
   const CATEGORY_NORMALIZED_MAX = 50; // X17
-
-  // --- Normalize primitives ---
 
   const run1bFps =
     run1bFpsRaw == null || typeof run1bFpsRaw !== "number" || Number.isNaN(run1bFpsRaw)
@@ -137,7 +132,6 @@ function computeAthleticSkillsScore(metrics: MetricMap): {
       ? null
       : deepSquatRaw;
 
-  // Helper: average of left/right (using available values)
   function avgSeconds(a: number | null, b: number | null): number | null {
     const vals = [a, b].filter(
       (v): v is number => typeof v === "number" && !Number.isNaN(v)
@@ -153,41 +147,34 @@ function computeAthleticSkillsScore(metrics: MetricMap): {
     slsClosedLeftSeconds
   );
 
-  // --- Convert to points (mirroring spreadsheet) ---
-
-  // 1B Speed: (fps - 7) * 3, clamp [0, 20]
+  // Convert to points
   let run1bPoints: number | null = null;
   if (run1bFps != null) {
     const rawPoints = (run1bFps - 7) * 3;
     run1bPoints = clamp(rawPoints, 0, RUN_1B_MAX_POINTS);
   }
 
-  // 4B Speed: (fps - 7) * 3, clamp [0, 25]
   let run4bPoints: number | null = null;
   if (run4bFps != null) {
     const rawPoints = (run4bFps - 7) * 3;
     run4bPoints = clamp(rawPoints, 0, RUN_4B_MAX_POINTS);
   }
 
-  // SLS Eyes Open: average seconds / 3, clamp [0, 10]
   let slsOpenPoints: number | null = null;
   if (slsOpenAvgSeconds != null) {
     const rawPoints = slsOpenAvgSeconds / 3;
     slsOpenPoints = clamp(rawPoints, 0, SLS_OPEN_MAX_POINTS);
   }
 
-  // SLS Eyes Closed: average seconds / 2, clamp [0, 15]
   let slsClosedPoints: number | null = null;
   if (slsClosedAvgSeconds != null) {
     const rawPoints = slsClosedAvgSeconds / 2;
     slsClosedPoints = clamp(rawPoints, 0, SLS_CLOSED_MAX_POINTS);
   }
 
-  // Toe Touch & Deep Squat: points provided directly, clamped
   const toeTouchPoints = clamp(toeTouchRawPts, 0, TOE_TOUCH_MAX_POINTS);
   const deepSquatPoints = clamp(deepSquatRawPts, 0, DEEP_SQUAT_MAX_POINTS);
 
-  // Collect available components for total
   const components: number[] = [];
   if (typeof run1bPoints === "number") components.push(run1bPoints);
   if (typeof run4bPoints === "number") components.push(run4bPoints);
@@ -196,42 +183,28 @@ function computeAthleticSkillsScore(metrics: MetricMap): {
   if (typeof toeTouchPoints === "number") components.push(toeTouchPoints);
   if (typeof deepSquatPoints === "number") components.push(deepSquatPoints);
 
-  if (components.length === 0) {
-    return {
-      categoryScore: null,
-      breakdown: {
-        total_points: null,
-        max_points: CATEGORY_MAX_POINTS,
-        tests: {
-          run_1b_points: run1bPoints,
-          run_4b_points: run4bPoints,
-          sls_open_points: slsOpenPoints,
-          sls_closed_points: slsClosedPoints,
-          toe_touch_points: toeTouchPoints,
-          deep_squat_points: deepSquatPoints,
-          run_1b_fps: run1bFps,
-          run_4b_fps: run4bFps,
-          sls_open_right_seconds: slsOpenRightSeconds,
-          sls_open_left_seconds: slsOpenLeftSeconds,
-          sls_open_avg_seconds: slsOpenAvgSeconds,
-          sls_closed_right_seconds: slsClosedRightSeconds,
-          sls_closed_left_seconds: slsClosedLeftSeconds,
-          sls_closed_avg_seconds: slsClosedAvgSeconds,
-          toe_touch_raw_points: toeTouchRawPts,
-          deep_squat_raw_points: deepSquatRawPts,
-        },
-      },
-    };
-  }
+  let totalPoints: number | null = null;
+  let categoryScore: number | null = null;
 
-  const totalPoints = components.reduce((sum, v) => sum + v, 0);
-  const ratio =
-    CATEGORY_MAX_POINTS > 0 ? totalPoints / CATEGORY_MAX_POINTS : 0;
-  const rawCategoryScore = ratio * CATEGORY_NORMALIZED_MAX;
-  const categoryScore =
-    Number.isFinite(rawCategoryScore)
+  if (components.length > 0) {
+    totalPoints = components.reduce((sum, v) => sum + v, 0);
+    const ratio =
+      CATEGORY_MAX_POINTS > 0 ? totalPoints / CATEGORY_MAX_POINTS : 0;
+    const rawCategoryScore = ratio * CATEGORY_NORMALIZED_MAX;
+    categoryScore = Number.isFinite(rawCategoryScore)
       ? Math.round(rawCategoryScore * 10) / 10
       : null;
+  }
+
+  // NEW – speed-only derived score from run1b + run4b
+  let speedPointsTotal: number | null = null;
+  let speedScore: number | null = null;
+  if (typeof run1bPoints === "number" && typeof run4bPoints === "number") {
+    speedPointsTotal = run1bPoints + run4bPoints; // max 20 + 25 = 45
+    const SPEED_MAX_POINTS = RUN_1B_MAX_POINTS + RUN_4B_MAX_POINTS;
+    const raw = (speedPointsTotal / SPEED_MAX_POINTS) * 50;
+    speedScore = Math.round(raw * 10) / 10;
+  }
 
   return {
     categoryScore,
@@ -255,10 +228,13 @@ function computeAthleticSkillsScore(metrics: MetricMap): {
         sls_closed_avg_seconds: slsClosedAvgSeconds,
         toe_touch_raw_points: toeTouchRawPts,
         deep_squat_raw_points: deepSquatRawPts,
+        speed_points_total: speedPointsTotal,
+        speed_score: speedScore,
       },
     },
   };
 }
+
 
 
 
