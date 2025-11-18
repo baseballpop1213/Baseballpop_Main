@@ -40,19 +40,269 @@ function clamp(
   return value;
 }
 
-/**
- * Placeholder scoring for 5U Athletic Skills.
- * TODO: implement based on spreadsheet.
- */
-function computeAthleticSkillsScore(_metrics: MetricMap): {
+function computeAthleticSkillsScore(metrics: MetricMap): {
   categoryScore: number | null;
-  breakdown: Record<string, unknown>;
+  breakdown: {
+    total_points: number | null;
+    max_points: number;
+    tests: {
+      run_1b_points: number | null;
+      run_4b_points: number | null;
+      sls_open_points: number | null;
+      sls_closed_points: number | null;
+      toe_touch_points: number | null;
+      deep_squat_points: number | null;
+
+      run_1b_speed_fps: number | null;
+      run_4b_speed_fps: number | null;
+      run_1b_time_seconds: number | null;
+      run_1b_base_distance_ft: number | null;
+      run_4b_time_seconds: number | null;
+      run_4b_base_distance_ft: number | null;
+
+      sls_open_avg_seconds: number | null;
+      sls_open_right_seconds: number | null;
+      sls_open_left_seconds: number | null;
+      sls_closed_avg_seconds: number | null;
+      sls_closed_right_seconds: number | null;
+      sls_closed_left_seconds: number | null;
+
+      toe_touch_raw_points: number | null;
+      deep_squat_raw_points: number | null;
+    };
+  };
 } {
+  // --- Raw metrics from Supabase ---
+
+  // Speed
+  const run1bFpsRaw = metrics["run_1b_speed_fps"];
+  const run4bFpsRaw = metrics["run_4b_speed_fps"];
+  const run1bTimeRaw = metrics["run_1b_time_seconds"];
+  const run1bBaseRaw = metrics["run_1b_base_distance_ft"];
+  const run4bTimeRaw = metrics["run_4b_time_seconds"];
+  const run4bBaseRaw = metrics["run_4b_base_distance_ft"];
+
+  // Balance - SLS (Right/Left) for Eyes Open/Closed
+  const slsOpenRightRaw = metrics["sls_eyes_open_right_seconds"];
+  const slsOpenLeftRaw = metrics["sls_eyes_open_left_seconds"];
+  const slsClosedRightRaw = metrics["sls_eyes_closed_right_seconds"];
+  const slsClosedLeftRaw = metrics["sls_eyes_closed_left_seconds"];
+
+  // Mobility
+  const toeTouchRaw = metrics["toe_touch_points"];
+  const deepSquatRaw = metrics["deep_squat_points"];
+
+  // --- Constants from W5, W7, W11, W12, W14, W15 ---
+
+  const RUN_1B_MAX_POINTS = 20;     // W5
+  const RUN_4B_MAX_POINTS = 25;     // W7
+  const SLS_OPEN_MAX_POINTS = 10;   // W11
+  const SLS_CLOSED_MAX_POINTS = 15; // W12
+  const TOE_TOUCH_MAX_POINTS = 6;   // W14
+  const DEEP_SQUAT_MAX_POINTS = 9;  // W15
+
+  const CATEGORY_MAX_POINTS = 85;    // W17 = 20+25+10+15+6+9
+  const CATEGORY_NORMALIZED_MAX = 50; // X17
+
+  // --- Normalize primitives ---
+
+  const run1bFps =
+    run1bFpsRaw == null || typeof run1bFpsRaw !== "number" || Number.isNaN(run1bFpsRaw)
+      ? null
+      : run1bFpsRaw;
+
+  const run4bFps =
+    run4bFpsRaw == null || typeof run4bFpsRaw !== "number" || Number.isNaN(run4bFpsRaw)
+      ? null
+      : run4bFpsRaw;
+
+  const run1bTimeSeconds =
+    run1bTimeRaw == null || typeof run1bTimeRaw !== "number" || Number.isNaN(run1bTimeRaw)
+      ? null
+      : run1bTimeRaw;
+
+  const run1bBaseFt =
+    run1bBaseRaw == null || typeof run1bBaseRaw !== "number" || Number.isNaN(run1bBaseRaw)
+      ? null
+      : run1bBaseRaw;
+
+  const run4bTimeSeconds =
+    run4bTimeRaw == null || typeof run4bTimeRaw !== "number" || Number.isNaN(run4bTimeRaw)
+      ? null
+      : run4bTimeRaw;
+
+  const run4bBaseFt =
+    run4bBaseRaw == null || typeof run4bBaseRaw !== "number" || Number.isNaN(run4bBaseRaw)
+      ? null
+      : run4bBaseRaw;
+
+  const slsOpenRightSeconds =
+    slsOpenRightRaw == null || typeof slsOpenRightRaw !== "number" || Number.isNaN(slsOpenRightRaw)
+      ? null
+      : slsOpenRightRaw;
+
+  const slsOpenLeftSeconds =
+    slsOpenLeftRaw == null || typeof slsOpenLeftRaw !== "number" || Number.isNaN(slsOpenLeftRaw)
+      ? null
+      : slsOpenLeftRaw;
+
+  const slsClosedRightSeconds =
+    slsClosedRightRaw == null || typeof slsClosedRightRaw !== "number" || Number.isNaN(slsClosedRightRaw)
+      ? null
+      : slsClosedRightRaw;
+
+  const slsClosedLeftSeconds =
+    slsClosedLeftRaw == null || typeof slsClosedLeftRaw !== "number" || Number.isNaN(slsClosedLeftRaw)
+      ? null
+      : slsClosedLeftRaw;
+
+  const toeTouchRawPts =
+    toeTouchRaw == null || typeof toeTouchRaw !== "number" || Number.isNaN(toeTouchRaw)
+      ? null
+      : toeTouchRaw;
+
+  const deepSquatRawPts =
+    deepSquatRaw == null || typeof deepSquatRaw !== "number" || Number.isNaN(deepSquatRaw)
+      ? null
+      : deepSquatRaw;
+
+  // Helper: average of left/right (using available values)
+  function avgSeconds(
+    a: number | null,
+    b: number | null
+  ): number | null {
+    const vals = [a, b].filter(
+      (v): v is number => typeof v === "number" && !Number.isNaN(v)
+    );
+    if (vals.length === 0) return null;
+    const sum = vals.reduce((acc, v) => acc + v, 0);
+    return sum / vals.length;
+  }
+
+  const slsOpenAvgSeconds = avgSeconds(
+    slsOpenRightSeconds,
+    slsOpenLeftSeconds
+  );
+  const slsClosedAvgSeconds = avgSeconds(
+    slsClosedRightSeconds,
+    slsClosedLeftSeconds
+  );
+
+  // --- Convert to points (mirroring spreadsheet) ---
+
+  // 1B Speed: (fps - 7) * 3, clamp [0, 20]
+  let run1bPoints: number | null = null;
+  if (run1bFps != null) {
+    const rawPoints = (run1bFps - 7) * 3;
+    run1bPoints = clamp(rawPoints, 0, RUN_1B_MAX_POINTS);
+  }
+
+  // 4B Speed: (fps - 7) * 3, clamp [0, 25]
+  let run4bPoints: number | null = null;
+  if (run4bFps != null) {
+    const rawPoints = (run4bFps - 7) * 3;
+    run4bPoints = clamp(rawPoints, 0, RUN_4B_MAX_POINTS);
+  }
+
+  // SLS Eyes Open: average seconds / 3, clamp [0, 10]
+  let slsOpenPoints: number | null = null;
+  if (slsOpenAvgSeconds != null) {
+    const rawPoints = slsOpenAvgSeconds / 3;
+    slsOpenPoints = clamp(rawPoints, 0, SLS_OPEN_MAX_POINTS);
+  }
+
+  // SLS Eyes Closed: average seconds / 2, clamp [0, 15]
+  let slsClosedPoints: number | null = null;
+  if (slsClosedAvgSeconds != null) {
+    const rawPoints = slsClosedAvgSeconds / 2;
+    slsClosedPoints = clamp(rawPoints, 0, SLS_CLOSED_MAX_POINTS);
+  }
+
+  // Toe Touch & Deep Squat: points provided directly, clamped
+  const toeTouchPoints = clamp(toeTouchRawPts, 0, TOE_TOUCH_MAX_POINTS);
+  const deepSquatPoints = clamp(deepSquatRawPts, 0, DEEP_SQUAT_MAX_POINTS);
+
+  // Collect available components for total
+  const components: number[] = [];
+  if (typeof run1bPoints === "number") components.push(run1bPoints);
+  if (typeof run4bPoints === "number") components.push(run4bPoints);
+  if (typeof slsOpenPoints === "number") components.push(slsOpenPoints);
+  if (typeof slsClosedPoints === "number") components.push(slsClosedPoints);
+  if (typeof toeTouchPoints === "number") components.push(toeTouchPoints);
+  if (typeof deepSquatPoints === "number") components.push(deepSquatPoints);
+
+  if (components.length === 0) {
+    return {
+      categoryScore: null,
+      breakdown: {
+        total_points: null,
+        max_points: CATEGORY_MAX_POINTS,
+        tests: {
+          run_1b_points: run1bPoints,
+          run_4b_points: run4bPoints,
+          sls_open_points: slsOpenPoints,
+          sls_closed_points: slsClosedPoints,
+          toe_touch_points: toeTouchPoints,
+          deep_squat_points: deepSquatPoints,
+          run_1b_speed_fps: run1bFps,
+          run_4b_speed_fps: run4bFps,
+          run_1b_time_seconds: run1bTimeSeconds,
+          run_1b_base_distance_ft: run1bBaseFt,
+          run_4b_time_seconds: run4bTimeSeconds,
+          run_4b_base_distance_ft: run4bBaseFt,
+          sls_open_avg_seconds: slsOpenAvgSeconds,
+          sls_open_right_seconds: slsOpenRightSeconds,
+          sls_open_left_seconds: slsOpenLeftSeconds,
+          sls_closed_avg_seconds: slsClosedAvgSeconds,
+          sls_closed_right_seconds: slsClosedRightSeconds,
+          sls_closed_left_seconds: slsClosedLeftSeconds,
+          toe_touch_raw_points: toeTouchRawPts,
+          deep_squat_raw_points: deepSquatRawPts,
+        },
+      },
+    };
+  }
+
+  const totalPoints = components.reduce((sum, v) => sum + v, 0);
+  const ratio =
+    CATEGORY_MAX_POINTS > 0 ? totalPoints / CATEGORY_MAX_POINTS : 0;
+  const rawCategoryScore = ratio * CATEGORY_NORMALIZED_MAX;
+  const categoryScore =
+    Number.isFinite(rawCategoryScore)
+      ? Math.round(rawCategoryScore * 10) / 10
+      : null;
+
   return {
-    categoryScore: null,
-    breakdown: {},
+    categoryScore,
+    breakdown: {
+      total_points: totalPoints,
+      max_points: CATEGORY_MAX_POINTS,
+      tests: {
+        run_1b_points: run1bPoints,
+        run_4b_points: run4bPoints,
+        sls_open_points: slsOpenPoints,
+        sls_closed_points: slsClosedPoints,
+        toe_touch_points: toeTouchPoints,
+        deep_squat_points: deepSquatPoints,
+        run_1b_speed_fps: run1bFps,
+        run_4b_speed_fps: run4bFps,
+        run_1b_time_seconds: run1bTimeSeconds,
+        run_1b_base_distance_ft: run1bBaseFt,
+        run_4b_time_seconds: run4bTimeSeconds,
+        run_4b_base_distance_ft: run4bBaseFt,
+        sls_open_avg_seconds: slsOpenAvgSeconds,
+        sls_open_right_seconds: slsOpenRightSeconds,
+        sls_open_left_seconds: slsOpenLeftSeconds,
+        sls_closed_avg_seconds: slsClosedAvgSeconds,
+        sls_closed_right_seconds: slsClosedRightSeconds,
+        sls_closed_left_seconds: slsClosedLeftSeconds,
+        toe_touch_raw_points: toeTouchRawPts,
+        deep_squat_raw_points: deepSquatRawPts,
+      },
+    },
   };
 }
+
 
 /**
  * REAL scoring for 5U Hitting.
