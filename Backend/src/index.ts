@@ -12,6 +12,7 @@ import { compute6URatings } from "./scoring/6u";
 import { compute7URatings } from "./scoring/7u";
 import { compute8URatings } from "./scoring/8u";
 import { compute9URatings } from "./scoring/9u";
+import { compute10URatings } from "./scoring/10u";
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -1326,16 +1327,18 @@ app.post("/assessments", async (req: AuthedRequest, res) => {
 
   const ageLabel = ageGroup.label;
 
-  // Only 5U, 6U, 7U, 8U, 9U are implemented with scoring right now
+  // Only 5U–10U are implemented with scoring right now
   if (
     ageLabel !== "5U" &&
     ageLabel !== "6U" &&
     ageLabel !== "7U" &&
     ageLabel !== "8U" &&
-    ageLabel !== "9U"
+    ageLabel !== "9U" &&
+    ageLabel !== "10U"
   ) {
     return res.status(201).json({ assessment_id: assessmentId });
   }
+
 
   // 4) Load metric definitions (id -> metric_key) for this template
   const { data: metricDefs, error: metricsError } = await supabase
@@ -1393,11 +1396,14 @@ app.post("/assessments", async (req: AuthedRequest, res) => {
     ratings = compute8URatings(metricMap);
   } else if (ageLabel === "9U") {
     ratings = compute9URatings(metricMap);
+  } else if (ageLabel === "10U") {
+    ratings = compute10URatings(metricMap);
   } else {
     // Should be unreachable because of the earlier guard,
     // but keep this for safety.
     throw new Error(`Unsupported age group: ${ageLabel}`);
   }
+
 
 
   // 8) Insert into player_ratings
