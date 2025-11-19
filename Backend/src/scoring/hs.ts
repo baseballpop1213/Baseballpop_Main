@@ -225,6 +225,8 @@ function computeHSAthleticSkills(metrics: MetricMap) {
         // Speed
         run_1b_distance_ft: run1bDistanceFt,
         run_4b_distance_ft: run4bDistanceFt,
+        run_1b_seconds: run1bSeconds,
+        run_4b_seconds: run4bSeconds,
         run_1b_fps: run1bFps,
         run_4b_fps: run4bFps,
         run_1b_points: run1bPoints,

@@ -32,6 +32,21 @@ function getMetric(metrics: MetricMap, key: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function getFps(
+  metrics: MetricMap,
+  timeKey: string,
+  distanceKey: string,
+  defaultDistanceFt: number
+): number | null {
+  const time = getMetric(metrics, timeKey);
+  if (time === null || time <= 0) return null;
+
+  const distance = getMetric(metrics, distanceKey);
+  const dist = distance !== null && distance > 0 ? distance : defaultDistanceFt;
+
+  return dist / time;
+}
+
 /**
  * 9U ATHLETIC SKILLS
  *
@@ -79,13 +94,15 @@ const ATHLETIC_MAX_POINTS_9U =
   DEEP_SQUAT_MAX_9U; // 186
 
 function compute9UAthleticSkills(metrics: MetricMap) {
-  // Raw inputs
+  // Raw inputs (for reporting)
   const run1bSeconds = getMetric(metrics, "timed_run_1b");
   const run4bSeconds = getMetric(metrics, "timed_run_4b");
+  const run1bDistanceFt = getMetric(metrics, "timed_run_1b_distance_ft");
+  const run4bDistanceFt = getMetric(metrics, "timed_run_4b_distance_ft");
 
-  // Convert to FPS (60ft & 240ft)
-  const run1bFps = run1bSeconds ? 60 / run1bSeconds : null;
-  const run4bFps = run4bSeconds ? 240 / run4bSeconds : null;
+  // Use distance-aware FPS with fallbacks to 60ft / 240ft
+  const run1bFps = getFps(metrics, "timed_run_1b", "timed_run_1b_distance_ft", 60);
+  const run4bFps = getFps(metrics, "timed_run_4b", "timed_run_4b_distance_ft", 240);
 
   // Speed points (9U logic: (FPS - 7) * 3)
   const run1bPointsRaw = run1bFps ? (run1bFps - 7) * 3 : null;
@@ -185,6 +202,12 @@ function compute9UAthleticSkills(metrics: MetricMap) {
     total_points: athleticTotalPoints,
     breakdown: {
       tests: {
+        // Speed raw + derived
+        run_1b_seconds: run1bSeconds,
+        run_1b_distance_ft: run1bDistanceFt,
+        run_4b_seconds: run4bSeconds,
+        run_4b_distance_ft: run4bDistanceFt,
+
         run_1b_fps: run1bFps,
         run_4b_fps: run4bFps,
         speed_score: speedScore,

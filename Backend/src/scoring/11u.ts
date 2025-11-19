@@ -41,6 +41,21 @@ function getMetric(metrics: MetricMap, key: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function getFps(
+  metrics: MetricMap,
+  timeKey: string,
+  distanceKey: string,
+  defaultDistanceFt: number
+): number | null {
+  const time = getMetric(metrics, timeKey);
+  if (time === null || time <= 0) return null;
+
+  const distance = getMetric(metrics, distanceKey);
+  const dist = distance !== null && distance > 0 ? distance : defaultDistanceFt;
+
+  return dist / time;
+}
+
 /* -------------------------------------------------------------------------- */
 /*                              11U ATHLETIC                                  */
 /* -------------------------------------------------------------------------- */
@@ -83,12 +98,14 @@ const ATHLETIC_POINTS_MAX_11U =
   DEEP_SQUAT_MAX_11U; // 191
 
 function compute11UAthleticSkills(metrics: MetricMap) {
-  // Speed: 1B & 4B ((fps - 7) * 3), same structure
+  // Speed: 1B & 4B ((fps - 7) * 3), now using time + distance (with defaults)
   const run1bSeconds = getMetric(metrics, "timed_run_1b");
   const run4bSeconds = getMetric(metrics, "timed_run_4b");
+  const run1bDistanceFt = getMetric(metrics, "timed_run_1b_distance_ft");
+  const run4bDistanceFt = getMetric(metrics, "timed_run_4b_distance_ft");
 
-  const run1bFps = run1bSeconds ? 60 / run1bSeconds : null;
-  const run4bFps = run4bSeconds ? 240 / run4bSeconds : null;
+  const run1bFps = getFps(metrics, "timed_run_1b", "timed_run_1b_distance_ft", 60);
+  const run4bFps = getFps(metrics, "timed_run_4b", "timed_run_4b_distance_ft", 240);
 
   const run1bPointsRaw = run1bFps ? (run1bFps - 7) * 3 : null;
   const run4bPointsRaw = run4bFps ? (run4bFps - 7) * 3 : null;
@@ -181,7 +198,12 @@ function compute11UAthleticSkills(metrics: MetricMap) {
     total_points: athleticTotalPoints,
     breakdown: {
       tests: {
-        // Speed
+        // Speed raw + derived
+        run_1b_seconds: run1bSeconds,
+        run_1b_distance_ft: run1bDistanceFt,
+        run_4b_seconds: run4bSeconds,
+        run_4b_distance_ft: run4bDistanceFt,
+
         run_1b_fps: run1bFps,
         run_4b_fps: run4bFps,
         run_1b_points: run1bPoints,

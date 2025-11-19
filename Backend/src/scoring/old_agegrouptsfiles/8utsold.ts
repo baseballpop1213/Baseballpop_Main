@@ -36,19 +36,16 @@ function getMetric(metrics: MetricMap, key: string): number | null {
  * 8U ATHLETIC SKILLS
  *
  * Tests & maxima (points):
- * - 1B Speed:    from timed_run_1b (seconds) + timed_run_1b_distance_ft (feet) -> FPS -> max 40
- * - 4B Speed:    from timed_run_4b (seconds) + timed_run_4b_distance_ft (feet) -> FPS -> max 45
+ * - 1B Speed (TS1B): max 40
+ * - 4B Speed (TS4B): max 45
  * - Push-ups 30s (APUSH30): raw/2, max 20
- * - Sit-ups 30s (ASIT30):   raw/3, max 15
+ * - Sit-ups 30s (ASIT30): raw/3, max 15
  * - Vertical jump inches (ASPJUMP): raw inches, max 20
  * - SLS Eyes Open (avg of L/R seconds): (avg / 3), max 10
  * - SLS Eyes Closed (avg of L/R seconds): (avg / 2), max 15
  * - MSR Right / Left: each 0–3, total max 6
  * - Toe Touch: 0–3 (same as 6U/7U)
  * - Deep Squat: 0–8 (same as 6U/7U)
- *
- * If the distance metrics are missing, we default to:
- *   1B distance = 60 ft, 4B distance = 240 ft
  *
  * Category max points = 40 + 45 + 20 + 15 + 20 + 10 + 15 + 6 + 3 + 8 = 182
  * Category score = (totalPoints / 182) * 50
@@ -82,31 +79,17 @@ const ATHLETIC_MAX_POINTS_8U =
   DEEP_SQUAT_MAX_8U; // 182
 
 function compute8UAthleticSkills(metrics: MetricMap) {
-  // Raw inputs: times
+  // Raw inputs
   const run1bSeconds = getMetric(metrics, "timed_run_1b");
   const run4bSeconds = getMetric(metrics, "timed_run_4b");
 
-  // New distance metrics (feet), with sane defaults if missing
-  const run1bDistanceRawFt = getMetric(metrics, "timed_run_1b_distance_ft");
-  const run4bDistanceRawFt = getMetric(metrics, "timed_run_4b_distance_ft");
+  // Convert to FPS (60ft & 240ft)
+  const run1bFps = run1bSeconds ? 60 / run1bSeconds : null;
+  const run4bFps = run4bSeconds ? 240 / run4bSeconds : null;
 
-  const run1bDistanceFt = run1bDistanceRawFt ?? 60;   // default 60 ft
-  const run4bDistanceFt = run4bDistanceRawFt ?? 240;  // default 4 × 60 ft
-
-  // Convert to FPS: distance / time
-  const run1bFps =
-    run1bSeconds !== null && run1bSeconds > 0
-      ? run1bDistanceFt / run1bSeconds
-      : null;
-
-  const run4bFps =
-    run4bSeconds !== null && run4bSeconds > 0
-      ? run4bDistanceFt / run4bSeconds
-      : null;
-
-  // Speed points (using sheet logic: FPS/5 * 10 → capped to TS1B/TS4B max)
-  const run1bPointsRaw = run1bFps !== null ? (run1bFps / 5) * 10 : null;
-  const run4bPointsRaw = run4bFps !== null ? (run4bFps / 5) * 10 : null;
+  // Speed points (using sheet logic TS / 2 and divisors in W5/W7 style: FPS/5 * 10)
+  const run1bPointsRaw = run1bFps ? (run1bFps / 5) * 10 : null;
+  const run4bPointsRaw = run4bFps ? (run4bFps / 5) * 10 : null;
 
   const run1bPoints = clamp(run1bPointsRaw, 0, TS1B_MAX_POINTS_8U);
   const run4bPoints = clamp(run4bPointsRaw, 0, TS4B_MAX_POINTS_8U);
@@ -126,8 +109,8 @@ function compute8UAthleticSkills(metrics: MetricMap) {
   const slsOpenAvgSeconds = average([slsOpenRightSec, slsOpenLeftSec]);
   const slsClosedAvgSeconds = average([slsClosedRightSec, slsClosedLeftSec]);
 
-  const slsOpenPointsRaw = slsOpenAvgSeconds !== null ? slsOpenAvgSeconds / 3 : null;
-  const slsClosedPointsRaw = slsClosedAvgSeconds !== null ? slsClosedAvgSeconds / 2 : null;
+  const slsOpenPointsRaw = slsOpenAvgSeconds ? slsOpenAvgSeconds / 3 : null;
+  const slsClosedPointsRaw = slsClosedAvgSeconds ? slsClosedAvgSeconds / 2 : null;
 
   const slsOpenPoints = clamp(slsOpenPointsRaw, 0, SLS_OPEN_MAX_8U);
   const slsClosedPoints = clamp(slsClosedPointsRaw, 0, SLS_CLOSED_MAX_8U);
@@ -202,11 +185,6 @@ function compute8UAthleticSkills(metrics: MetricMap) {
     total_points: athleticTotalPoints,
     breakdown: {
       tests: {
-        // Speed
-        run_1b_seconds: run1bSeconds,
-        run_4b_seconds: run4bSeconds,
-        run_1b_distance_ft: run1bDistanceFt,
-        run_4b_distance_ft: run4bDistanceFt,
         run_1b_fps: run1bFps,
         run_4b_fps: run4bFps,
         speed_score: speedScore,

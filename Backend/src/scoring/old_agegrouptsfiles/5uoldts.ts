@@ -40,24 +40,6 @@ function clamp(
   return value;
 }
 
-/**
- * Convert (seconds, distance ft) → feet per second.
- */
-function getFps(
-  secondsRaw: number | null | undefined,
-  distanceFeet: number
-): number | null {
-  if (
-    secondsRaw == null ||
-    typeof secondsRaw !== "number" ||
-    Number.isNaN(secondsRaw) ||
-    secondsRaw <= 0
-  ) {
-    return null;
-  }
-  return distanceFeet / secondsRaw;
-}
-
 function computeAthleticSkillsScore(metrics: MetricMap): {
   categoryScore: number | null;
   breakdown: {
@@ -82,25 +64,15 @@ function computeAthleticSkillsScore(metrics: MetricMap): {
       toe_touch_raw_points: number | null;
       deep_squat_raw_points: number | null;
 
-      // timing / distance fields
-      run_1b_seconds: number | null;
-      run_4b_seconds: number | null;
-      run_1b_distance_ft: number | null;
-      run_4b_distance_ft: number | null;
-
-      // speed-only rollup
+      // NEW:
       speed_points_total: number | null;
       speed_score: number | null; // 0–50
     };
   };
 } {
-  // Raw metrics: times (seconds)
-  const run1bSecondsRaw = metrics["timed_run_1b"];
-  const run4bSecondsRaw = metrics["timed_run_4b"];
-
-  // Distances from Supabase (5U template_id = 1)
-  const run1bDistanceFtRaw = metrics["timed_run_1b_distance_ft"];
-  const run4bDistanceFtRaw = metrics["timed_run_4b_distance_ft"];
+  // Raw metrics
+  const run1bFpsRaw = metrics["timed_run_1b"];
+  const run4bFpsRaw = metrics["timed_run_4b"];
 
   const slsOpenRightRaw = metrics["sls_eyes_open_right"];
   const slsOpenLeftRaw = metrics["sls_eyes_open_left"];
@@ -120,78 +92,43 @@ function computeAthleticSkillsScore(metrics: MetricMap): {
   const CATEGORY_MAX_POINTS = 85;     // W17
   const CATEGORY_NORMALIZED_MAX = 50; // X17
 
-  // Normalize numeric inputs
-  const run1bSeconds =
-    run1bSecondsRaw == null ||
-    typeof run1bSecondsRaw !== "number" ||
-    Number.isNaN(run1bSecondsRaw)
+  const run1bFps =
+    run1bFpsRaw == null || typeof run1bFpsRaw !== "number" || Number.isNaN(run1bFpsRaw)
       ? null
-      : run1bSecondsRaw;
+      : run1bFpsRaw;
 
-  const run4bSeconds =
-    run4bSecondsRaw == null ||
-    typeof run4bSecondsRaw !== "number" ||
-    Number.isNaN(run4bSecondsRaw)
+  const run4bFps =
+    run4bFpsRaw == null || typeof run4bFpsRaw !== "number" || Number.isNaN(run4bFpsRaw)
       ? null
-      : run4bSecondsRaw;
-
-  const run1bDistanceFt =
-    run1bDistanceFtRaw == null ||
-    typeof run1bDistanceFtRaw !== "number" ||
-    Number.isNaN(run1bDistanceFtRaw)
-      ? null
-      : run1bDistanceFtRaw;
-
-  const run4bDistanceFt =
-    run4bDistanceFtRaw == null ||
-    typeof run4bDistanceFtRaw !== "number" ||
-    Number.isNaN(run4bDistanceFtRaw)
-      ? null
-      : run4bDistanceFtRaw;
-
-  // Default base paths if distances are missing
-  const RUN_1B_DISTANCE_FT = run1bDistanceFt ?? 60;
-  const RUN_4B_DISTANCE_FT = run4bDistanceFt ?? 60 * 4;
+      : run4bFpsRaw;
 
   const slsOpenRightSeconds =
-    slsOpenRightRaw == null ||
-    typeof slsOpenRightRaw !== "number" ||
-    Number.isNaN(slsOpenRightRaw)
+    slsOpenRightRaw == null || typeof slsOpenRightRaw !== "number" || Number.isNaN(slsOpenRightRaw)
       ? null
       : slsOpenRightRaw;
 
   const slsOpenLeftSeconds =
-    slsOpenLeftRaw == null ||
-    typeof slsOpenLeftRaw !== "number" ||
-    Number.isNaN(slsOpenLeftRaw)
+    slsOpenLeftRaw == null || typeof slsOpenLeftRaw !== "number" || Number.isNaN(slsOpenLeftRaw)
       ? null
       : slsOpenLeftRaw;
 
   const slsClosedRightSeconds =
-    slsClosedRightRaw == null ||
-    typeof slsClosedRightRaw !== "number" ||
-    Number.isNaN(slsClosedRightRaw)
+    slsClosedRightRaw == null || typeof slsClosedRightRaw !== "number" || Number.isNaN(slsClosedRightRaw)
       ? null
       : slsClosedRightRaw;
 
   const slsClosedLeftSeconds =
-    slsClosedLeftRaw == null ||
-    typeof slsClosedLeftRaw !== "number" ||
-    Number.isNaN(slsClosedLeftRaw)
+    slsClosedLeftRaw == null || typeof slsClosedLeftRaw !== "number" || Number.isNaN(slsClosedLeftRaw)
       ? null
       : slsClosedLeftRaw;
 
   const toeTouchRawPts =
-    toeTouchRaw == null ||
-    typeof toeTouchRaw !== "number" ||
-    Number.isNaN(toeTouchRaw)
+    toeTouchRaw == null || typeof toeTouchRaw !== "number" || Number.isNaN(toeTouchRaw)
       ? null
       : toeTouchRaw;
 
   const deepSquatRawPts =
-    deepSquatRaw == null ||
-    typeof deepSquatRaw !== "number" ||
-    Number.isNaN(deepSquatRaw)
+    deepSquatRaw == null || typeof deepSquatRaw !== "number" || Number.isNaN(deepSquatRaw)
       ? null
       : deepSquatRaw;
 
@@ -209,10 +146,6 @@ function computeAthleticSkillsScore(metrics: MetricMap): {
     slsClosedRightSeconds,
     slsClosedLeftSeconds
   );
-
-  // Time + distance → fps via helper
-  const run1bFps = getFps(run1bSeconds, RUN_1B_DISTANCE_FT);
-  const run4bFps = getFps(run4bSeconds, RUN_4B_DISTANCE_FT);
 
   // Convert to points
   let run1bPoints: number | null = null;
@@ -263,7 +196,7 @@ function computeAthleticSkillsScore(metrics: MetricMap): {
       : null;
   }
 
-  // Speed-only derived score from run1b + run4b
+  // NEW – speed-only derived score from run1b + run4b
   let speedPointsTotal: number | null = null;
   let speedScore: number | null = null;
   if (typeof run1bPoints === "number" && typeof run4bPoints === "number") {
@@ -285,31 +218,25 @@ function computeAthleticSkillsScore(metrics: MetricMap): {
         sls_closed_points: slsClosedPoints,
         toe_touch_points: toeTouchPoints,
         deep_squat_points: deepSquatPoints,
-
         run_1b_fps: run1bFps,
         run_4b_fps: run4bFps,
-
         sls_open_right_seconds: slsOpenRightSeconds,
         sls_open_left_seconds: slsOpenLeftSeconds,
         sls_open_avg_seconds: slsOpenAvgSeconds,
         sls_closed_right_seconds: slsClosedRightSeconds,
         sls_closed_left_seconds: slsClosedLeftSeconds,
         sls_closed_avg_seconds: slsClosedAvgSeconds,
-
         toe_touch_raw_points: toeTouchRawPts,
         deep_squat_raw_points: deepSquatRawPts,
-
-        run_1b_seconds: run1bSeconds,
-        run_4b_seconds: run4bSeconds,
-        run_1b_distance_ft: RUN_1B_DISTANCE_FT,
-        run_4b_distance_ft: RUN_4B_DISTANCE_FT,
-
         speed_points_total: speedPointsTotal,
         speed_score: speedScore,
       },
     },
   };
 }
+
+
+
 
 function computeHittingScore(metrics: MetricMap): {
   categoryScore: number | null;
@@ -611,6 +538,7 @@ function computeThrowingScore(metrics: MetricMap): {
   };
 }
 
+
 function computeCatchingScore(metrics: MetricMap): {
   categoryScore: number | null;
   breakdown: {
@@ -690,72 +618,102 @@ function computeCatchingScore(metrics: MetricMap): {
   };
 }
 
-function computeFieldingScore(metrics: MetricMap): {
-  categoryScore: number | null;
-  breakdown: {
-    total_points: number | null;
-    max_points: number;
-    tests: {
-      f2b_points: number | null;
-      fss_points: number | null;
-      f3b_points: number | null;
-      fpitcher_points: number | null;
-      f2b_raw_points: number | null;
-      fss_raw_points: number | null;
-      f3b_raw_points: number | null;
-      fpitcher_raw_points: number | null;
+
+
+  function computeFieldingScore(metrics: MetricMap): {
+    categoryScore: number | null;
+    breakdown: {
+      total_points: number | null;
+      max_points: number;
+      tests: {
+        f2b_points: number | null;
+        fss_points: number | null;
+        f3b_points: number | null;
+        fpitcher_points: number | null;
+        f2b_raw_points: number | null;
+        fss_raw_points: number | null;
+        f3b_raw_points: number | null;
+        fpitcher_raw_points: number | null;
+      };
     };
-  };
-} {
-  const f2bRaw = metrics["grounders_2b"];
-  const fssRaw = metrics["grounders_ss"];
-  const f3bRaw = metrics["grounders_3b"];
-  const fpitcherRaw = metrics["grounders_pitcher"];
+  } {
+    const f2bRaw = metrics["grounders_2b"];
+    const fssRaw = metrics["grounders_ss"];
+    const f3bRaw = metrics["grounders_3b"];
+    const fpitcherRaw = metrics["grounders_pitcher"];
 
-  const F2B_MAX_POINTS = 6;
-  const FSS_MAX_POINTS = 6;
-  const F3B_MAX_POINTS = 6;
-  const FPITCHER_MAX_POINTS = 6;
+    const F2B_MAX_POINTS = 6;
+    const FSS_MAX_POINTS = 6;
+    const F3B_MAX_POINTS = 6;
+    const FPITCHER_MAX_POINTS = 6;
 
-  const CATEGORY_MAX_POINTS = 24; // 6+6+6+6
-  const CATEGORY_NORMALIZED_MAX = 50;
+    const CATEGORY_MAX_POINTS = 24; // 6+6+6+6
+    const CATEGORY_NORMALIZED_MAX = 50;
 
-  const f2bRawPts =
-    f2bRaw == null || typeof f2bRaw !== "number" || Number.isNaN(f2bRaw)
-      ? null
-      : f2bRaw;
+    const f2bRawPts =
+      f2bRaw == null || typeof f2bRaw !== "number" || Number.isNaN(f2bRaw)
+        ? null
+        : f2bRaw;
 
-  const fssRawPts =
-    fssRaw == null || typeof fssRaw !== "number" || Number.isNaN(fssRaw)
-      ? null
-      : fssRaw;
+    const fssRawPts =
+      fssRaw == null || typeof fssRaw !== "number" || Number.isNaN(fssRaw)
+        ? null
+        : fssRaw;
 
-  const f3bRawPts =
-    f3bRaw == null || typeof f3bRaw !== "number" || Number.isNaN(f3bRaw)
-      ? null
-      : f3bRaw;
+    const f3bRawPts =
+      f3bRaw == null || typeof f3bRaw !== "number" || Number.isNaN(f3bRaw)
+        ? null
+        : f3bRaw;
 
-  const fpitcherRawPts =
-    fpitcherRaw == null || typeof fpitcherRaw !== "number" || Number.isNaN(fpitcherRaw)
-      ? null
-      : fpitcherRaw;
+    const fpitcherRawPts =
+      fpitcherRaw == null || typeof fpitcherRaw !== "number" || Number.isNaN(fpitcherRaw)
+        ? null
+        : fpitcherRaw;
 
-  const f2bPoints = clamp(f2bRawPts, 0, F2B_MAX_POINTS);
-  const fssPoints = clamp(fssRawPts, 0, FSS_MAX_POINTS);
-  const f3bPoints = clamp(f3bRawPts, 0, F3B_MAX_POINTS);
-  const fpitcherPoints = clamp(fpitcherRawPts, 0, FPITCHER_MAX_POINTS);
+    const f2bPoints = clamp(f2bRawPts, 0, F2B_MAX_POINTS);
+    const fssPoints = clamp(fssRawPts, 0, FSS_MAX_POINTS);
+    const f3bPoints = clamp(f3bRawPts, 0, F3B_MAX_POINTS);
+    const fpitcherPoints = clamp(fpitcherRawPts, 0, FPITCHER_MAX_POINTS);
 
-  const components: number[] = [];
-  if (typeof f2bPoints === "number") components.push(f2bPoints);
-  if (typeof fssPoints === "number") components.push(fssPoints);
-  if (typeof f3bPoints === "number") components.push(f3bPoints);
-  if (typeof fpitcherPoints === "number") components.push(fpitcherPoints);
+    const components: number[] = [];
+    if (typeof f2bPoints === "number") components.push(f2bPoints);
+    if (typeof fssPoints === "number") components.push(fssPoints);
+    if (typeof f3bPoints === "number") components.push(f3bPoints);
+    if (typeof fpitcherPoints === "number") components.push(fpitcherPoints);
 
-  if (components.length === 0) {
+    if (components.length === 0) {
+      return {
+        categoryScore: null,
+        breakdown: {
+          total_points: null,
+          max_points: CATEGORY_MAX_POINTS,
+          tests: {
+            f2b_points: f2bPoints,
+            fss_points: fssPoints,
+            f3b_points: f3bPoints,
+            fpitcher_points: fpitcherPoints,
+            f2b_raw_points: f2bRawPts,
+            fss_raw_points: fssRawPts,
+            f3b_raw_points: f3bRawPts,
+            fpitcher_raw_points: fpitcherRawPts,
+          },
+        },
+      };
+    }
+
+    const totalPoints = components.reduce((sum, v) => sum + v, 0);
+    const ratio =
+      CATEGORY_MAX_POINTS > 0 ? totalPoints / CATEGORY_MAX_POINTS : 0;
+    const rawCategoryScore = ratio * CATEGORY_NORMALIZED_MAX;
+    const categoryScore =
+      Number.isFinite(rawCategoryScore)
+        ? Math.round(rawCategoryScore * 10) / 10
+        : null;
+
     return {
-      categoryScore: null,
+      categoryScore,
       breakdown: {
-        total_points: null,
+        total_points: totalPoints,
         max_points: CATEGORY_MAX_POINTS,
         tests: {
           f2b_points: f2bPoints,
@@ -770,34 +728,6 @@ function computeFieldingScore(metrics: MetricMap): {
       },
     };
   }
-
-  const totalPoints = components.reduce((sum, v) => sum + v, 0);
-  const ratio =
-    CATEGORY_MAX_POINTS > 0 ? totalPoints / CATEGORY_MAX_POINTS : 0;
-  const rawCategoryScore = ratio * CATEGORY_NORMALIZED_MAX;
-  const categoryScore =
-    Number.isFinite(rawCategoryScore)
-      ? Math.round(rawCategoryScore * 10) / 10
-      : null;
-
-  return {
-    categoryScore,
-    breakdown: {
-      total_points: totalPoints,
-      max_points: CATEGORY_MAX_POINTS,
-      tests: {
-        f2b_points: f2bPoints,
-        fss_points: fssPoints,
-        f3b_points: f3bPoints,
-        fpitcher_points: fpitcherPoints,
-        f2b_raw_points: f2bRawPts,
-        fss_raw_points: fssRawPts,
-        f3b_raw_points: f3bRawPts,
-        fpitcher_raw_points: fpitcherRawPts,
-      },
-    },
-  };
-}
 
 /**
  * Main scoring for 5U assessments.

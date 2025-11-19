@@ -30,29 +30,6 @@ function clamp(
   return value;
 }
 
-/**
- * Safe numeric getter for metrics.
- */
-function getMetric(metrics: MetricMap, key: string): number | null {
-  const v = metrics[key];
-  if (v === null || v === undefined) return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
-/**
- * Convert (seconds, distance ft) -> feet per second.
- */
-function getFps(
-  seconds: number | null,
-  distanceFeet: number
-): number | null {
-  if (seconds === null || !Number.isFinite(seconds) || seconds <= 0) {
-    return null;
-  }
-  return distanceFeet / seconds;
-}
-
 export function compute6UAthleticSkillsScore(metrics: MetricMap): {
   categoryScore: number | null;
   breakdown: Record<string, unknown>;
@@ -69,29 +46,59 @@ export function compute6UAthleticSkillsScore(metrics: MetricMap): {
   // 30 (1B) + 35 (4B) + 10 (SLS open) + 10 (toe) + 10 (deep squat) + 10 (SLS closed) = 105
   const CATEGORY_MAX_POINTS = 105;
 
+  // Speed sub-category max (for SPEEDSCORE % → 0–50)
+  const SPEED_POINTS_MAX_TOTAL = RUN_1B_MAX_POINTS + RUN_4B_MAX_POINTS; // 65
+
   // ---- RAW INPUTS FROM METRICS ----
-  const run1bSeconds = getMetric(metrics, "timed_run_1b"); // seconds
-  const run4bSeconds = getMetric(metrics, "timed_run_4b"); // seconds
+  const run1bRaw = metrics["timed_run_1b"];
+  const run4bRaw = metrics["timed_run_4b"];
 
-  const run1bDistanceFtRaw = getMetric(metrics, "timed_run_1b_distance_ft");
-  const run4bDistanceFtRaw = getMetric(metrics, "timed_run_4b_distance_ft");
+  const slsOpenRightRaw = metrics["sls_eyes_open_right"];
+  const slsOpenLeftRaw = metrics["sls_eyes_open_left"];
+  const slsClosedRightRaw = metrics["sls_eyes_closed_right"];
+  const slsClosedLeftRaw = metrics["sls_eyes_closed_left"];
 
-  // default to 60 ft basepaths if distance metrics are missing
-  const run1bDistanceFt = run1bDistanceFtRaw ?? 60;
-  const run4bDistanceFt = run4bDistanceFtRaw ?? 60 * 4;
+  const toeTouchRaw = metrics["toe_touch"];
+  const deepSquatRaw = metrics["deep_squat"];
 
-  const slsOpenRightSeconds = getMetric(metrics, "sls_eyes_open_right");
-  const slsOpenLeftSeconds = getMetric(metrics, "sls_eyes_open_left");
-  const slsClosedRightSeconds = getMetric(metrics, "sls_eyes_closed_right");
-  const slsClosedLeftSeconds = getMetric(metrics, "sls_eyes_closed_left");
+  const run1bFps =
+    typeof run1bRaw === "number" && !Number.isNaN(run1bRaw)
+      ? run1bRaw
+      : null;
+  const run4bFps =
+    typeof run4bRaw === "number" && !Number.isNaN(run4bRaw)
+      ? run4bRaw
+      : null;
 
-  const toeTouchRaw = getMetric(metrics, "toe_touch");
-  const deepSquatRaw = getMetric(metrics, "deep_squat");
+  const slsOpenRightSeconds =
+    typeof slsOpenRightRaw === "number" && !Number.isNaN(slsOpenRightRaw)
+      ? slsOpenRightRaw
+      : null;
+  const slsOpenLeftSeconds =
+    typeof slsOpenLeftRaw === "number" && !Number.isNaN(slsOpenLeftRaw)
+      ? slsOpenLeftRaw
+      : null;
 
-  // ---- SPEED: convert time + distance → fps ----
-  const run1bFps = getFps(run1bSeconds, run1bDistanceFt);
-  const run4bFps = getFps(run4bSeconds, run4bDistanceFt);
+  const slsClosedRightSeconds =
+    typeof slsClosedRightRaw === "number" && !Number.isNaN(slsClosedRightRaw)
+      ? slsClosedRightRaw
+      : null;
+  const slsClosedLeftSeconds =
+    typeof slsClosedLeftRaw === "number" && !Number.isNaN(slsClosedLeftRaw)
+      ? slsClosedLeftRaw
+      : null;
 
+  const toeTouchRawPoints =
+    typeof toeTouchRaw === "number" && !Number.isNaN(toeTouchRaw)
+      ? clamp(toeTouchRaw, 0, TOE_TOUCH_MAX_POINTS)
+      : null;
+
+  const deepSquatRawPoints =
+    typeof deepSquatRaw === "number" && !Number.isNaN(deepSquatRaw)
+      ? clamp(deepSquatRaw, 0, DEEP_SQUAT_MAX_POINTS)
+      : null;
+
+  // ---- POINTS: SPEED (1B, 4B) ----
   let run1bPoints: number | null = null;
   if (run1bFps != null) {
     const raw = (run1bFps - 7) * 3;
@@ -104,11 +111,11 @@ export function compute6UAthleticSkillsScore(metrics: MetricMap): {
     run4bPoints = clamp(raw, 0, RUN_4B_MAX_POINTS);
   }
 
-  // ---- SLS OPEN / CLOSED ----
+  // ---- POINTS: SLS OPEN / CLOSED ----
   const slsOpenAvgSeconds = average([slsOpenRightSeconds, slsOpenLeftSeconds]);
   let slsOpenPoints: number | null = null;
   if (slsOpenAvgSeconds != null) {
-    // up to 30s = full 10 points
+    // Same as 5U: up to 30s = full 10 points
     const raw = (slsOpenAvgSeconds / 30) * SLS_OPEN_MAX_POINTS;
     slsOpenPoints = clamp(raw, 0, SLS_OPEN_MAX_POINTS);
   }
@@ -119,16 +126,16 @@ export function compute6UAthleticSkillsScore(metrics: MetricMap): {
   ]);
   let slsClosedPoints: number | null = null;
   if (slsClosedAvgSeconds != null) {
-    // up to 20s = full 10 points
+    // Same as 5U: up to 20s = full 10 points
     const raw = (slsClosedAvgSeconds / 20) * SLS_CLOSED_MAX_POINTS;
     slsClosedPoints = clamp(raw, 0, SLS_CLOSED_MAX_POINTS);
   }
 
-  // ---- TOE TOUCH / DEEP SQUAT ----
-  const toeTouchPoints = clamp(toeTouchRaw, 0, TOE_TOUCH_MAX_POINTS);
-  const deepSquatPoints = clamp(deepSquatRaw, 0, DEEP_SQUAT_MAX_POINTS);
+  // ---- POINTS: TOE TOUCH / DEEP SQUAT ----
+  const toeTouchPoints = toeTouchRawPoints;
+  const deepSquatPoints = deepSquatRawPoints;
 
-  // ---- SPEED SCORE (sub-metric, 0–50) ----
+  // ---- SPEED SCORE (sub-metric) ----
   let speedPointsTotal: number | null = null;
   let speedScore: number | null = null;
 
@@ -165,7 +172,9 @@ export function compute6UAthleticSkillsScore(metrics: MetricMap): {
     (v): v is number => typeof v === "number" && !Number.isNaN(v)
   );
   const totalPoints =
-    present.length > 0 ? present.reduce((acc, v) => acc + v, 0) : null;
+    present.length > 0
+      ? present.reduce((acc, v) => acc + v, 0)
+      : null;
 
   let categoryScore: number | null = null;
   if (totalPoints != null) {
@@ -180,39 +189,30 @@ export function compute6UAthleticSkillsScore(metrics: MetricMap): {
       max_points: CATEGORY_MAX_POINTS,
       total_points: totalPoints,
       tests: {
-        // raw timing & distance
-        run_1b_seconds: run1bSeconds,
-        run_4b_seconds: run4bSeconds,
-        run_1b_distance_ft: run1bDistanceFtRaw ?? 60,
-        run_4b_distance_ft: run4bDistanceFtRaw ?? 60 * 4,
-
-        // derived speeds
         run_1b_fps: run1bFps,
         run_4b_fps: run4bFps,
-
-        // speed sub-score
         speed_score: speedScore,
         speed_points_total: speedPointsTotal,
 
-        // speed points
         run_1b_points: run1bPoints,
         run_4b_points: run4bPoints,
 
-        // SLS
         sls_open_points: slsOpenPoints,
         sls_closed_points: slsClosedPoints,
+
+        toe_touch_points: toeTouchPoints,
+        deep_squat_points: deepSquatPoints,
+
         sls_open_avg_seconds: slsOpenAvgSeconds,
         sls_closed_avg_seconds: slsClosedAvgSeconds,
+
         sls_open_left_seconds: slsOpenLeftSeconds,
         sls_open_right_seconds: slsOpenRightSeconds,
         sls_closed_left_seconds: slsClosedLeftSeconds,
         sls_closed_right_seconds: slsClosedRightSeconds,
 
-        // mobility
-        toe_touch_points: toeTouchPoints,
-        deep_squat_points: deepSquatPoints,
-        toe_touch_raw_points: toeTouchRaw,
-        deep_squat_raw_points: deepSquatRaw,
+        toe_touch_raw_points: toeTouchRawPoints,
+        deep_squat_raw_points: deepSquatRawPoints,
       },
     },
   };
@@ -260,9 +260,9 @@ function computeHittingScore(metrics: MetricMap): {
     };
   };
 } {
-  const teeRaw = getMetric(metrics, "m_10_swing_tee_contact_test");
-  const pitchRaw = getMetric(metrics, "m_10_swing_pitch_matrix");
-  const batSpeedMph = getMetric(metrics, "max_bat_speed");
+  const teeRaw = metrics["m_10_swing_tee_contact_test"];
+  const pitchRaw = metrics["m_10_swing_pitch_matrix"];
+  const batSpeedRaw = metrics["max_bat_speed"];
 
   const TEE_MAX_POINTS = 10;
   const PITCH_MAX_POINTS = 20;
@@ -274,6 +274,11 @@ function computeHittingScore(metrics: MetricMap): {
   // Base points
   const teePoints = clamp(teeRaw, 0, TEE_MAX_POINTS);
   const pitchPoints = clamp(pitchRaw, 0, PITCH_MAX_POINTS);
+
+  const batSpeedMph =
+    batSpeedRaw == null || typeof batSpeedRaw !== "number" || Number.isNaN(batSpeedRaw)
+      ? null
+      : batSpeedRaw;
 
   let batSpeedPoints: number | null = null;
   if (batSpeedMph != null) {
@@ -313,7 +318,7 @@ function computeHittingScore(metrics: MetricMap): {
     powerScore = Math.round(pct * 10) / 10; // 1 decimal %
   }
 
-  // Strikeout chance (%), using (1 - CONTACTSCORE/90) model
+  // Strikeout chance (%), using your (1 - CONTACTSCORE/90) model
   let strikeChancePercent: number | null = null;
   if (contactScore != null) {
     const clampedContact = Math.max(0, Math.min(100, contactScore));
@@ -338,8 +343,8 @@ function computeHittingScore(metrics: MetricMap): {
           tee_points: teePoints,
           pitch_points: pitchPoints,
           bat_speed_points: batSpeedPoints,
-          tee_raw: teeRaw,
-          pitch_raw: pitchRaw,
+          tee_raw: teeRaw ?? null,
+          pitch_raw: pitchRaw ?? null,
           bat_speed_mph: batSpeedMph,
 
           contact_raw_points: contactRawPoints,
@@ -368,8 +373,8 @@ function computeHittingScore(metrics: MetricMap): {
         tee_points: teePoints,
         pitch_points: pitchPoints,
         bat_speed_points: batSpeedPoints,
-        tee_raw: teeRaw,
-        pitch_raw: pitchRaw,
+        tee_raw: teeRaw ?? null,
+        pitch_raw: pitchRaw ?? null,
         bat_speed_mph: batSpeedMph,
 
         contact_raw_points: contactRawPoints,
@@ -412,14 +417,37 @@ function computeThrowingScore(metrics: MetricMap): {
   const CATEGORY_NORMALIZED_MAX = 50;  // normalize to 0–50
 
   // ---- RAW INPUTS ----
-  const tspeed20Mph = getMetric(metrics, "max_throwing_speed");
-  const tspeedSmallMph = getMetric(metrics, "max_throwing_speed_small_ball");
-  const t20ftRawPoints = getMetric(metrics, "m_10_throw_test_20ft");
-  const t40ftRawPoints = getMetric(metrics, "m_10_throw_test_40ft");
+  const tspeed20Raw = metrics["max_throwing_speed"];
+  const tspeedSmallRaw = metrics["max_throwing_speed_small_ball"];
+  const t20ftRaw = metrics["m_10_throw_test_20ft"];
+  const t40ftRaw = metrics["m_10_throw_test_40ft"];
+
+  const tspeed20Mph =
+    typeof tspeed20Raw === "number" && !Number.isNaN(tspeed20Raw)
+      ? tspeed20Raw
+      : null;
+
+  const tspeedSmallMph =
+    typeof tspeedSmallRaw === "number" && !Number.isNaN(tspeedSmallRaw)
+      ? tspeedSmallRaw
+      : null;
+
+  const t20ftRawPoints =
+    typeof t20ftRaw === "number" && !Number.isNaN(t20ftRaw)
+      ? t20ftRaw
+      : null;
+
+  const t40ftRawPoints =
+    typeof t40ftRaw === "number" && !Number.isNaN(t40ftRaw)
+      ? t40ftRaw
+      : null;
 
   // ---- POINTS: 10-THROW TESTS ----
-  const t20ftPoints = clamp(t20ftRawPoints, 0, T20FT_MAX_POINTS);
-  const t40ftPoints = clamp(t40ftRawPoints, 0, T40FT_MAX_POINTS);
+  const t20ftPoints =
+    t20ftRawPoints != null ? clamp(t20ftRawPoints, 0, T20FT_MAX_POINTS) : null;
+
+  const t40ftPoints =
+    t40ftRawPoints != null ? clamp(t40ftRawPoints, 0, T40FT_MAX_POINTS) : null;
 
   // ---- POINTS: SPEED (mph → points) ----
   let tspeed20Points: number | null = null;
@@ -448,7 +476,9 @@ function computeThrowingScore(metrics: MetricMap): {
   );
 
   const totalPoints =
-    present.length > 0 ? present.reduce((acc, v) => acc + v, 0) : null;
+    present.length > 0
+      ? present.reduce((acc, v) => acc + v, 0)
+      : null;
 
   let categoryScore: number | null = null;
   if (totalPoints != null) {
@@ -497,12 +527,21 @@ function computeCatchingScore(metrics: MetricMap): {
   const CATEGORY_NORMALIZED_MAX = 50;  // normalize to 0–50
 
   // ---- RAW INPUTS ----
-  const c20RawPoints = getMetric(metrics, "m_20ft_catching_test");
-  const c40RawPoints = getMetric(metrics, "m_40_ft_catching_test");
+  const c20Raw = metrics["m_20ft_catching_test"];
+  const c40Raw = metrics["m_40_ft_catching_test"];
+
+  const c20RawPoints =
+    typeof c20Raw === "number" && !Number.isNaN(c20Raw) ? c20Raw : null;
+
+  const c40RawPoints =
+    typeof c40Raw === "number" && !Number.isNaN(c40Raw) ? c40Raw : null;
 
   // ---- POINTS ----
-  const c20ftPoints = clamp(c20RawPoints, 0, C20FT_MAX_POINTS);
-  const c40ftPoints = clamp(c40RawPoints, 0, C40FT_MAX_POINTS);
+  const c20ftPoints =
+    c20RawPoints != null ? clamp(c20RawPoints, 0, C20FT_MAX_POINTS) : null;
+
+  const c40ftPoints =
+    c40RawPoints != null ? clamp(c40RawPoints, 0, C40FT_MAX_POINTS) : null;
 
   // ---- TOTAL POINTS ----
   const parts: Array<number | null> = [c20ftPoints, c40ftPoints];
@@ -512,7 +551,9 @@ function computeCatchingScore(metrics: MetricMap): {
   );
 
   const totalPoints =
-    present.length > 0 ? present.reduce((acc, v) => acc + v, 0) : null;
+    present.length > 0
+      ? present.reduce((acc, v) => acc + v, 0)
+      : null;
 
   let categoryScore: number | null = null;
   if (totalPoints != null) {
@@ -554,7 +595,7 @@ function computeFieldingScore(metrics: MetricMap): {
     };
   };
 } {
-  // Same rubric maxes as 5U; adjust if your 6U AR column differs
+  // Assuming same rubric maxes as 5U; adjust if your 6U AR column differs
   const F2B_MAX_POINTS = 6;
   const FSS_MAX_POINTS = 6;
   const F3B_MAX_POINTS = 6;
@@ -565,16 +606,39 @@ function computeFieldingScore(metrics: MetricMap): {
   const CATEGORY_NORMALIZED_MAX = 50;
 
   // ---- RAW INPUTS ----
-  const f2bRawPoints = getMetric(metrics, "grounders_2b");
-  const fssRawPoints = getMetric(metrics, "grounders_ss");
-  const f3bRawPoints = getMetric(metrics, "grounders_3b");
-  const fpitcherRawPoints = getMetric(metrics, "grounders_pitcher");
+  const f2bRaw = metrics["grounders_2b"];
+  const fssRaw = metrics["grounders_ss"];
+  const f3bRaw = metrics["grounders_3b"];
+  const fpitcherRaw = metrics["grounders_pitcher"];
+
+  const f2bRawPoints =
+    typeof f2bRaw === "number" && !Number.isNaN(f2bRaw) ? f2bRaw : null;
+
+  const fssRawPoints =
+    typeof fssRaw === "number" && !Number.isNaN(fssRaw) ? fssRaw : null;
+
+  const f3bRawPoints =
+    typeof f3bRaw === "number" && !Number.isNaN(f3bRaw) ? f3bRaw : null;
+
+  const fpitcherRawPoints =
+    typeof fpitcherRaw === "number" && !Number.isNaN(fpitcherRaw)
+      ? fpitcherRaw
+      : null;
 
   // ---- POINTS (clamped to rubric max) ----
-  const f2bPoints = clamp(f2bRawPoints, 0, F2B_MAX_POINTS);
-  const fssPoints = clamp(fssRawPoints, 0, FSS_MAX_POINTS);
-  const f3bPoints = clamp(f3bRawPoints, 0, F3B_MAX_POINTS);
-  const fpitcherPoints = clamp(fpitcherRawPoints, 0, FPITCHER_MAX_POINTS);
+  const f2bPoints =
+    f2bRawPoints != null ? clamp(f2bRawPoints, 0, F2B_MAX_POINTS) : null;
+
+  const fssPoints =
+    fssRawPoints != null ? clamp(fssRawPoints, 0, FSS_MAX_POINTS) : null;
+
+  const f3bPoints =
+    f3bRawPoints != null ? clamp(f3bRawPoints, 0, F3B_MAX_POINTS) : null;
+
+  const fpitcherPoints =
+    fpitcherRawPoints != null
+      ? clamp(fpitcherRawPoints, 0, FPITCHER_MAX_POINTS)
+      : null;
 
   // ---- TOTAL POINTS ----
   const parts: Array<number | null> = [
@@ -589,7 +653,9 @@ function computeFieldingScore(metrics: MetricMap): {
   );
 
   const totalPoints =
-    present.length > 0 ? present.reduce((acc, v) => acc + v, 0) : null;
+    present.length > 0
+      ? present.reduce((acc, v) => acc + v, 0)
+      : null;
 
   let categoryScore: number | null = null;
   if (totalPoints != null) {

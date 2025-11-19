@@ -3,6 +3,7 @@
 import type { MetricMap, RatingResult } from "./5u";
 import { compute6UAthleticSkillsScore } from "./6u";
 
+
 /**
  * Helper: average of numbers, ignoring null/undefined.
  */
@@ -34,16 +35,12 @@ function clamp(
 /**
  * 7U Athletic Skills scoring.
  *
- * Uses the UPDATED 6U athletic logic for:
- *  - Speed (1B / 4B):
- *      * timed_run_1b / timed_run_4b = seconds
- *      * timed_run_1b_distance_ft / timed_run_4b_distance_ft = feet
- *      * 6U now derives run_1b_fps / run_4b_fps via distance / time
- *      * provides speed_points_total, speed_score, run_*_seconds, run_*_distance_ft
+ * Uses the 6U athletic logic for:
+ *  - Speed (1B / 4B -> speed_points_total, speed_score)
  *  - Balance (SLS open / closed)
  *  - Toe touch / deep squat
  *
- * Then adds 7U-specific:
+ * Then adds:
  *  - APUSH30 (apush_30): points = raw / 2, max 20
  *  - ASIT30 (asit_30):  points = raw / 3, max 15
  *  - MSR Right/Left (msr_right / msr_left):
@@ -69,7 +66,7 @@ function computeAthleticSkillsScore(
   categoryScore: number | null;
   breakdown: Record<string, unknown>;
 } {
-  // 1) Start from 6U logic to get all base points + new timing/distance details
+  // 1) Start from 6U logic to get all base points
   const base = compute6UAthleticSkillsScore(metrics);
   const athletic = (base.breakdown || {}) as any;
   const baseTests = athletic.tests || {};
@@ -188,7 +185,7 @@ function computeAthleticSkillsScore(
       : null;
   }
 
-  // 7) Merge tests: keep all base tests (including new run_* time/dist fields) and append new ones
+  // 7) Merge tests: keep all base tests (including speed_score) and append new ones
   const mergedTests = {
     ...baseTests,
     pushups_30_raw: pushupsRaw ?? null,
@@ -212,6 +209,7 @@ function computeAthleticSkillsScore(
     },
   };
 }
+
 
 /**
  * 7U HITTING
@@ -525,6 +523,7 @@ function computeThrowingScore(metrics: MetricMap): {
   };
 }
 
+
 function computeCatchingScore(metrics: MetricMap): {
   categoryScore: number | null;
   breakdown: {
@@ -674,6 +673,8 @@ function computeCatchingScore(metrics: MetricMap): {
   };
 }
 
+
+
 function computeFieldingScore(metrics: MetricMap): {
   categoryScore: number | null;
   breakdown: {
@@ -773,8 +774,14 @@ function computeFieldingScore(metrics: MetricMap): {
   };
 }
 
+
 /**
  * Main scoring for 7U assessments.
+ *
+ * For now:
+ *  - Hitting is fully wired (including CONTACTSCORE, POWERSCORE, STRIKECHANCE).
+ *  - Athletic / Throwing / Catching / Fielding return null scores.
+ *  - Overall falls back to the hitting score when others are missing.
  */
 export function compute7URatings(metrics: MetricMap): RatingResult {
   const athleticResult = computeAthleticSkillsScore(metrics);
@@ -803,6 +810,7 @@ export function compute7URatings(metrics: MetricMap): RatingResult {
   };
 
   return {
+    // if overall is null but we at least have a hitting score, use hitting
     overall_score: overall ?? hitting ?? null,
     offense_score: offense,
     defense_score: defense,
