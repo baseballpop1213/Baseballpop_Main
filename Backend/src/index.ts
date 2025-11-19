@@ -11,6 +11,7 @@ import {
 import { compute6URatings } from "./scoring/6u";
 import { compute7URatings } from "./scoring/7u";
 import { compute8URatings } from "./scoring/8u";
+import { compute9URatings } from "./scoring/9u";
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -576,6 +577,642 @@ function compute7UPositionScores(
   };
 }
 
+function compute8UPositionScores(
+  athletic: CategoryComponent,
+  throwing: CategoryComponent,
+  catching: CategoryComponent,
+  fielding: CategoryComponent
+): PositionScores5U {
+  const FIELD_MAX = 50;          // category scores are 0–50
+  const CATCH_MAX = 50;
+  const SPEED_MAX = 50;
+
+  const TSPEED_MAX = 27.5;       // tspeed40_points
+  const TPITCH_MAX = 30;         // t40ft_points
+  const C51B_MAX = 15;           // c51b_points
+  const C1BST_MAX = 15;          // c1bst_points
+  const RLC_MAX = 12;            // rlc*_points_total
+  const SS1BT_MAX = 14.5;        // ifss1bt_points
+  const LADDER_MAX = 25;         // c10x10_points
+  const T80_MAX = 20;            // t80ft_points
+  const CLD_MAX = 6;             // cld2b_points, cldss_points
+
+  const athleticTests =
+    athletic.breakdown && athletic.breakdown.athletic
+      ? athletic.breakdown.athletic.tests || {}
+      : {};
+
+  const throwingTests =
+    throwing.breakdown && throwing.breakdown.throwing
+      ? throwing.breakdown.throwing.tests || {}
+      : {};
+
+  const catchingTests =
+    catching.breakdown && catching.breakdown.catching
+      ? catching.breakdown.catching.tests || {}
+      : {};
+
+  const fieldingTests =
+    fielding.breakdown && fielding.breakdown.fielding
+      ? fielding.breakdown.fielding.tests || {}
+      : {};
+
+  const fieldingScore =
+    typeof fielding.score === "number" ? fielding.score : null;
+  const catchingScore =
+    typeof catching.score === "number" ? catching.score : null;
+  const throwingScore =
+    typeof throwing.score === "number" ? throwing.score : null;
+
+  const speedScore =
+    typeof athleticTests.speed_score === "number"
+      ? athleticTests.speed_score
+      : null;
+
+  const tspeedPoints =
+    typeof throwingTests.tspeed40_points === "number"
+      ? throwingTests.tspeed40_points
+      : null;
+  const tpitchPoints =
+    typeof throwingTests.t40ft_points === "number"
+      ? throwingTests.t40ft_points
+      : null;
+  const t80ftPoints =
+    typeof throwingTests.t80ft_points === "number"
+      ? throwingTests.t80ft_points
+      : null;
+
+  const ladderPoints =
+    typeof catchingTests.c10x10_points === "number"
+      ? catchingTests.c10x10_points
+      : null;
+  const c51bPoints =
+    typeof catchingTests.c51b_points === "number"
+      ? catchingTests.c51b_points
+      : null;
+  const c1bstPoints =
+    typeof catchingTests.c1bst_points === "number"
+      ? catchingTests.c1bst_points
+      : null;
+
+  const rlc2bPoints =
+    typeof fieldingTests.rlc2b_points_total === "number"
+      ? fieldingTests.rlc2b_points_total
+      : null;
+  const rlcssPoints =
+    typeof fieldingTests.rlcss_points_total === "number"
+      ? fieldingTests.rlcss_points_total
+      : null;
+  const rlc3bPoints =
+    typeof fieldingTests.rlc3b_points_total === "number"
+      ? fieldingTests.rlc3b_points_total
+      : null;
+
+  const ifss1btPoints =
+    typeof fieldingTests.ifss1bt_points === "number"
+      ? fieldingTests.ifss1bt_points
+      : null;
+
+  const cld2bPoints =
+    typeof catchingTests.cld2b_points === "number"
+      ? catchingTests.cld2b_points
+      : null;
+  const cldssPoints =
+    typeof catchingTests.cldss_points === "number"
+      ? catchingTests.cldss_points
+      : null;
+
+  //
+  // Pitcher = TSPEED + TPITCH
+  //
+  let pitcher: number | null = null;
+  if (tspeedPoints != null && tpitchPoints != null) {
+    const num = tspeedPoints + tpitchPoints;
+    const den = TSPEED_MAX + TPITCH_MAX;
+    pitcher = ratioToScore(num, den);
+  } else if (throwingScore != null) {
+    pitcher = throwingScore;
+  }
+
+  //
+  // Catcher = CATCHINGSCORE (category catching score)
+  //
+  const catcherPos: number | null = catchingScore ?? null;
+
+  //
+  // 1B = C51B + C1BST
+  //
+  let firstBase: number | null = null;
+  if (c51bPoints != null && c1bstPoints != null) {
+    const num = c51bPoints + c1bstPoints;
+    const den = C51B_MAX + C1BST_MAX;
+    firstBase = ratioToScore(num, den);
+  } else if (catchingScore != null) {
+    firstBase = catchingScore;
+  }
+
+  //
+  // 2B: FIELDINGSCORE (2X), CATCHINGSCORE(1X), RLC2B (2X)
+  //
+  let secondBase: number | null = null;
+  if (
+    fieldingScore != null &&
+    catchingScore != null &&
+    rlc2bPoints != null
+  ) {
+    const num =
+      fieldingScore * 2 +
+      catchingScore * 1 +
+      rlc2bPoints * 2;
+    const den =
+      FIELD_MAX * 2 + CATCH_MAX * 1 + RLC_MAX * 2;
+    secondBase = ratioToScore(num, den);
+  }
+
+  //
+  // 3B: FIELDINGSCORE(2X), CATCHINGSCORE (1X), RLC3B (2X)
+  //
+  let thirdBase: number | null = null;
+  if (
+    fieldingScore != null &&
+    catchingScore != null &&
+    rlc3bPoints != null
+  ) {
+    const num =
+      fieldingScore * 2 +
+      catchingScore * 1 +
+      rlc3bPoints * 2;
+    const den =
+      FIELD_MAX * 2 + CATCH_MAX * 1 + RLC_MAX * 2;
+    thirdBase = ratioToScore(num, den);
+  }
+
+  //
+  // SS: FIELDINGSCORE (2X), CATCHINGSCORE (1X), RLCSS (2X)
+  //
+  let shortstop: number | null = null;
+  if (
+    fieldingScore != null &&
+    catchingScore != null &&
+    rlcssPoints != null
+  ) {
+    const num =
+      fieldingScore * 2 +
+      catchingScore * 1 +
+      rlcssPoints * 2;
+    const den =
+      FIELD_MAX * 2 + CATCH_MAX * 1 + RLC_MAX * 2;
+    shortstop = ratioToScore(num, den);
+  }
+
+  //
+  // Pitcher Helper: FIELDINGSCORE (2X), CATCHINGSCORE (1X)
+  //
+  let pitchersHelper: number | null = null;
+  if (fieldingScore != null && catchingScore != null) {
+    const num = fieldingScore * 2 + catchingScore * 1;
+    const den = FIELD_MAX * 2 + CATCH_MAX * 1;
+    pitchersHelper = ratioToScore(num, den);
+  }
+
+  //
+  // LF: C10X10LD, T80FT, SPEEDSCORE
+  //
+  let leftField: number | null = null;
+  if (ladderPoints != null && t80ftPoints != null && speedScore != null) {
+    const num = ladderPoints + t80ftPoints + speedScore;
+    const den = LADDER_MAX + T80_MAX + SPEED_MAX;
+    leftField = ratioToScore(num, den);
+  }
+
+  //
+  // RF: C10X10LD, RLCGB2B, CLD2B
+  //
+  let rightField: number | null = null;
+  if (ladderPoints != null && rlc2bPoints != null && cld2bPoints != null) {
+    const num = ladderPoints + rlc2bPoints + cld2bPoints;
+    const den = LADDER_MAX + RLC_MAX + CLD_MAX;
+    rightField = ratioToScore(num, den);
+  }
+
+  //
+  // CF: C10X10LD, SPEEDSCORE
+  //
+  let centerField: number | null = null;
+  if (ladderPoints != null && speedScore != null) {
+    const num = ladderPoints + speedScore;
+    const den = LADDER_MAX + SPEED_MAX;
+    centerField = ratioToScore(num, den);
+  }
+
+  //
+  // LC: C10X10LD, RLCGBSS, CLDSS
+  //
+  let leftCenter: number | null = null;
+  if (ladderPoints != null && rlcssPoints != null && cldssPoints != null) {
+    const num = ladderPoints + rlcssPoints + cldssPoints;
+    const den = LADDER_MAX + RLC_MAX + CLD_MAX;
+    leftCenter = ratioToScore(num, den);
+  }
+
+  //
+  // RC: C10X10LD, SPEEDSCORE
+  //
+  let rightCenter: number | null = null;
+  if (ladderPoints != null && speedScore != null) {
+    const num = ladderPoints + speedScore;
+    const den = LADDER_MAX + SPEED_MAX;
+    rightCenter = ratioToScore(num, den);
+  }
+
+  const infieldScore = averageNonNull([
+    catcherPos,
+    firstBase,
+    secondBase,
+    thirdBase,
+    shortstop,
+    pitchersHelper,
+  ]);
+
+  const outfieldScore = averageNonNull([
+    leftField,
+    rightField,
+    leftCenter,
+    rightCenter,
+    centerField,
+  ]);
+
+  const defenseScore = averageNonNull([
+    pitcher,
+    catcherPos,
+    firstBase,
+    secondBase,
+    thirdBase,
+    shortstop,
+    pitchersHelper,
+    leftField,
+    rightField,
+    leftCenter,
+    rightCenter,
+    centerField,
+  ]);
+
+  return {
+    pitcher,
+    catcher: catcherPos,
+    first_base: firstBase,
+    second_base: secondBase,
+    third_base: thirdBase,
+    shortstop,
+    pitchers_helper: pitchersHelper,
+    left_field: leftField,
+    right_field: rightField,
+    left_center: leftCenter,
+    right_center: rightCenter,
+    center_field: centerField,
+    infield_score: infieldScore,
+    outfield_score: outfieldScore,
+    defense_score: defenseScore,
+  };
+}
+
+function compute9UPositionScores(
+  athletic: CategoryComponent,
+  throwing: CategoryComponent,
+  catching: CategoryComponent,
+  fielding: CategoryComponent
+): PositionScores5U {
+  // Max values, matching 9U scoring logic
+  const FIELD_MAX = 50;          // category score
+  const CATCH_MAX = 50;          // category score
+  const SPEED_MAX = 50;          // category score
+
+  const TSPEED_MAX = 30;         // tspeed45_points
+  const TPITCH_MAX = 30;         // t45ft_points
+  const CB2BT_MAX = 15;          // cb2bt_points
+  const C5PCS_MAX = 10;          // c5pcs_points
+  const C51B_MAX = 15;           // c51b_points
+  const C1BST_MAX = 15;          // c1bst_points
+
+  const RLC_MAX = 12;            // rlc*_points_total
+  const SS1BT_MAX = 14.5;        // ifss1bt_points
+
+  const T80_MAX = 20;            // t80ft_points
+  const C15X15M_MAX = 20;        // c15x15m_points
+  const CLD_MAX = 6;             // cld2b_points, cldss_points
+
+  const athleticTests =
+    athletic.breakdown && athletic.breakdown.athletic
+      ? athletic.breakdown.athletic.tests || {}
+      : {};
+
+  const throwingTests =
+    throwing.breakdown && throwing.breakdown.throwing
+      ? throwing.breakdown.throwing.tests || {}
+      : {};
+
+  const catchingTests =
+    catching.breakdown && catching.breakdown.catching
+      ? catching.breakdown.catching.tests || {}
+      : {};
+
+  const fieldingTests =
+    fielding.breakdown && fielding.breakdown.fielding
+      ? fielding.breakdown.fielding.tests || {}
+      : {};
+
+  const fieldingScore =
+    typeof fielding.score === "number" ? fielding.score : null;
+  const catchingScore =
+    typeof catching.score === "number" ? catching.score : null;
+  const throwingScore =
+    typeof throwing.score === "number" ? throwing.score : null;
+
+  const speedScore =
+    typeof athleticTests.speed_score === "number"
+      ? athleticTests.speed_score
+      : null;
+
+  const tspeedPoints =
+    typeof throwingTests.tspeed45_points === "number"
+      ? throwingTests.tspeed45_points
+      : null;
+  const tpitchPoints =
+    typeof throwingTests.t45ft_points === "number"
+      ? throwingTests.t45ft_points
+      : null;
+  const t80ftPoints =
+    typeof throwingTests.t80ft_points === "number"
+      ? throwingTests.t80ft_points
+      : null;
+  const cb2btPoints =
+    typeof throwingTests.cb2bt_points === "number"
+      ? throwingTests.cb2bt_points
+      : null;
+
+  const c5pcsPoints =
+    typeof catchingTests.c5pcs_points === "number"
+      ? catchingTests.c5pcs_points
+      : null;
+  const c51bPoints =
+    typeof catchingTests.c51b_points === "number"
+      ? catchingTests.c51b_points
+      : null;
+  const c1bstPoints =
+    typeof catchingTests.c1bst_points === "number"
+      ? catchingTests.c1bst_points
+      : null;
+  const c15x15mPoints =
+    typeof catchingTests.c15x15m_points === "number"
+      ? catchingTests.c15x15m_points
+      : null;
+
+  const rlc2bPoints =
+    typeof fieldingTests.rlc2b_points_total === "number"
+      ? fieldingTests.rlc2b_points_total
+      : null;
+  const rlcssPoints =
+    typeof fieldingTests.rlcss_points_total === "number"
+      ? fieldingTests.rlcss_points_total
+      : null;
+  const rlc3bPoints =
+    typeof fieldingTests.rlc3b_points_total === "number"
+      ? fieldingTests.rlc3b_points_total
+      : null;
+
+  const ifss1btPoints =
+    typeof fieldingTests.ifss1bt_points === "number"
+      ? fieldingTests.ifss1bt_points
+      : null;
+
+  const cld2bPoints =
+    typeof catchingTests.cld2b_points === "number"
+      ? catchingTests.cld2b_points
+      : null;
+  const cldssPoints =
+    typeof catchingTests.cldss_points === "number"
+      ? catchingTests.cldss_points
+      : null;
+
+  //
+  // PITCHER
+  //
+  let pitcher: number | null = null;
+  if (tspeedPoints != null && tpitchPoints != null) {
+    const num = tspeedPoints + tpitchPoints;
+    const den = TSPEED_MAX + TPITCH_MAX;
+    pitcher = ratioToScore(num, den);
+  } else if (throwingScore != null) {
+    // Fallback: use category throwing score if detailed tests are missing
+    pitcher = throwingScore;
+  }
+
+  //
+  // CATCHER
+  //
+  let catcherPos: number | null = null;
+  if (c5pcsPoints != null && cb2btPoints != null) {
+    const num = c5pcsPoints + cb2btPoints;
+    const den = C5PCS_MAX + CB2BT_MAX;
+    catcherPos = ratioToScore(num, den);
+  } else if (catchingScore != null) {
+    catcherPos = catchingScore;
+  }
+
+  //
+  // 1B
+  // Tests used: C51B, C1BST
+  //
+  let firstBase: number | null = null;
+  if (c51bPoints != null && c1bstPoints != null) {
+    const num = c51bPoints + c1bstPoints;
+    const den = C51B_MAX + C1BST_MAX;
+    firstBase = ratioToScore(num, den);
+  } else if (catchingScore != null) {
+    firstBase = catchingScore;
+  }
+
+  //
+  // 2B
+  // FIELDINGSCORE (2X), CATCHINGSCORE (1X), RLC2B (2X), SS1BT (1X)
+  //
+  let secondBase: number | null = null;
+  if (
+    fieldingScore != null &&
+    catchingScore != null &&
+    rlc2bPoints != null &&
+    ifss1btPoints != null
+  ) {
+    const num =
+      fieldingScore * 2 +
+      catchingScore * 1 +
+      rlc2bPoints * 2 +
+      ifss1btPoints * 1;
+    const den =
+      FIELD_MAX * 2 + CATCH_MAX * 1 + RLC_MAX * 2 + SS1BT_MAX * 1;
+    secondBase = ratioToScore(num, den);
+  }
+
+  //
+  // 3B
+  // FIELDINGSCORE (2X), CATCHINGSCORE (1X), RLC3B (2X), SS1BT (1X)
+  //
+  let thirdBase: number | null = null;
+  if (
+    fieldingScore != null &&
+    catchingScore != null &&
+    rlc3bPoints != null &&
+    ifss1btPoints != null
+  ) {
+    const num =
+      fieldingScore * 2 +
+      catchingScore * 1 +
+      rlc3bPoints * 2 +
+      ifss1btPoints * 1;
+    const den =
+      FIELD_MAX * 2 + CATCH_MAX * 1 + RLC_MAX * 2 + SS1BT_MAX * 1;
+    thirdBase = ratioToScore(num, den);
+  }
+
+  //
+  // SS
+  // FIELDINGSCORE (2X), CATCHINGSCORE (1X), RLCSS (2X), SS1BT (1X)
+  //
+  let shortstop: number | null = null;
+  if (
+    fieldingScore != null &&
+    catchingScore != null &&
+    rlcssPoints != null &&
+    ifss1btPoints != null
+  ) {
+    const num =
+      fieldingScore * 2 +
+      catchingScore * 1 +
+      rlcssPoints * 2 +
+      ifss1btPoints * 1;
+    const den =
+      FIELD_MAX * 2 + CATCH_MAX * 1 + RLC_MAX * 2 + SS1BT_MAX * 1;
+    shortstop = ratioToScore(num, den);
+  }
+
+  //
+  // Pitcher Helper
+  // FIELDINGSCORE (2X), CATCHINGSCORE (1X)
+  //
+  let pitchersHelper: number | null = null;
+  if (fieldingScore != null && catchingScore != null) {
+    const num = fieldingScore * 2 + catchingScore * 1;
+    const den = FIELD_MAX * 2 + CATCH_MAX * 1;
+    pitchersHelper = ratioToScore(num, den);
+  }
+
+  //
+  // LF
+  // C15X15M, T80FT, SPEEDSCORE
+  //
+  let leftField: number | null = null;
+  if (c15x15mPoints != null && t80ftPoints != null && speedScore != null) {
+    const num = c15x15mPoints + t80ftPoints + speedScore;
+    const den = C15X15M_MAX + T80_MAX + SPEED_MAX;
+    leftField = ratioToScore(num, den);
+  }
+
+  //
+  // RF
+  // C15X15M, RLCGB2B, CLD2B
+  //
+  let rightField: number | null = null;
+  if (c15x15mPoints != null && rlc2bPoints != null && cld2bPoints != null) {
+    const num = c15x15mPoints + rlc2bPoints + cld2bPoints;
+    const den = C15X15M_MAX + RLC_MAX + CLD_MAX;
+    rightField = ratioToScore(num, den);
+  }
+
+  //
+  // CF
+  // C15X15M, SPEEDSCORE
+  //
+  let centerField: number | null = null;
+  if (c15x15mPoints != null && speedScore != null) {
+    const num = c15x15mPoints + speedScore;
+    const den = C15X15M_MAX + SPEED_MAX;
+    centerField = ratioToScore(num, den);
+  }
+
+  //
+  // LC
+  // C15X15M, RLCGBSS, CLDSS
+  //
+  let leftCenter: number | null = null;
+  if (c15x15mPoints != null && rlcssPoints != null && cldssPoints != null) {
+    const num = c15x15mPoints + rlcssPoints + cldssPoints;
+    const den = C15X15M_MAX + RLC_MAX + CLD_MAX;
+    leftCenter = ratioToScore(num, den);
+  }
+
+  //
+  // RC
+  // C15X15M, SPEEDSCORE
+  //
+  let rightCenter: number | null = null;
+  if (c15x15mPoints != null && speedScore != null) {
+    const num = c15x15mPoints + speedScore;
+    const den = C15X15M_MAX + SPEED_MAX;
+    rightCenter = ratioToScore(num, den);
+  }
+
+  const infieldScore = averageNonNull([
+    catcherPos,
+    firstBase,
+    secondBase,
+    thirdBase,
+    shortstop,
+    pitchersHelper,
+  ]);
+
+  const outfieldScore = averageNonNull([
+    leftField,
+    rightField,
+    leftCenter,
+    rightCenter,
+    centerField,
+  ]);
+
+  const defenseScore = averageNonNull([
+    pitcher,
+    catcherPos,
+    firstBase,
+    secondBase,
+    thirdBase,
+    shortstop,
+    pitchersHelper,
+    leftField,
+    rightField,
+    leftCenter,
+    rightCenter,
+    centerField,
+  ]);
+
+  return {
+    pitcher,
+    catcher: catcherPos,
+    first_base: firstBase,
+    second_base: secondBase,
+    third_base: thirdBase,
+    shortstop,
+    pitchers_helper: pitchersHelper,
+    left_field: leftField,
+    right_field: rightField,
+    left_center: leftCenter,
+    right_center: rightCenter,
+    center_field: centerField,
+    infield_score: infieldScore,
+    outfield_score: outfieldScore,
+    defense_score: defenseScore,
+  };
+}
+
+
 
 /**
  * Create an assessment (official or practice) + store raw values.
@@ -689,12 +1326,13 @@ app.post("/assessments", async (req: AuthedRequest, res) => {
 
   const ageLabel = ageGroup.label;
 
-  // Only 5U, 6U, 7U, 8U are implemented with scoring right now
+  // Only 5U, 6U, 7U, 8U, 9U are implemented with scoring right now
   if (
     ageLabel !== "5U" &&
     ageLabel !== "6U" &&
     ageLabel !== "7U" &&
-    ageLabel !== "8U"
+    ageLabel !== "8U" &&
+    ageLabel !== "9U"
   ) {
     return res.status(201).json({ assessment_id: assessmentId });
   }
@@ -753,11 +1391,14 @@ app.post("/assessments", async (req: AuthedRequest, res) => {
     ratings = compute7URatings(metricMap);
   } else if (ageLabel === "8U") {
     ratings = compute8URatings(metricMap);
+  } else if (ageLabel === "9U") {
+    ratings = compute9URatings(metricMap);
   } else {
     // Should be unreachable because of the earlier guard,
     // but keep this for safety.
     throw new Error(`Unsupported age group: ${ageLabel}`);
   }
+
 
   // 8) Insert into player_ratings
   const { error: ratingsError } = await supabase.from("player_ratings").insert([
@@ -1200,7 +1841,7 @@ app.get("/players/:id/evals/8u-full", async (req, res) => {
       offenseFull = hittingScore;
     }
 
-    const positionScores = compute7UPositionScores(
+    const positionScores = compute8UPositionScores(
       athletic,
       throwing,
       catching,
@@ -1260,6 +1901,130 @@ app.get("/players/:id/evals/8u-full", async (req, res) => {
     return res.status(500).json({ error: "Failed to build 8U full eval" });
   }
 });
+
+app.get("/players/:playerId/evals/9u-full", async (req, res) => {
+  const playerId = req.params.playerId;
+
+  try {
+    const [athletic, hitting, throwing, catching, fielding] =
+      await Promise.all([
+        fetchLatestCategoryRating(playerId, "9U Athletic Skills", "athletic"),
+        fetchLatestCategoryRating(playerId, "9U Hitting Skills", "hitting"),
+        fetchLatestCategoryRating(
+          playerId,
+          "9U Throwing & Pitching",
+          "throwing"
+        ),
+        fetchLatestCategoryRating(playerId, "9U Catching Skills", "catching"),
+        fetchLatestCategoryRating(playerId, "9U Fielding Skills", "fielding"),
+      ]);
+
+    const components = { athletic, hitting, throwing, catching, fielding };
+
+    const athleticScore = athletic.score;
+    const hittingScore = hitting.score;
+    const throwingScore = throwing.score;
+    const catchingScore = catching.score;
+    const fieldingScore = fielding.score;
+
+    const hittingTests =
+      hitting.breakdown && hitting.breakdown.hitting
+        ? hitting.breakdown.hitting.tests || {}
+        : {};
+
+    const athleticTests =
+      athletic.breakdown && athletic.breakdown.athletic
+        ? athletic.breakdown.athletic.tests || {}
+        : {};
+
+    const contactScore =
+      typeof hittingTests.contact_score === "number"
+        ? hittingTests.contact_score
+        : null;
+    const powerScore =
+      typeof hittingTests.power_score === "number"
+        ? hittingTests.power_score
+        : null;
+    const strikeChancePercent =
+      typeof hittingTests.strike_chance_percent === "number"
+        ? hittingTests.strike_chance_percent
+        : null;
+
+    const speedScore =
+      typeof athleticTests.speed_score === "number"
+        ? athleticTests.speed_score
+        : null;
+
+    // Offense: 80% hitting + 20% speed
+    let offenseFull: number | null = null;
+    if (hittingScore != null && speedScore != null) {
+      offenseFull =
+        Math.round((0.8 * hittingScore + 0.2 * speedScore) * 10) / 10;
+    } else if (hittingScore != null) {
+      offenseFull = hittingScore;
+    }
+
+    const positionScores = compute9UPositionScores(
+      athletic,
+      throwing,
+      catching,
+      fielding
+    );
+
+    const defenseFull = positionScores.defense_score;
+    const pitchingFull = throwingScore ?? null;
+
+    const overallFull = averageNonNull([
+      athleticScore,
+      hittingScore,
+      throwingScore,
+      catchingScore,
+      fieldingScore,
+    ]);
+
+    const allDates = [
+      athletic.performedAt,
+      hitting.performedAt,
+      throwing.performedAt,
+      catching.performedAt,
+      fielding.performedAt,
+    ].filter((d): d is string => !!d);
+
+    const lastUpdated =
+      allDates.length > 0 ? allDates.sort().slice(-1)[0] : null;
+
+    return res.json({
+      player_id: playerId,
+      age_group: "9U",
+      last_updated: lastUpdated,
+      components,
+      aggregates: {
+        overall_full_eval_score: overallFull,
+        offense_full_eval_score: offenseFull,
+        offense_hitting_component: hittingScore,
+        offense_speed_component: speedScore,
+        defense_full_eval_score: defenseFull,
+        pitching_full_eval_score: pitchingFull,
+        athletic_score: athleticScore,
+        hitting_score: hittingScore,
+        throwing_score: throwingScore,
+        catching_score: catchingScore,
+        fielding_score: fieldingScore,
+        derived: {
+          contact_score: contactScore,
+          power_score: powerScore,
+          strike_chance_percent: strikeChancePercent,
+          speed_score: speedScore,
+          position_scores: positionScores,
+        },
+      },
+    });
+  } catch (err) {
+    console.error("Error building 9U full eval:", err);
+    return res.status(500).json({ error: "Failed to build 9U full eval" });
+  }
+});
+
 
 
 app.listen(port, () => {
