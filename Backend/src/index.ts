@@ -16,6 +16,7 @@ import { compute10URatings } from "./scoring/10u";
 import { compute11URatings } from "./scoring/11u";
 import { compute12URatings } from "./scoring/12u";
 import { compute13URatings } from "./scoring/13u";
+import { compute14URatings } from "./scoring/14u";
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -1643,6 +1644,26 @@ function compute13UPositionScores(
   );
 }
 
+function compute14UPositionScores(
+  athletic: CategoryComponent,
+  pitching: CategoryComponent,
+  catcher: CategoryComponent,
+  firstBase: CategoryComponent,
+  infield: CategoryComponent,
+  outfield: CategoryComponent
+): PositionScores5U {
+  // 14U uses the same position-score logic as 12U/13U
+  return compute12UPositionScores(
+    athletic,
+    pitching,
+    catcher,
+    firstBase,
+    infield,
+    outfield
+  );
+}
+
+
 
 /**
  * Create an assessment (official or practice) + store raw values.
@@ -1756,7 +1777,7 @@ app.post("/assessments", async (req: AuthedRequest, res) => {
 
   const ageLabel = ageGroup.label;
 
-  // Only 5U–13U are implemented with scoring right now
+  // Only 5U–14U are implemented with scoring right now
   if (
     ageLabel !== "5U" &&
     ageLabel !== "6U" &&
@@ -1766,10 +1787,12 @@ app.post("/assessments", async (req: AuthedRequest, res) => {
     ageLabel !== "10U" &&
     ageLabel !== "11U" &&
     ageLabel !== "12U" &&
-    ageLabel !== "13U"
+    ageLabel !== "13U" &&
+    ageLabel !== "14U"
   ) {
     return res.status(201).json({ assessment_id: assessmentId });
   }
+
 
 
 
@@ -1838,10 +1861,13 @@ app.post("/assessments", async (req: AuthedRequest, res) => {
     ratings = compute12URatings(metricMap);
   } else if (ageLabel === "13U") {
     ratings = compute13URatings(metricMap);
+  } else if (ageLabel === "14U") {
+    ratings = compute14URatings(metricMap);
   } else {
     // Should be unreachable ...
     throw new Error(`Unsupported age group: ${ageLabel}`);
   }
+
 
 
 
@@ -3079,6 +3105,157 @@ app.get("/players/:id/evals/13u-full", async (req, res) => {
   }
 });
 
+app.get("/players/:id/evals/14u-full", async (req, res) => {
+  const playerId = req.params.id;
+
+  try {
+    const [
+      athletic,
+      hitting,
+      pitchingEval,
+      catcherEval,
+      firstBaseEval,
+      infieldEval,
+      outfieldEval,
+    ] = await Promise.all([
+      fetchLatestCategoryRating(playerId, "14U Athletic Skills", "athletic"),
+      fetchLatestCategoryRating(playerId, "14U Hitting Skills", "hitting"),
+      fetchLatestCategoryRating(playerId, "14U Pitching Eval", "pitching"),
+      fetchLatestCategoryRating(playerId, "14U Catcher Eval", "catcher"),
+      fetchLatestCategoryRating(playerId, "14U First Base Eval", "first_base"),
+      fetchLatestCategoryRating(playerId, "14U Infield Eval", "infield"),
+      fetchLatestCategoryRating(playerId, "14U Outfield Eval", "outfield"),
+    ]);
+
+    const components = {
+      athletic,
+      hitting,
+      pitching: pitchingEval,
+      catcher: catcherEval,
+      first_base: firstBaseEval,
+      infield: infieldEval,
+      outfield: outfieldEval,
+    };
+
+    const athleticScore = athletic.score;
+    const hittingScore = hitting.score;
+    const pitchingScore = pitchingEval.score;
+    const catcherScore = catcherEval.score;
+    const firstBaseScore = firstBaseEval.score;
+    const infieldScore = infieldEval.score;
+    const outfieldScore = outfieldEval.score;
+
+    const hittingTests =
+      hitting.breakdown && hitting.breakdown.hitting
+        ? hitting.breakdown.hitting.tests || {}
+        : {};
+
+    const athleticTests =
+      athletic.breakdown && athletic.breakdown.athletic
+        ? athletic.breakdown.athletic.tests || {}
+        : {};
+
+    const pitchingTests =
+      pitchingEval.breakdown && (pitchingEval.breakdown as any).pitching
+        ? (pitchingEval.breakdown as any).pitching.tests || {}
+        : {};
+
+    const contactScore =
+      typeof hittingTests.contact_score === "number"
+        ? hittingTests.contact_score
+        : null;
+
+    const powerScore =
+      typeof hittingTests.power_score === "number"
+        ? hittingTests.power_score
+        : null;
+
+    const speedScore =
+      typeof athleticTests.speed_score === "number"
+        ? athleticTests.speed_score
+        : null;
+
+    const strikeChancePercent =
+      typeof pitchingTests.strike_chance_percent === "number"
+        ? pitchingTests.strike_chance_percent
+        : null;
+
+    // Offense: 80% hitting + 20% speed (when both available)
+    let offenseFull: number | null = null;
+    if (hittingScore != null && speedScore != null) {
+      offenseFull =
+        Math.round((0.8 * hittingScore + 0.2 * speedScore) * 10) / 10;
+    } else if (hittingScore != null) {
+      offenseFull = hittingScore;
+    }
+
+    const positionScores = compute14UPositionScores(
+      athletic,
+      pitchingEval,
+      catcherEval,
+      firstBaseEval,
+      infieldEval,
+      outfieldEval
+    );
+
+    const defenseFull = positionScores.defense_score;
+    const pitchingFull = pitchingScore ?? null;
+
+    const overallFull = averageNonNull([
+      athleticScore,
+      hittingScore,
+      pitchingScore,
+      catcherScore,
+      firstBaseScore,
+      infieldScore,
+      outfieldScore,
+    ]);
+
+    const allDates = [
+      athletic.performedAt,
+      hitting.performedAt,
+      pitchingEval.performedAt,
+      catcherEval.performedAt,
+      firstBaseEval.performedAt,
+      infieldEval.performedAt,
+      outfieldEval.performedAt,
+    ].filter((d): d is string => !!d);
+
+    const lastUpdated =
+      allDates.length > 0 ? allDates.sort().slice(-1)[0] : null;
+
+    return res.json({
+      player_id: playerId,
+      age_group: "14U",
+      last_updated: lastUpdated,
+      components,
+      aggregates: {
+        overall_full_eval_score: overallFull,
+        offense_full_eval_score: offenseFull,
+        offense_hitting_component: hittingScore,
+        offense_speed_component: speedScore,
+        defense_full_eval_score: defenseFull,
+        pitching_full_eval_score: pitchingFull,
+        athletic_score: athleticScore,
+        hitting_score: hittingScore,
+        // keep field names consistent with other ages:
+        throwing_score: pitchingScore,
+        catching_score: catcherScore,
+        fielding_score: infieldScore,
+        derived: {
+          contact_score: contactScore,
+          power_score: powerScore,
+          strike_chance_percent: strikeChancePercent,
+          speed_score: speedScore,
+          position_scores: positionScores,
+        },
+      },
+    });
+  } catch (err) {
+    console.error("Error building 14U full eval:", err);
+    return res.status(500).json({ error: "Failed to build 14U full eval" });
+  }
+});
 
 
 app.listen(port, () => {
