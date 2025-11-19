@@ -18,6 +18,7 @@ import { compute12URatings } from "./scoring/12u";
 import { compute13URatings } from "./scoring/13u";
 import { compute14URatings } from "./scoring/14u";
 import { computeHSRatings } from "./scoring/hs";
+import { computeCollegeRatings } from "./scoring/coll";
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -1980,7 +1981,7 @@ app.post("/assessments", async (req: AuthedRequest, res) => {
 
   const ageLabel = ageGroup.label;
 
-  // Only 5U–14U + HS are implemented with scoring right now
+  // Only 5U–14U + HS + College are implemented with scoring right now
   if (
     ageLabel !== "5U" &&
     ageLabel !== "6U" &&
@@ -1992,10 +1993,12 @@ app.post("/assessments", async (req: AuthedRequest, res) => {
     ageLabel !== "12U" &&
     ageLabel !== "13U" &&
     ageLabel !== "14U" &&
-    ageLabel !== "HS" // <-- High School
+    ageLabel !== "HS" &&
+    ageLabel !== "College" // <--- added
   ) {
     return res.status(201).json({ assessment_id: assessmentId });
   }
+
 
 
 
@@ -2070,10 +2073,12 @@ app.post("/assessments", async (req: AuthedRequest, res) => {
     ratings = compute14URatings(metricMap);
   } else if (ageLabel === "HS") {
     ratings = computeHSRatings(metricMap);
+  } else if (ageLabel === "College") {
+    ratings = computeCollegeRatings(metricMap);
   } else {
-    // Should be unreachable ...
     throw new Error(`Unsupported age group: ${ageLabel}`);
   }
+
 
 
 
@@ -3614,6 +3619,157 @@ app.get("/players/:id/evals/hs-full", async (req, res) => {
   } catch (err) {
     console.error("Error building HS full eval:", err);
     return res.status(500).json({ error: "Failed to build HS full eval" });
+  }
+});
+
+app.get("/players/:id/evals/college-full", async (req, res) => {
+  const playerId = req.params.id;
+
+  try {
+    const [
+      athletic,
+      hitting,
+      pitchingEval,
+      catcherEval,
+      firstBaseEval,
+      infieldEval,
+      outfieldEval,
+    ] = await Promise.all([
+      fetchLatestCategoryRating(playerId, "College Athletic Skills", "athletic"),
+      fetchLatestCategoryRating(playerId, "College Hitting Skills", "hitting"),
+      fetchLatestCategoryRating(playerId, "College Pitching Eval", "pitching"),
+      fetchLatestCategoryRating(playerId, "College Catcher Eval", "catcher"),
+      fetchLatestCategoryRating(playerId, "College First Base Eval", "first_base"),
+      fetchLatestCategoryRating(playerId, "College Infield Eval", "infield"),
+      fetchLatestCategoryRating(playerId, "College Outfield Eval", "outfield"),
+    ]);
+
+    const components = {
+      athletic,
+      hitting,
+      pitching: pitchingEval,
+      catcher: catcherEval,
+      first_base: firstBaseEval,
+      infield: infieldEval,
+      outfield: outfieldEval,
+    };
+
+    const athleticScore = athletic.score;
+    const hittingScore = hitting.score;
+    const pitchingScore = pitchingEval.score;
+    const catcherScore = catcherEval.score;
+    const firstBaseScore = firstBaseEval.score;
+    const infieldScore = infieldEval.score;
+    const outfieldScore = outfieldEval.score;
+
+    const hittingTests =
+      hitting.breakdown && hitting.breakdown.hitting
+        ? hitting.breakdown.hitting.tests || {}
+        : {};
+
+    const athleticTests =
+      athletic.breakdown && athletic.breakdown.athletic
+        ? athletic.breakdown.athletic.tests || {}
+        : {};
+
+    const pitchingTests =
+      pitchingEval.breakdown && (pitchingEval.breakdown as any).pitching
+        ? (pitchingEval.breakdown as any).pitching.tests || {}
+        : {};
+
+    const contactScore =
+      typeof hittingTests.contact_score === "number"
+        ? hittingTests.contact_score
+        : null;
+
+    const powerScore =
+      typeof hittingTests.power_score === "number"
+        ? hittingTests.power_score
+        : null;
+
+    const speedScore =
+      typeof athleticTests.speed_score === "number"
+        ? athleticTests.speed_score
+        : null;
+
+    const strikeChancePercent =
+      typeof pitchingTests.strike_chance_percent === "number"
+        ? pitchingTests.strike_chance_percent
+        : null;
+
+    // Offense: 80% hitting + 20% speed
+    let offenseFull: number | null = null;
+    if (hittingScore != null && speedScore != null) {
+      offenseFull =
+        Math.round((0.8 * hittingScore + 0.2 * speedScore) * 10) / 10;
+    } else if (hittingScore != null) {
+      offenseFull = hittingScore;
+    }
+
+    const positionScores = computeHSPositionScores(
+      athletic,
+      pitchingEval,
+      catcherEval,
+      firstBaseEval,
+      infieldEval,
+      outfieldEval
+    );
+
+    const defenseFull = positionScores.defense_score;
+    const pitchingFull = pitchingScore ?? null;
+
+    const overallFull = averageNonNull([
+      athleticScore,
+      hittingScore,
+      pitchingScore,
+      catcherScore,
+      firstBaseScore,
+      infieldScore,
+      outfieldScore,
+    ]);
+
+    const allDates = [
+      athletic.performedAt,
+      hitting.performedAt,
+      pitchingEval.performedAt,
+      catcherEval.performedAt,
+      firstBaseEval.performedAt,
+      infieldEval.performedAt,
+      outfieldEval.performedAt,
+    ].filter((d): d is string => !!d);
+
+    const lastUpdated =
+      allDates.length > 0 ? allDates.sort().slice(-1)[0] : null;
+
+    return res.json({
+      player_id: playerId,
+      age_group: "College",
+      last_updated: lastUpdated,
+      components,
+      aggregates: {
+        overall_full_eval_score: overallFull,
+        offense_full_eval_score: offenseFull,
+        offense_hitting_component: hittingScore,
+        offense_speed_component: speedScore,
+        defense_full_eval_score: defenseFull,
+        pitching_full_eval_score: pitchingFull,
+        athletic_score: athleticScore,
+        hitting_score: hittingScore,
+        throwing_score: pitchingScore,
+        catching_score: catcherScore,
+        fielding_score: infieldScore,
+        derived: {
+          contact_score: contactScore,
+          power_score: powerScore,
+          strike_chance_percent: strikeChancePercent,
+          speed_score: speedScore,
+          position_scores: positionScores,
+        },
+      },
+    });
+  } catch (err) {
+    console.error("Error building College full eval:", err);
+    return res.status(500).json({ error: "Failed to build College full eval" });
   }
 });
 
