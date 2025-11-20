@@ -4175,6 +4175,224 @@ app.post(
   }
 );
 
+// List attachments for a given message
+app.get(
+  "/messages/:messageId/attachments",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    const userId = req.user!.id;
+    const { messageId } = req.params;
+
+    try {
+      // Optional membership check: ensure this user can see the message
+      // (RLS will also enforce this, but this gives nicer errors)
+      const { data: msg, error: msgError } = await supabase
+        .from("messages")
+        .select("conversation_id, sender_id")
+        .eq("id", messageId)
+        .maybeSingle();
+
+      if (msgError) {
+        console.error("Error fetching message for attachments:", msgError);
+        return res.status(500).json({ error: msgError.message });
+      }
+
+      if (!msg) {
+        return res.status(404).json({ error: "Message not found" });
+      }
+
+      // Ensure user is a participant in that conversation
+      const { data: membership, error: membershipError } = await supabase
+        .from("conversation_participants")
+        .select("conversation_id")
+        .eq("conversation_id", msg.conversation_id)
+        .eq("profile_id", userId)
+        .maybeSingle();
+
+      if (membershipError) {
+        console.error("Error checking membership:", membershipError);
+        return res.status(500).json({ error: membershipError.message });
+      }
+
+      if (!membership) {
+        return res.status(403).json({ error: "You are not a participant in this conversation" });
+      }
+
+      // Now fetch attachments
+      const { data: attachments, error: attachError } = await supabase
+        .from("message_attachments")
+        .select("*")
+        .eq("message_id", messageId)
+        .order("created_at", { ascending: true });
+
+      if (attachError) {
+        console.error("Error fetching message_attachments:", attachError);
+        return res.status(500).json({ error: attachError.message });
+      }
+
+      return res.json(attachments ?? []);
+    } catch (err) {
+      console.error("Unexpected error in GET /messages/:messageId/attachments:", err);
+      return res.status(500).json({ error: "Failed to load attachments" });
+    }
+  }
+);
+
+// Add one or more attachments to a message
+app.post(
+  "/messages/:messageId/attachments",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    const userId = req.user!.id;
+    const { messageId } = req.params;
+    const { attachments } = req.body || {};
+
+    if (!Array.isArray(attachments) || attachments.length === 0) {
+      return res.status(400).json({
+        error: "attachments must be a non-empty array of { url, type }",
+      });
+    }
+
+    try {
+      // 1) Fetch the message to verify it exists and who sent it
+      const { data: msg, error: msgError } = await supabase
+        .from("messages")
+        .select("conversation_id, sender_id")
+        .eq("id", messageId)
+        .maybeSingle();
+
+      if (msgError) {
+        console.error("Error fetching message for attachment insert:", msgError);
+        return res.status(500).json({ error: msgError.message });
+      }
+
+      if (!msg) {
+        return res.status(404).json({ error: "Message not found" });
+      }
+
+      // 2) Ensure user is at least a participant in the conversation
+      const { data: membership, error: membershipError } = await supabase
+        .from("conversation_participants")
+        .select("conversation_id")
+        .eq("conversation_id", msg.conversation_id)
+        .eq("profile_id", userId)
+        .maybeSingle();
+
+      if (membershipError) {
+        console.error("Error checking membership for attachments:", membershipError);
+        return res.status(500).json({ error: membershipError.message });
+      }
+
+      if (!membership) {
+        return res.status(403).json({ error: "You are not a participant in this conversation" });
+      }
+
+      // 3) (Optional) If you want to restrict uploads to *only* the sender of the message:
+      // if (msg.sender_id !== userId) {
+      //   return res.status(403).json({ error: "Only the sender can add attachments to this message" });
+      // }
+
+      // 4) Build rows to insert
+      const rowsToInsert = attachments
+        .filter(
+          (a: any) =>
+            a &&
+            typeof a.url === "string" &&
+            a.url.trim().length > 0 &&
+            typeof a.type === "string"
+        )
+        .map((a: any) => ({
+          message_id: messageId,
+          url: a.url.trim(),
+          type: a.type, // must match your enum type; otherwise Postgres will error
+        }));
+
+      if (rowsToInsert.length === 0) {
+        return res.status(400).json({
+          error: "No valid attachments found. Each must have a non-empty url and a type.",
+        });
+      }
+
+      const { data: inserted, error: insertError } = await supabase
+        .from("message_attachments")
+        .insert(rowsToInsert)
+        .select();
+
+      if (insertError) {
+        console.error("Error inserting message_attachments:", insertError);
+        return res.status(500).json({ error: insertError.message });
+      }
+
+      return res.status(201).json(inserted);
+    } catch (err) {
+      console.error("Unexpected error in POST /messages/:messageId/attachments:", err);
+      return res.status(500).json({ error: "Failed to add attachments" });
+    }
+  }
+);
+
+// Delete a single attachment by id (only the message sender can delete)
+app.delete(
+  "/attachments/:attachmentId",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    const userId = req.user!.id;
+    const { attachmentId } = req.params;
+
+    try {
+      // 1) Load attachment + its message
+      const { data: attachment, error: attachError } = await supabase
+        .from("message_attachments")
+        .select("id, message_id")
+        .eq("id", attachmentId)
+        .maybeSingle();
+
+      if (attachError) {
+        console.error("Error fetching attachment for delete:", attachError);
+        return res.status(500).json({ error: attachError.message });
+      }
+
+      if (!attachment) {
+        return res.status(404).json({ error: "Attachment not found" });
+      }
+
+      const { data: msg, error: msgError } = await supabase
+        .from("messages")
+        .select("sender_id")
+        .eq("id", attachment.message_id)
+        .maybeSingle();
+
+      if (msgError) {
+        console.error("Error fetching message for attachment delete:", msgError);
+        return res.status(500).json({ error: msgError.message });
+      }
+
+      if (!msg) {
+        return res.status(404).json({ error: "Parent message not found" });
+      }
+
+      if (msg.sender_id !== userId) {
+        return res.status(403).json({ error: "Only the message sender can delete this attachment" });
+      }
+
+      // 2) Delete
+      const { error: deleteError } = await supabase
+        .from("message_attachments")
+        .delete()
+        .eq("id", attachmentId);
+
+      if (deleteError) {
+        console.error("Error deleting attachment:", deleteError);
+        return res.status(500).json({ error: deleteError.message });
+      }
+
+      return res.status(204).send();
+    } catch (err) {
+      console.error("Unexpected error in DELETE /attachments/:attachmentId:", err);
+      return res.status(500).json({ error: "Failed to delete attachment" });
+    }
+  }
+);
 
 
 app.listen(port, () => {
