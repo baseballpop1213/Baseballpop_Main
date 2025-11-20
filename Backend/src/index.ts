@@ -27,6 +27,22 @@ import {
   updateEvalSession,
 } from "./evalProgress";
 
+type BasicRole = "player" | "coach" | "parent" | "assistant" | "admin";
+
+interface PlayerProfileUpdateRequest {
+  height_inches?: number | null;
+  weight_lbs?: number | null;
+  school?: string | null;
+  grade?: string | null; // e.g. "7th", "Freshman", etc.
+  bats?: "R" | "L" | "S" | null;
+  throws?: "R" | "L" | null;
+  home_address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+}
+
+
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -66,6 +82,261 @@ app.get("/me", requireAuth, async (req: AuthedRequest, res) => {
 
   return res.json(data);
 });
+
+/**
+ * Get the current user's extended player profile.
+ * - Requires: Authorization: Bearer <Supabase access token>
+ * - Only works if profiles.role === 'player'
+ */
+app.get("/me/player-profile", requireAuth, async (req: AuthedRequest, res) => {
+  const userId = req.user!.id;
+
+  try {
+    // 1) Load base profile
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("id, role, display_name, first_name, last_name, birthdate, avatar_url, created_at, updated_at")
+      .eq("id", userId)
+      .single();
+
+    if (profileError || !profile) {
+      console.error("Error fetching base profile in GET /me/player-profile:", profileError);
+      return res.status(500).json({ error: profileError?.message ?? "Failed to load profile" });
+    }
+
+    if (profile.role !== "player") {
+      return res.status(403).json({
+        error: "This endpoint is only available for player accounts.",
+      });
+    }
+
+    // 2) Load player-specific profile (may or may not exist yet)
+    const { data: playerProfile, error: ppError } = await supabase
+      .from("player_profiles")
+      .select("*")
+      .eq("player_id", userId)
+      .maybeSingle();
+
+    if (ppError) {
+      console.error("Error fetching player_profiles in GET /me/player-profile:", ppError);
+      return res.status(500).json({ error: ppError.message });
+    }
+
+    return res.json({
+      profile,
+      player_profile: playerProfile, // may be null if not created yet
+    });
+  } catch (err) {
+    console.error("Unexpected error in GET /me/player-profile:", err);
+    return res.status(500).json({ error: "Failed to load player profile" });
+  }
+});
+
+/**
+ * Create or update the current player's extended profile in player_profiles.
+ *
+ * Accepts a subset of high-value fields for now:
+ *   - height_inches (number)
+ *   - weight_lbs (number)
+ *   - school (string)
+ *   - grade (string)
+ *   - bats ("R" | "L" | "S")
+ *   - throws ("R" | "L")
+ *   - home_address, city, state, postal_code (strings)
+ *
+ * You can safely send partials; only provided fields are updated.
+ */
+app.put("/me/player-profile", requireAuth, async (req: AuthedRequest, res) => {
+  const userId = req.user!.id;
+  const body = req.body as PlayerProfileUpdateRequest | undefined;
+
+  if (!body || typeof body !== "object") {
+    return res.status(400).json({ error: "Request body must be a JSON object." });
+  }
+
+  try {
+    // 1) Ensure user is a player
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("id, role")
+      .eq("id", userId)
+      .single();
+
+    if (profileError || !profile) {
+      console.error("Error fetching profile in PUT /me/player-profile:", profileError);
+      return res.status(500).json({ error: profileError?.message ?? "Failed to load profile" });
+    }
+
+    if (profile.role !== "player") {
+      return res.status(403).json({
+        error: "Only player accounts can update a player profile.",
+      });
+    }
+
+    const updates: any = {};
+
+    // 2) Validate & normalize incoming fields
+
+    if (body.height_inches !== undefined) {
+      if (
+        body.height_inches === null ||
+        (typeof body.height_inches === "number" &&
+          Number.isFinite(body.height_inches) &&
+          body.height_inches > 0 &&
+          body.height_inches < 120)
+      ) {
+        updates.height_inches = body.height_inches;
+      } else {
+        return res.status(400).json({
+          error: "height_inches must be a positive number under 120, or null.",
+        });
+      }
+    }
+
+    if (body.weight_lbs !== undefined) {
+      if (
+        body.weight_lbs === null ||
+        (typeof body.weight_lbs === "number" &&
+          Number.isFinite(body.weight_lbs) &&
+          body.weight_lbs > 0 &&
+          body.weight_lbs < 400)
+      ) {
+        updates.weight_lbs = body.weight_lbs;
+      } else {
+        return res.status(400).json({
+          error: "weight_lbs must be a positive number under 400, or null.",
+        });
+      }
+    }
+
+    if (body.school !== undefined) {
+      updates.school =
+        typeof body.school === "string" && body.school.trim().length > 0
+          ? body.school.trim()
+          : null;
+    }
+
+    if (body.grade !== undefined) {
+      updates.grade =
+        typeof body.grade === "string" && body.grade.trim().length > 0
+          ? body.grade.trim()
+          : null;
+    }
+
+    if (body.bats !== undefined) {
+      if (body.bats === null) {
+        updates.bats = null;
+      } else if (body.bats === "R" || body.bats === "L" || body.bats === "S") {
+        updates.bats = body.bats;
+      } else {
+        return res.status(400).json({
+          error: 'bats must be "R", "L", "S", or null.',
+        });
+      }
+    }
+
+    if (body.throws !== undefined) {
+      if (body.throws === null) {
+        updates.throws = null;
+      } else if (body.throws === "R" || body.throws === "L") {
+        updates.throws = body.throws;
+      } else {
+        return res.status(400).json({
+          error: 'throws must be "R", "L", or null.',
+        });
+      }
+    }
+
+    if (body.home_address !== undefined) {
+      updates.home_address =
+        typeof body.home_address === "string" && body.home_address.trim().length > 0
+          ? body.home_address.trim()
+          : null;
+    }
+
+    if (body.city !== undefined) {
+      updates.city =
+        typeof body.city === "string" && body.city.trim().length > 0
+          ? body.city.trim()
+          : null;
+    }
+
+    if (body.state !== undefined) {
+      updates.state =
+        typeof body.state === "string" && body.state.trim().length > 0
+          ? body.state.trim()
+          : null;
+    }
+
+    if (body.postal_code !== undefined) {
+      updates.postal_code =
+        typeof body.postal_code === "string" && body.postal_code.trim().length > 0
+          ? body.postal_code.trim()
+          : null;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({
+        error: "No valid fields were provided to update.",
+      });
+    }
+
+    updates.updated_at = new Date().toISOString();
+
+    // 3) Check if a player_profiles row already exists
+    const { data: existing, error: existingError } = await supabase
+      .from("player_profiles")
+      .select("player_id")
+      .eq("player_id", userId)
+      .maybeSingle();
+
+    if (existingError) {
+      console.error("Error checking existing player_profiles row:", existingError);
+      return res.status(500).json({ error: existingError.message });
+    }
+
+    let resultRow: any = null;
+
+    if (existing) {
+      // Update existing row
+      const { data, error } = await supabase
+        .from("player_profiles")
+        .update(updates)
+        .eq("player_id", userId)
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Error updating player_profiles row:", error);
+        return res.status(500).json({ error: error.message });
+      }
+
+      resultRow = data;
+    } else {
+      // Insert new row
+      const { data, error } = await supabase
+        .from("player_profiles")
+        .insert([{ player_id: userId, ...updates }])
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Error inserting player_profiles row:", error);
+        return res.status(500).json({ error: error.message });
+      }
+
+      resultRow = data;
+    }
+
+    return res.json({
+      player_profile: resultRow,
+    });
+  } catch (err) {
+    console.error("Unexpected error in PUT /me/player-profile:", err);
+    return res.status(500).json({ error: "Failed to save player profile" });
+  }
+});
+
 
 /**
  * Update current user's basic profile in the "profiles" table.
@@ -122,6 +393,7 @@ app.patch("/me", requireAuth, async (req: AuthedRequest, res) => {
     updates.birthdate = birthdate;
   }
 
+  
   if (Object.keys(updates).length === 0) {
     return res.status(400).json({
       error: "No valid fields provided to update.",
