@@ -52,15 +52,165 @@ app.get("/me", requireAuth, async (req: AuthedRequest, res) => {
     .from("profiles")
     .select("*")
     .eq("id", userId)
-    .single();
+    .maybeSingle();
 
   if (error) {
     console.error("Error fetching profile:", error);
     return res.status(500).json({ error: error.message });
   }
 
+  if (!data) {
+    // Logged-in, but no profile row yet
+    return res.status(404).json({ error: "Profile not found" });
+  }
+
   return res.json(data);
 });
+
+/**
+ * Update current user's basic profile in the "profiles" table.
+ * Fields supported:
+ *  - display_name (string, required if present)
+ *  - first_name (string | null)
+ *  - last_name (string | null)
+ *  - avatar_url (string | null)
+ *  - birthdate (string in YYYY-MM-DD, optional)
+ */
+app.patch("/me", requireAuth, async (req: AuthedRequest, res) => {
+  const userId = req.user!.id;
+  const {
+    display_name,
+    first_name,
+    last_name,
+    avatar_url,
+    birthdate,
+  } = req.body || {};
+
+  const updates: any = {};
+
+  // display_name: optional here, but if provided must be non-empty
+  if (typeof display_name === "string") {
+    const trimmed = display_name.trim();
+    if (!trimmed) {
+      return res.status(400).json({
+        error: "display_name, if provided, must be a non-empty string.",
+      });
+    }
+    updates.display_name = trimmed;
+  }
+
+  if (typeof first_name === "string") {
+    updates.first_name = first_name.trim() || null;
+  }
+
+  if (typeof last_name === "string") {
+    updates.last_name = last_name.trim() || null;
+  }
+
+  if (typeof avatar_url === "string") {
+    updates.avatar_url = avatar_url.trim() || null;
+  }
+
+  if (typeof birthdate === "string") {
+    // Simple YYYY-MM-DD sanity check – Supabase will do the actual cast
+    const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!isoDateRegex.test(birthdate)) {
+      return res.status(400).json({
+        error: "birthdate must be a string in YYYY-MM-DD format.",
+      });
+    }
+    updates.birthdate = birthdate;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({
+      error: "No valid fields provided to update.",
+    });
+  }
+
+  // Always bump updated_at server-side
+  updates.updated_at = new Date().toISOString();
+
+  try {
+    const { data, error } = await supabase
+      .from("profiles")
+      .update(updates)
+      .eq("id", userId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Error updating profile:", error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    return res.json(data);
+  } catch (err) {
+    console.error("Unexpected error in PATCH /me:", err);
+    return res.status(500).json({ error: "Failed to update profile" });
+  }
+});
+
+
+
+type PublicRole = "player" | "parent" | "coach";
+
+app.post("/accounts/basic", requireAuth, async (req: AuthedRequest, res) => {
+  const userId = req.user!.id;
+  const { role, display_name, first_name, last_name } = req.body || {};
+
+  const allowedRoles: PublicRole[] = ["player", "parent", "coach"];
+
+  if (
+    !role ||
+    typeof role !== "string" ||
+    !allowedRoles.includes(role as PublicRole) // cast fixes TS error
+  ) {
+    return res.status(400).json({
+      error: "Invalid role. Must be one of: player, parent, coach.",
+    });
+  }
+
+  if (!display_name || typeof display_name !== "string" || !display_name.trim()) {
+    return res.status(400).json({
+      error: "display_name is required and must be a non-empty string.",
+    });
+  }
+
+  const payload: any = {
+    id: userId,
+    role, // "player" | "parent" | "coach"
+    display_name: display_name.trim(),
+  };
+
+  if (typeof first_name === "string") {
+    payload.first_name = first_name.trim() || null;
+  }
+
+  if (typeof last_name === "string") {
+    payload.last_name = last_name.trim() || null;
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from("profiles")
+      .upsert(payload)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Error upserting basic profile:", error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    return res.status(200).json(data);
+  } catch (err) {
+    console.error("Unexpected error in POST /accounts/basic:", err);
+    return res.status(500).json({ error: "Failed to create/update basic account" });
+  }
+});
+
+
 
 // Eval session progress (for in-progress evals)
 app.post("/eval-sessions", requireAuth, createEvalSession);
