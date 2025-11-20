@@ -29,6 +29,130 @@ import {
 
 type BasicRole = "player" | "coach" | "parent" | "assistant" | "admin";
 
+type TeamRole = "coach" | "assistant" | "player" | "parent";
+const COACH_ONLY: TeamRole[] = ["coach"];
+const COACH_AND_ASSISTANT: TeamRole[] = ["coach", "assistant"];
+const ANY_MEMBER: TeamRole[] = ["coach", "assistant", "player", "parent"];
+
+/**
+ * Look up the user's role for a specific team from user_team_roles.
+ * Returns null if they have no role on that team.
+ */
+async function getUserTeamRole(
+  userId: string,
+  teamId: string
+): Promise<TeamRole | null> {
+  const { data, error } = await supabase
+    .from("user_team_roles")
+    .select("role")
+    .eq("user_id", userId)
+    .eq("team_id", teamId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Error fetching user_team_roles:", error);
+    return null;
+  }
+
+  if (!data || !data.role) return null;
+  return data.role as TeamRole;
+}
+
+/**
+ * Convenience check used inside route handlers.
+ * If the user does not have one of the allowed roles for the team, returns a 403.
+ * Otherwise returns the role string.
+ */
+async function assertTeamRoleOr403(
+  req: AuthedRequest,
+  res: express.Response,
+  teamId: string,
+  allowed: TeamRole[]
+): Promise<TeamRole | null> {
+  const userId = req.user!.id;
+  const role = await getUserTeamRole(userId, teamId);
+
+  if (!role || !allowed.includes(role)) {
+    res.status(403).json({ error: "You do not have permission for this team action." });
+    return null;
+  }
+
+  return role;
+}
+
+/**
+ * Find or create a "team" conversation for a given team.
+ */
+async function getOrCreateTeamConversation(teamId: string, createdBy: string) {
+  // 1) Try to find existing team conversation
+  const { data: existing, error: existingError } = await supabase
+    .from("conversations")
+    .select("*")
+    .eq("team_id", teamId)
+    .eq("type", "team")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (existingError) {
+    console.error("Error looking up team conversation:", existingError);
+    throw existingError;
+  }
+
+  if (existing) return existing;
+
+  // 2) Create a new team-wide conversation
+  const { data: convo, error: convoError } = await supabase
+    .from("conversations")
+    .insert([
+      {
+        type: "team",
+        team_id: teamId,
+        created_by: createdBy,
+        title: null,
+      },
+    ])
+    .select()
+    .single();
+
+  if (convoError || !convo) {
+    console.error("Error creating team conversation:", convoError);
+    throw convoError ?? new Error("Failed to create team conversation");
+  }
+
+  // Optionally, add all team members as participants
+  // (Assumes user_team_roles has all members for the team.)
+  const { data: members, error: membersError } = await supabase
+    .from("user_team_roles")
+    .select("user_id")
+    .eq("team_id", teamId);
+
+  if (membersError) {
+    console.error("Error loading team members for conversation:", membersError);
+    // non-fatal; we still return the convo
+    return convo;
+  }
+
+  if (members && members.length > 0) {
+    const participants = members.map((m) => ({
+      conversation_id: convo.id,
+      profile_id: m.user_id,
+    }));
+
+    const { error: cpError } = await supabase
+      .from("conversation_participants")
+      .insert(participants);
+
+    if (cpError) {
+      // If you have a unique constraint on (conversation_id, profile_id),
+      // this is safe to ignore on conflict.
+      console.error("Error inserting conversation participants:", cpError);
+    }
+  }
+
+  return convo;
+}
+
 interface PlayerProfileUpdateRequest {
   height_inches?: number | null;
   weight_lbs?: number | null;
@@ -962,6 +1086,93 @@ app.delete("/me/children/:childProfileId", requireAuth, async (req: AuthedReques
   }
 });
 
+/**
+ * List all events for a team.
+ * Any team member can view.
+ */
+app.get("/teams/:teamId/events", requireAuth, async (req: AuthedRequest, res) => {
+  const { teamId } = req.params;
+
+  const role = await assertTeamRoleOr403(req, res, teamId, ANY_MEMBER);
+  if (!role) return;
+
+  try {
+    const { data, error } = await supabase
+      .from("events")
+      .select("*")
+      .eq("team_id", teamId)
+      .order("start_at", { ascending: true });
+
+    if (error) {
+      console.error("Error fetching events:", error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    return res.json(data ?? []);
+  } catch (err) {
+    console.error("Unexpected error in GET /teams/:teamId/events:", err);
+    return res.status(500).json({ error: "Failed to load events" });
+  }
+});
+
+/**
+ * Create a new team event (practice, game, etc.)
+ * Coaches and Assistants can create events.
+ */
+app.post("/teams/:teamId/events", requireAuth, async (req: AuthedRequest, res) => {
+  const userId = req.user!.id;
+  const { teamId } = req.params;
+  const {
+    title,
+    description,
+    event_type,
+    start_at,
+    end_at,
+    is_all_day,
+    location,
+  } = req.body || {};
+
+  const role = await assertTeamRoleOr403(req, res, teamId, COACH_AND_ASSISTANT);
+  if (!role) return;
+
+  if (!title || typeof title !== "string") {
+    return res.status(400).json({ error: "title is required." });
+  }
+
+  if (!start_at) {
+    return res.status(400).json({ error: "start_at is required." });
+  }
+
+  try {
+    const payload: any = {
+      team_id: teamId,
+      created_by: userId,
+      title: title.trim(),
+      description: description ?? null,
+      event_type: event_type ?? null,
+      start_at,
+      end_at: end_at ?? null,
+      is_all_day: !!is_all_day,
+      location: location ?? null,
+    };
+
+    const { data, error } = await supabase
+      .from("events")
+      .insert([payload])
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Error inserting event:", error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    return res.status(201).json(data);
+  } catch (err) {
+    console.error("Unexpected error in POST /teams/:teamId/events:", err);
+    return res.status(500).json({ error: "Failed to create event" });
+  }
+});
 
 
 
@@ -2786,45 +2997,47 @@ function computeHSPositionScores(
 
 
 
-
 /**
  * Create an assessment (official or practice) + store raw values.
- * Then, if the template belongs to the 5U or 6U age group, compute ratings
- * and write to player_ratings.
+ * Then, if the template belongs to the 5U or 6U+ age group, compute ratings.
  *
- * TEMP: no auth required on this route while we wire up scoring.
- *
- * Expected JSON body:
- * {
- *   "player_id": "<uuid>",
- *   "team_id": <bigint | null>,
- *   "template_id": <bigint>,
- *   "kind": "official" | "practice",
- *   "performed_by": "<uuid | null>",
- *   "values": [
- *     { "metric_id": <bigint>, "value_numeric": 12.3, "value_text": null },
- *     ...
- *   ]
- * }
+ * - Only authenticated users can create assessments.
+ * - If kind === "official", only COACHES for that team can perform it.
  */
-app.post("/assessments", async (req: AuthedRequest, res) => {
+app.post("/assessments", requireAuth, async (req: AuthedRequest, res) => {
+  const authedUserId = req.user!.id;
   const {
     player_id,
     team_id,
     template_id,
     kind, // 'official' or 'practice'
     values,
-    performed_by,
   } = req.body;
-
-  // For now, allow performed_by to come from the body (test only)
-  const performerId: string | null = performed_by || null;
 
   if (!player_id || !template_id || !kind) {
     return res.status(400).json({
       error: "player_id, template_id, and kind are required",
     });
   }
+
+  if (kind !== "official" && kind !== "practice") {
+    return res.status(400).json({ error: 'kind must be "official" or "practice"' });
+  }
+
+  // If official, require team_id and coach role
+  if (kind === "official") {
+    if (!team_id) {
+      return res.status(400).json({
+        error: "team_id is required for official evaluations.",
+      });
+    }
+
+    const role = await assertTeamRoleOr403(req, res, team_id, COACH_ONLY);
+    if (!role) return; // response already sent (403)
+  }
+
+  // For both official and practice, performed_by is always the authed user
+  const performerId: string | null = authedUserId;
 
   // 1) Create assessment session
   const { data: assessment, error: assessmentError } = await supabase
@@ -4847,6 +5060,158 @@ app.get("/players/:id/evals/pro-full", async (req, res) => {
   }
 });
 
+/**
+ * Get the full team roster (team_players joined to profiles).
+ * Any member of the team (coach, assistant, player, parent) can view.
+ */
+app.get("/teams/:teamId/players", requireAuth, async (req: AuthedRequest, res) => {
+  const userId = req.user!.id;
+  const { teamId } = req.params;
+
+  // Must at least be on the team in some role
+  const role = await assertTeamRoleOr403(req, res, teamId, ANY_MEMBER);
+  if (!role) return;
+
+  try {
+    const { data: teamPlayers, error } = await supabase
+      .from("team_players")
+      .select("player_id, status, jersey_number, is_primary_team, created_at, updated_at, profiles!inner(*)")
+      .eq("team_id", teamId);
+
+    if (error) {
+      console.error("Error fetching team_players:", error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    return res.json(teamPlayers ?? []);
+  } catch (err) {
+    console.error("Unexpected error in GET /teams/:teamId/players:", err);
+    return res.status(500).json({ error: "Failed to load team roster" });
+  }
+});
+
+/**
+ * Add a player to the team roster.
+ * Coaches only.
+ */
+app.post("/teams/:teamId/players", requireAuth, async (req: AuthedRequest, res) => {
+  const { teamId } = req.params;
+  const { player_id, status, jersey_number, is_primary_team } = req.body || {};
+
+  const role = await assertTeamRoleOr403(req, res, teamId, COACH_ONLY);
+  if (!role) return;
+
+  if (!player_id || typeof player_id !== "string") {
+    return res.status(400).json({ error: "player_id is required." });
+  }
+
+  try {
+    const insertPayload: any = {
+      team_id: teamId,
+      player_id,
+    };
+
+    if (status !== undefined) insertPayload.status = status;
+    if (jersey_number !== undefined) insertPayload.jersey_number = jersey_number;
+    if (is_primary_team !== undefined) insertPayload.is_primary_team = !!is_primary_team;
+
+    const { data, error } = await supabase
+      .from("team_players")
+      .insert([insertPayload])
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Error inserting team_players:", error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    return res.status(201).json(data);
+  } catch (err) {
+    console.error("Unexpected error in POST /teams/:teamId/players:", err);
+    return res.status(500).json({ error: "Failed to add player to team" });
+  }
+});
+
+/**
+ * Update a player's status/jersey/etc. on the team.
+ * Coaches only.
+ */
+app.patch(
+  "/teams/:teamId/players/:playerId",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    const { teamId, playerId } = req.params;
+    const { status, jersey_number, is_primary_team } = req.body || {};
+
+    const role = await assertTeamRoleOr403(req, res, teamId, COACH_ONLY);
+    if (!role) return;
+
+    const updates: any = {};
+    if (status !== undefined) updates.status = status;
+    if (jersey_number !== undefined) updates.jersey_number = jersey_number;
+    if (is_primary_team !== undefined) updates.is_primary_team = !!is_primary_team;
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: "No valid fields to update." });
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from("team_players")
+        .update(updates)
+        .eq("team_id", teamId)
+        .eq("player_id", playerId)
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Error updating team_players:", error);
+        return res.status(500).json({ error: error.message });
+      }
+
+      return res.json(data);
+    } catch (err) {
+      console.error("Unexpected error in PATCH /teams/:teamId/players/:playerId:", err);
+      return res.status(500).json({ error: "Failed to update team player" });
+    }
+  }
+);
+
+/**
+ * Remove a player from the team roster.
+ * Coaches only.
+ */
+app.delete(
+  "/teams/:teamId/players/:playerId",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    const { teamId, playerId } = req.params;
+
+    const role = await assertTeamRoleOr403(req, res, teamId, COACH_ONLY);
+    if (!role) return;
+
+    try {
+      const { error } = await supabase
+        .from("team_players")
+        .delete()
+        .eq("team_id", teamId)
+        .eq("player_id", playerId);
+
+      if (error) {
+        console.error("Error deleting team_players row:", error);
+        return res.status(500).json({ error: error.message });
+      }
+
+      return res.status(204).send();
+    } catch (err) {
+      console.error("Unexpected error in DELETE /teams/:teamId/players/:playerId:", err);
+      return res.status(500).json({ error: "Failed to remove player from team" });
+    }
+  }
+);
+
+
 // Get all conversations the current user participates in
 app.get("/conversations", requireAuth, async (req: AuthedRequest, res) => {
   const userId = req.user!.id;
@@ -5297,6 +5662,78 @@ app.delete(
   }
 );
 
+/**
+ * Send a broadcast message to the team's main conversation.
+ * Coaches and Assistants only.
+ */
+app.post(
+  "/teams/:teamId/messages",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    const userId = req.user!.id;
+    const { teamId } = req.params;
+    const { content } = req.body || {};
+
+    const role = await assertTeamRoleOr403(req, res, teamId, COACH_AND_ASSISTANT);
+    if (!role) return;
+
+    if (!content || typeof content !== "string" || !content.trim()) {
+      return res.status(400).json({ error: "content is required." });
+    }
+
+    try {
+      const convo = await getOrCreateTeamConversation(teamId, userId);
+
+      // Make sure sender is a participant
+      const { data: existingParticipant, error: epError } = await supabase
+        .from("conversation_participants")
+        .select("conversation_id")
+        .eq("conversation_id", convo.id)
+        .eq("profile_id", userId)
+        .maybeSingle();
+
+      if (epError) {
+        console.error("Error checking sender participation:", epError);
+      } else if (!existingParticipant) {
+        await supabase
+          .from("conversation_participants")
+          .insert([{ conversation_id: convo.id, profile_id: userId }]);
+      }
+
+      // Insert message
+      const { data: message, error: msgError } = await supabase
+        .from("messages")
+        .insert([
+          {
+            conversation_id: convo.id,
+            sender_id: userId,
+            content: content.trim(),
+          },
+        ])
+        .select()
+        .single();
+
+      if (msgError) {
+        console.error("Error inserting message:", msgError);
+        return res.status(500).json({ error: msgError.message });
+      }
+
+      // Update conversation's updated_at for ordering
+      await supabase
+        .from("conversations")
+        .update({ updated_at: new Date().toISOString() })
+        .eq("id", convo.id);
+
+      return res.status(201).json({
+        conversation: convo,
+        message,
+      });
+    } catch (err) {
+      console.error("Unexpected error in POST /teams/:teamId/messages:", err);
+      return res.status(500).json({ error: "Failed to send team message" });
+    }
+  }
+);
 
 app.listen(port, () => {
   console.log(`BPOP backend listening on port ${port}`);
