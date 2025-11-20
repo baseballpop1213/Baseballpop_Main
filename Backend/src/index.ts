@@ -21,6 +21,13 @@ import { computeHSRatings } from "./scoring/hs";
 import { computeCollegeRatings } from "./scoring/coll";
 import { computeProRatings } from "./scoring/pro";
 
+import {
+  createEvalSession,
+  getEvalSession,
+  updateEvalSession,
+} from "./evalProgress";
+
+
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -54,6 +61,13 @@ app.get("/me", requireAuth, async (req: AuthedRequest, res) => {
 
   return res.json(data);
 });
+
+// Eval session progress (for in-progress evals)
+app.post("/eval-sessions", requireAuth, createEvalSession);
+app.get("/eval-sessions/:id", requireAuth, getEvalSession);
+app.patch("/eval-sessions/:id", requireAuth, updateEvalSession);
+
+
 
 type FullEvalCategoryKey =
   | "athletic"
@@ -3929,6 +3943,238 @@ app.get("/players/:id/evals/pro-full", async (req, res) => {
     return res.status(500).json({ error: "Failed to build Pro full eval" });
   }
 });
+
+// Get all conversations the current user participates in
+app.get("/conversations", requireAuth, async (req: AuthedRequest, res) => {
+  const userId = req.user!.id;
+
+  try {
+    // 1) Find all conversation_ids where this profile is a participant
+    const { data: participantRows, error: cpError } = await supabase
+      .from("conversation_participants")
+      .select("conversation_id")
+      .eq("profile_id", userId);
+
+    if (cpError) {
+      console.error("Error fetching conversation_participants:", cpError);
+      return res.status(500).json({ error: cpError.message });
+    }
+
+    if (!participantRows || participantRows.length === 0) {
+      return res.json([]);
+    }
+
+    const conversationIds = participantRows.map((r) => r.conversation_id);
+
+    // 2) Load conversations
+    const { data: conversations, error: convError } = await supabase
+      .from("conversations")
+      .select("*")
+      .in("id", conversationIds)
+      .order("updated_at", { ascending: false });
+
+    if (convError) {
+      console.error("Error fetching conversations:", convError);
+      return res.status(500).json({ error: convError.message });
+    }
+
+    return res.json(conversations ?? []);
+  } catch (err) {
+    console.error("Unexpected error in GET /conversations:", err);
+    return res.status(500).json({ error: "Failed to load conversations" });
+  }
+});
+
+app.post("/conversations", requireAuth, async (req: AuthedRequest, res) => {
+  const userId = req.user!.id;
+  const { type, title, team_id, participant_ids } = req.body || {};
+
+  if (!type || typeof type !== "string") {
+    return res.status(400).json({ error: "type is required (e.g. 'direct', 'group', 'team')" });
+  }
+
+  // Basic guard; you can tighten allowed types later if you want.
+  const validTypes = ["direct", "group", "team"];
+  if (!validTypes.includes(type)) {
+    return res.status(400).json({ error: `type must be one of: ${validTypes.join(", ")}` });
+  }
+
+  // Build unique participant set: current user + any additional IDs
+  const participants = new Set<string>();
+  participants.add(userId);
+
+  if (Array.isArray(participant_ids)) {
+    for (const pid of participant_ids) {
+      if (typeof pid === "string" && pid !== userId) {
+        participants.add(pid);
+      }
+    }
+  }
+
+  if (participants.size < 2 && type === "direct") {
+    return res
+      .status(400)
+      .json({ error: "Direct conversations should include at least 2 participants" });
+  }
+
+  try {
+    // 1) Create the conversation
+    const { data: convo, error: convoError } = await supabase
+      .from("conversations")
+      .insert([
+        {
+          type,
+          team_id: team_id ?? null,
+          created_by: userId,
+          title: title ?? null,
+        },
+      ])
+      .select()
+      .single();
+
+    if (convoError || !convo) {
+      console.error("Error creating conversation:", convoError);
+      return res
+        .status(500)
+        .json({ error: convoError?.message ?? "Failed to create conversation" });
+    }
+
+    const conversationId = convo.id as string;
+
+    // 2) Insert participants
+    const participantInserts = Array.from(participants).map((pid) => ({
+      conversation_id: conversationId,
+      profile_id: pid,
+    }));
+
+    const { error: cpError } = await supabase
+      .from("conversation_participants")
+      .insert(participantInserts);
+
+    if (cpError) {
+      console.error("Error inserting conversation_participants:", cpError);
+      return res.status(500).json({
+        error: "Conversation created but failed to add participants",
+        conversation_id: conversationId,
+      });
+    }
+
+    return res.status(201).json(convo);
+  } catch (err) {
+    console.error("Unexpected error in POST /conversations:", err);
+    return res.status(500).json({ error: "Failed to create conversation" });
+  }
+});
+
+app.get(
+  "/conversations/:conversationId/messages",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    const userId = req.user!.id;
+    const { conversationId } = req.params;
+
+    try {
+      // 1) Check membership
+      const { data: membership, error: membershipError } = await supabase
+        .from("conversation_participants")
+        .select("conversation_id")
+        .eq("conversation_id", conversationId)
+        .eq("profile_id", userId)
+        .maybeSingle();
+
+      if (membershipError) {
+        console.error("Error checking membership:", membershipError);
+        return res.status(500).json({ error: membershipError.message });
+      }
+
+      if (!membership) {
+        return res.status(403).json({ error: "You are not a participant in this conversation" });
+      }
+
+      // 2) Load messages
+      const { data: messages, error: messagesError } = await supabase
+        .from("messages")
+        .select("*")
+        .eq("conversation_id", conversationId)
+        .order("created_at", { ascending: true });
+
+      if (messagesError) {
+        console.error("Error fetching messages:", messagesError);
+        return res.status(500).json({ error: messagesError.message });
+      }
+
+      return res.json(messages ?? []);
+    } catch (err) {
+      console.error("Unexpected error in GET /conversations/:id/messages:", err);
+      return res.status(500).json({ error: "Failed to load messages" });
+    }
+  }
+);
+
+app.post(
+  "/conversations/:conversationId/messages",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    const userId = req.user!.id;
+    const { conversationId } = req.params;
+    const { content } = req.body || {};
+
+    if (!content || typeof content !== "string" || !content.trim()) {
+      return res.status(400).json({ error: "content is required" });
+    }
+
+    try {
+      // 1) Ensure user is a participant
+      const { data: membership, error: membershipError } = await supabase
+        .from("conversation_participants")
+        .select("conversation_id")
+        .eq("conversation_id", conversationId)
+        .eq("profile_id", userId)
+        .maybeSingle();
+
+      if (membershipError) {
+        console.error("Error checking membership:", membershipError);
+        return res.status(500).json({ error: membershipError.message });
+      }
+
+      if (!membership) {
+        return res.status(403).json({ error: "You are not a participant in this conversation" });
+      }
+
+      // 2) Insert message
+      const { data: message, error: msgError } = await supabase
+        .from("messages")
+        .insert([
+          {
+            conversation_id: conversationId,
+            sender_id: userId,
+            content: content.trim(),
+          },
+        ])
+        .select()
+        .single();
+
+      if (msgError || !message) {
+        console.error("Error inserting message:", msgError);
+        return res
+          .status(500)
+          .json({ error: msgError?.message ?? "Failed to send message" });
+      }
+
+      // 3) Optionally bump conversation updated_at
+      await supabase
+        .from("conversations")
+        .update({ updated_at: new Date().toISOString() })
+        .eq("id", conversationId);
+
+      return res.status(201).json(message);
+    } catch (err) {
+      console.error("Unexpected error in POST /conversations/:id/messages:", err);
+      return res.status(500).json({ error: "Failed to send message" });
+    }
+  }
+);
+
 
 
 app.listen(port, () => {
