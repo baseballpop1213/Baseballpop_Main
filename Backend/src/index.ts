@@ -42,6 +42,21 @@ interface PlayerProfileUpdateRequest {
   postal_code?: string | null;
 }
 
+interface CoachProfileUpdateRequest {
+  phone?: string | null;
+  organization?: string | null;
+  title?: string | null; // e.g. "Head Coach"
+  years_experience?: number | null;
+  bio?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+}
+
+interface ParentChildLinkCreateRequest {
+  child_profile_id: string;
+  relationship?: string | null;
+}
 
 
 const app = express();
@@ -114,7 +129,7 @@ app.get("/me/player-profile", requireAuth, async (req: AuthedRequest, res) => {
     const { data: playerProfile, error: ppError } = await supabase
       .from("player_profiles")
       .select("*")
-      .eq("player_id", userId)
+      .eq("profile_id", userId)
       .maybeSingle();
 
     if (ppError) {
@@ -225,9 +240,9 @@ app.put("/me/player-profile", requireAuth, async (req: AuthedRequest, res) => {
 
     if (body.bats !== undefined) {
       if (body.bats === null) {
-        updates.bats = null;
+        updates.batting_hand = null;
       } else if (body.bats === "R" || body.bats === "L" || body.bats === "S") {
-        updates.bats = body.bats;
+        updates.batting_hand = body.bats;
       } else {
         return res.status(400).json({
           error: 'bats must be "R", "L", "S", or null.',
@@ -237,15 +252,16 @@ app.put("/me/player-profile", requireAuth, async (req: AuthedRequest, res) => {
 
     if (body.throws !== undefined) {
       if (body.throws === null) {
-        updates.throws = null;
+        updates.throwing_hand = null;
       } else if (body.throws === "R" || body.throws === "L") {
-        updates.throws = body.throws;
+        updates.throwing_hand = body.throws;
       } else {
         return res.status(400).json({
           error: 'throws must be "R", "L", or null.',
         });
       }
     }
+
 
     if (body.home_address !== undefined) {
       updates.home_address =
@@ -281,13 +297,12 @@ app.put("/me/player-profile", requireAuth, async (req: AuthedRequest, res) => {
       });
     }
 
-    updates.updated_at = new Date().toISOString();
 
     // 3) Check if a player_profiles row already exists
     const { data: existing, error: existingError } = await supabase
       .from("player_profiles")
-      .select("player_id")
-      .eq("player_id", userId)
+      .select("profile_id")
+      .eq("profile_id", userId)
       .maybeSingle();
 
     if (existingError) {
@@ -302,7 +317,7 @@ app.put("/me/player-profile", requireAuth, async (req: AuthedRequest, res) => {
       const { data, error } = await supabase
         .from("player_profiles")
         .update(updates)
-        .eq("player_id", userId)
+        .eq("profile_id", userId)
         .select()
         .single();
 
@@ -316,12 +331,12 @@ app.put("/me/player-profile", requireAuth, async (req: AuthedRequest, res) => {
       // Insert new row
       const { data, error } = await supabase
         .from("player_profiles")
-        .insert([{ player_id: userId, ...updates }])
+        .insert([{ profile_id: userId, ...updates }])
         .select()
         .single();
 
       if (error) {
-        console.error("Error inserting player_profiles row:", error);
+        console.error("Error inserting profile_id row:", error);
         return res.status(500).json({ error: error.message });
       }
 
@@ -481,6 +496,472 @@ app.post("/accounts/basic", requireAuth, async (req: AuthedRequest, res) => {
     return res.status(500).json({ error: "Failed to create/update basic account" });
   }
 });
+
+/**
+ * Get the current user's extended coach profile.
+ * - Requires: Authorization: Bearer <Supabase access token>
+ * - Only works if profiles.role is 'coach' or 'assistant'
+ */
+app.get("/me/coach-profile", requireAuth, async (req: AuthedRequest, res) => {
+  const userId = req.user!.id;
+
+  try {
+    // 1) Load base profile
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("id, role, display_name, first_name, last_name, avatar_url, created_at, updated_at")
+      .eq("id", userId)
+      .single();
+
+    if (profileError || !profile) {
+      console.error("Error fetching base profile in GET /me/coach-profile:", profileError);
+      return res.status(500).json({ error: profileError?.message ?? "Failed to load profile" });
+    }
+
+    if (profile.role !== "coach" && profile.role !== "assistant") {
+      return res.status(403).json({
+        error: "This endpoint is only available for coach/assistant accounts.",
+      });
+    }
+
+    // 2) Load coach-specific profile (may or may not exist yet)
+    const { data: coachProfile, error: cpError } = await supabase
+      .from("coach_profiles")
+      .select("*")
+      .eq("profile_id", userId)
+      .maybeSingle();
+
+    if (cpError) {
+      console.error("Error fetching coach_profiles in GET /me/coach-profile:", cpError);
+      return res.status(500).json({ error: cpError.message });
+    }
+
+    return res.json({
+      profile,
+      coach_profile: coachProfile, // may be null if not created yet
+    });
+  } catch (err) {
+    console.error("Unexpected error in GET /me/coach-profile:", err);
+    return res.status(500).json({ error: "Failed to load coach profile" });
+  }
+});
+
+/**
+ * Get the current user's extended coach profile.
+ * - Requires: Authorization: Bearer <Supabase access token>
+ * - Only works if profiles.role is 'coach' or 'assistant'
+ */
+app.get("/me/coach-profile", requireAuth, async (req: AuthedRequest, res) => {
+  const userId = req.user!.id;
+
+  try {
+    // 1) Load base profile
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("id, role, display_name, first_name, last_name, avatar_url, created_at, updated_at")
+      .eq("id", userId)
+      .single();
+
+    if (profileError || !profile) {
+      console.error("Error fetching base profile in GET /me/coach-profile:", profileError);
+      return res.status(500).json({ error: profileError?.message ?? "Failed to load profile" });
+    }
+
+    if (profile.role !== "coach" && profile.role !== "assistant") {
+      return res.status(403).json({
+        error: "This endpoint is only available for coach/assistant accounts.",
+      });
+    }
+
+    // 2) Load coach-specific profile (may or may not exist yet)
+    const { data: coachProfile, error: cpError } = await supabase
+      .from("coach_profiles")
+      .select("*")
+      .eq("profile_id", userId)
+      .maybeSingle();
+
+    if (cpError) {
+      console.error("Error fetching coach_profiles in GET /me/coach-profile:", cpError);
+      return res.status(500).json({ error: cpError.message });
+    }
+
+    return res.json({
+      profile,
+      coach_profile: coachProfile, // may be null if not created yet
+    });
+  } catch (err) {
+    console.error("Unexpected error in GET /me/coach-profile:", err);
+    return res.status(500).json({ error: "Failed to load coach profile" });
+  }
+});
+
+/**
+ * Create or update the current coach's extended profile in coach_profiles.
+ *
+ * Accepts:
+ *  - phone (string)
+ *  - organization (string)
+ *  - title (string)
+ *  - years_experience (number)
+ *  - bio (string)
+ *  - city, state, postal_code (strings)
+ *
+ * You can safely send partials; only provided fields are updated.
+ */
+app.put("/me/coach-profile", requireAuth, async (req: AuthedRequest, res) => {
+  const userId = req.user!.id;
+  const body = req.body as CoachProfileUpdateRequest | undefined;
+
+  if (!body || typeof body !== "object") {
+    return res.status(400).json({ error: "Request body must be a JSON object." });
+  }
+
+  try {
+    // 1) Ensure user is a coach/assistant
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("id, role")
+      .eq("id", userId)
+      .single();
+
+    if (profileError || !profile) {
+      console.error("Error fetching profile in PUT /me/coach-profile:", profileError);
+      return res.status(500).json({ error: profileError?.message ?? "Failed to load profile" });
+    }
+
+    if (profile.role !== "coach" && profile.role !== "assistant") {
+      return res.status(403).json({
+        error: "Only coach/assistant accounts can update a coach profile.",
+      });
+    }
+
+    const updates: any = {};
+
+    if (body.phone !== undefined) {
+      updates.phone =
+        typeof body.phone === "string" && body.phone.trim().length > 0
+          ? body.phone.trim()
+          : null;
+    }
+
+    if (body.organization !== undefined) {
+      updates.organization =
+        typeof body.organization === "string" && body.organization.trim().length > 0
+          ? body.organization.trim()
+          : null;
+    }
+
+    if (body.title !== undefined) {
+      updates.title =
+        typeof body.title === "string" && body.title.trim().length > 0
+          ? body.title.trim()
+          : null;
+    }
+
+    if (body.years_experience !== undefined) {
+      if (
+        body.years_experience === null ||
+        (typeof body.years_experience === "number" &&
+          Number.isFinite(body.years_experience) &&
+          body.years_experience >= 0 &&
+          body.years_experience < 80)
+      ) {
+        updates.years_experience = body.years_experience;
+      } else {
+        return res.status(400).json({
+          error: "years_experience must be a non-negative number under 80, or null.",
+        });
+      }
+    }
+
+    if (body.bio !== undefined) {
+      updates.bio =
+        typeof body.bio === "string" && body.bio.trim().length > 0
+          ? body.bio.trim()
+          : null;
+    }
+
+    if (body.city !== undefined) {
+      updates.city =
+        typeof body.city === "string" && body.city.trim().length > 0
+          ? body.city.trim()
+          : null;
+    }
+
+    if (body.state !== undefined) {
+      updates.state =
+        typeof body.state === "string" && body.state.trim().length > 0
+          ? body.state.trim()
+          : null;
+    }
+
+    if (body.postal_code !== undefined) {
+      updates.postal_code =
+        typeof body.postal_code === "string" && body.postal_code.trim().length > 0
+          ? body.postal_code.trim()
+          : null;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({
+        error: "No valid fields were provided to update.",
+      });
+    }
+
+    updates.updated_at = new Date().toISOString();
+
+    // 2) Check if a coach_profiles row already exists
+    const { data: existing, error: existingError } = await supabase
+      .from("coach_profiles")
+      .select("profile_id")
+      .eq("profile_id", userId)
+      .maybeSingle();
+
+    if (existingError) {
+      console.error("Error checking existing coach_profiles row:", existingError);
+      return res.status(500).json({ error: existingError.message });
+    }
+
+    let resultRow: any = null;
+
+    if (existing) {
+      // Update existing row
+      const { data, error } = await supabase
+        .from("coach_profiles")
+        .update(updates)
+        .eq("profile_id", userId)
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Error updating coach_profiles row:", error);
+        return res.status(500).json({ error: error.message });
+      }
+
+      resultRow = data;
+    } else {
+      // Insert new row
+      const { data, error } = await supabase
+        .from("coach_profiles")
+        .insert([{ profile_id: userId, ...updates }])
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Error inserting coach_profiles row:", error);
+        return res.status(500).json({ error: error.message });
+      }
+
+      resultRow = data;
+    }
+
+    return res.json({
+      coach_profile: resultRow,
+    });
+  } catch (err) {
+    console.error("Unexpected error in PUT /me/coach-profile:", err);
+    return res.status(500).json({ error: "Failed to save coach profile" });
+  }
+});
+
+/**
+ * List all children (player profiles) linked to the current parent.
+ * - Requires: parent account (profiles.role === 'parent')
+ */
+app.get("/me/children", requireAuth, async (req: AuthedRequest, res) => {
+  const userId = req.user!.id;
+
+  try {
+    // Ensure user is a parent
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("id, role")
+      .eq("id", userId)
+      .single();
+
+    if (profileError || !profile) {
+      console.error("Error fetching profile in GET /me/children:", profileError);
+      return res.status(500).json({ error: profileError?.message ?? "Failed to load profile" });
+    }
+
+    if (profile.role !== "parent") {
+      return res.status(403).json({ error: "This endpoint is only available for parent accounts." });
+    }
+
+    // Fetch links
+    const { data: links, error: linksError } = await supabase
+      .from("parent_child_links")
+      .select("id, child_profile_id, relationship")
+      .eq("parent_profile_id", userId);
+
+    if (linksError) {
+      console.error("Error fetching parent_child_links in GET /me/children:", linksError);
+      return res.status(500).json({ error: linksError.message });
+    }
+
+    if (!links || links.length === 0) {
+      return res.json([]);
+    }
+
+    const childIds = links.map((l) => l.child_profile_id);
+
+    // Load child profiles (players)
+    const { data: children, error: childrenError } = await supabase
+      .from("profiles")
+      .select("id, role, display_name, first_name, last_name, birthdate, avatar_url")
+      .in("id", childIds);
+
+    if (childrenError) {
+      console.error("Error fetching child profiles in GET /me/children:", childrenError);
+      return res.status(500).json({ error: childrenError.message });
+    }
+
+    // Index children by id for easy join
+    const childrenById = new Map<string, any>();
+    (children || []).forEach((c) => {
+      childrenById.set(c.id, c);
+    });
+
+    const result = links.map((link) => ({
+      link_id: link.id,
+      relationship: link.relationship,
+      child: childrenById.get(link.child_profile_id) || null,
+    }));
+
+    return res.json(result);
+  } catch (err) {
+    console.error("Unexpected error in GET /me/children:", err);
+    return res.status(500).json({ error: "Failed to load children" });
+  }
+});
+
+/**
+ * Link the current parent account to an existing player profile.
+ * Body:
+ *  - child_profile_id: string (UUID of the child's profile)
+ *  - relationship: string | null (optional, e.g. "Father")
+ */
+app.post("/me/children", requireAuth, async (req: AuthedRequest, res) => {
+  const userId = req.user!.id;
+  const body = req.body as ParentChildLinkCreateRequest | undefined;
+
+  if (!body || typeof body !== "object" || !body.child_profile_id) {
+    return res.status(400).json({ error: "child_profile_id is required." });
+  }
+
+  try {
+    // Ensure user is a parent
+    const { data: parentProfile, error: parentError } = await supabase
+      .from("profiles")
+      .select("id, role")
+      .eq("id", userId)
+      .single();
+
+    if (parentError || !parentProfile) {
+      console.error("Error fetching parent profile in POST /me/children:", parentError);
+      return res.status(500).json({ error: parentError?.message ?? "Failed to load parent profile" });
+    }
+
+    if (parentProfile.role !== "parent") {
+      return res.status(403).json({ error: "Only parent accounts can create parent-child links." });
+    }
+
+    // Ensure child exists and is a player
+    const { data: childProfile, error: childError } = await supabase
+      .from("profiles")
+      .select("id, role, display_name, first_name, last_name")
+      .eq("id", body.child_profile_id)
+      .single();
+
+    if (childError || !childProfile) {
+      console.error("Error fetching child profile in POST /me/children:", childError);
+      return res.status(404).json({ error: "Child profile not found." });
+    }
+
+    if (childProfile.role !== "player") {
+      return res.status(400).json({ error: "child_profile_id must refer to a player account." });
+    }
+
+    const relationship =
+      typeof body.relationship === "string" && body.relationship.trim().length > 0
+        ? body.relationship.trim()
+        : null;
+
+    // Upsert-like behavior: unique (parent_profile_id, child_profile_id)
+    const { data: link, error: linkError } = await supabase
+      .from("parent_child_links")
+      .upsert(
+        [
+          {
+            parent_profile_id: userId,
+            child_profile_id: body.child_profile_id,
+            relationship,
+          },
+        ],
+        {
+          onConflict: "parent_profile_id,child_profile_id",
+        }
+      )
+      .select()
+      .single();
+
+    if (linkError || !link) {
+      console.error("Error inserting/upserting parent_child_links in POST /me/children:", linkError);
+      return res.status(500).json({ error: linkError?.message ?? "Failed to create link" });
+    }
+
+    return res.status(201).json({
+      link,
+      child: childProfile,
+    });
+  } catch (err) {
+    console.error("Unexpected error in POST /me/children:", err);
+    return res.status(500).json({ error: "Failed to create parent-child link" });
+  }
+});
+
+/**
+ * Remove the parent ↔ child link for the given child profile id.
+ */
+app.delete("/me/children/:childProfileId", requireAuth, async (req: AuthedRequest, res) => {
+  const userId = req.user!.id;
+  const { childProfileId } = req.params;
+
+  try {
+    // Ensure user is a parent
+    const { data: parentProfile, error: parentError } = await supabase
+      .from("profiles")
+      .select("id, role")
+      .eq("id", userId)
+      .single();
+
+    if (parentError || !parentProfile) {
+      console.error("Error fetching parent profile in DELETE /me/children/:childProfileId:", parentError);
+      return res.status(500).json({ error: parentError?.message ?? "Failed to load parent profile" });
+    }
+
+    if (parentProfile.role !== "parent") {
+      return res.status(403).json({ error: "Only parent accounts can remove parent-child links." });
+    }
+
+    const { error: deleteError } = await supabase
+      .from("parent_child_links")
+      .delete()
+      .eq("parent_profile_id", userId)
+      .eq("child_profile_id", childProfileId);
+
+    if (deleteError) {
+      console.error("Error deleting parent_child_links row:", deleteError);
+      return res.status(500).json({ error: deleteError.message });
+    }
+
+    return res.status(204).send();
+  } catch (err) {
+    console.error("Unexpected error in DELETE /me/children/:childProfileId:", err);
+    return res.status(500).json({ error: "Failed to remove parent-child link" });
+  }
+});
+
 
 
 
