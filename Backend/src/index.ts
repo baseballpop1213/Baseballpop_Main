@@ -34,6 +34,333 @@ const COACH_ONLY: TeamRole[] = ["coach"];
 const COACH_AND_ASSISTANT: TeamRole[] = ["coach", "assistant"];
 const ANY_MEMBER: TeamRole[] = ["coach", "assistant", "player", "parent"];
 
+// --- Awards: shared helpers & types ---
+
+type MedalTier = "bronze" | "silver" | "gold" | "platinum";
+type TrophyTier = MedalTier;
+
+interface MedalDefinitionRow {
+  id: number;
+  age_group_label: string | null;
+  metric_code: string | null;
+  tier: string | null;
+  min_percent: number | null;
+  name: string | null;
+  description?: string | null;
+  icon_url?: string | null;
+}
+
+interface TrophyDefinitionRow {
+  id: number;
+  age_group_label: string | null;
+  metric_code: string | null; // canonical (bpoprating, offense, etc.)
+  tier: string | null;
+  name: string | null;
+  description?: string | null;
+  icon_url?: string | null;
+}
+
+interface MedalSummary {
+  medal_id: number;
+  metric_code: string;
+  tier: MedalTier;
+  name: string | null;
+  min_percent: number | null;
+}
+
+interface TrophySummary {
+  trophy_id: number;
+  metric_code: string;
+  tier: TrophyTier;
+  name: string | null;
+  threshold_percent: number | null;
+  team_percent: number | null;
+}
+
+type AssessmentKind = "official" | "practice";
+
+const medalDefsCache = new Map<string, MedalDefinitionRow[]>();
+const trophyDefsCache = new Map<string, TrophyDefinitionRow[]>();
+
+function normalizeMetricCode(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const c = raw.trim().toLowerCase();
+  if (!c) return null;
+  return c;
+}
+
+// For trophies: map sheet codes to medal metric codes
+function normalizeTrophyMetricCode(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const c = raw.trim().toLowerCase();
+  if (!c) return null;
+
+  if (c === "overall") return "bpoprating";
+  // everything else matches medals
+  return c;
+}
+
+async function getMedalDefinitionsForAge(ageLabel: string): Promise<MedalDefinitionRow[]> {
+  if (medalDefsCache.has(ageLabel)) {
+    return medalDefsCache.get(ageLabel)!;
+  }
+
+  const { data, error } = await supabase
+    .from("medal_definitions")
+    .select("id, age_group_label, metric_code, tier, min_percent, name, description, icon_url")
+    .eq("age_group_label", ageLabel);
+
+  if (error || !data) {
+    console.error("Error loading medal_definitions for age", ageLabel, error);
+    medalDefsCache.set(ageLabel, []);
+    return [];
+  }
+
+  const rows = data as MedalDefinitionRow[];
+  medalDefsCache.set(ageLabel, rows);
+  return rows;
+}
+
+async function getTrophyDefinitionsForAge(ageLabel: string): Promise<TrophyDefinitionRow[]> {
+  if (trophyDefsCache.has(ageLabel)) {
+    return trophyDefsCache.get(ageLabel)!;
+  }
+
+  const { data, error } = await supabase
+    .from("trophy_definitions")
+    .select("id, age_group_label, metric_code, tier, name, description, icon_url")
+    .eq("age_group_label", ageLabel);
+
+  if (error || !data) {
+    console.error("Error loading trophy_definitions for age", ageLabel, error);
+    trophyDefsCache.set(ageLabel, []);
+    return [];
+  }
+
+  const rows = data as TrophyDefinitionRow[];
+  trophyDefsCache.set(ageLabel, rows);
+  return rows;
+}
+
+// --- Metric → percent mapping (0–1), built on RatingResult & breakdown JSON ---
+
+function safeScoreToPercent(score: unknown): number | null {
+  if (score === null || score === undefined) return null;
+  const n = typeof score === "number" ? score : Number(score);
+  if (!Number.isFinite(n)) return null;
+  // All our scores are 0–50
+  return n / 50;
+}
+
+function getMetricPercentFromRatings(metricCodeRaw: string, ratings: RatingResult): number | null {
+  const metric = normalizeMetricCode(metricCodeRaw);
+  if (!metric) return null;
+
+  const { overall_score, offense_score, defense_score, pitching_score, breakdown } = ratings;
+  const b: any = breakdown || {};
+  const derived = b.derived || {};
+  const athletic = b.athletic || {};
+  const athleticTests = athletic.tests || {};
+  const hitting = b.hitting || {};
+  const hittingTests = hitting.tests || {};
+  const throwing = b.throwing || {};
+  const throwingTests = throwing.tests || {};
+  const catching = b.catching || {};
+  const fielding = b.fielding || {};
+  const positionScores = derived.position_scores || {};
+
+  switch (metric) {
+    // Overall BPOP rating
+    case "bpoprating":
+    case "overall":
+      return safeScoreToPercent(overall_score);
+
+    // Top-level category scores
+    case "offense":
+      return safeScoreToPercent(offense_score ?? b.offense?.overall_score);
+    case "defense":
+      return safeScoreToPercent(defense_score ?? b.defense?.overall_score);
+    case "pitching":
+      return safeScoreToPercent(pitching_score ?? b.pitching?.overall_score);
+    case "athlete":
+      return safeScoreToPercent(athletic.overall_score ?? b.athlete?.overall_score);
+
+    // Athletic sub-metrics (0–50)
+    case "speed":
+      // prefer derived.speed_score if present
+      return safeScoreToPercent(derived.speed_score ?? athleticTests.speed_score);
+    case "mobility":
+      return safeScoreToPercent(athleticTests.mobility_score);
+    case "balance":
+      return safeScoreToPercent(athleticTests.balance_score);
+    case "strength":
+      return safeScoreToPercent(athleticTests.strength_score);
+
+    // Hitting sub-metrics
+    case "contact":
+      return safeScoreToPercent(hittingTests.contact_score ?? hittingTests.contact);
+    case "power":
+      return safeScoreToPercent(hittingTests.power_score ?? hittingTests.power);
+
+    // Throwing / catching / fielding
+    case "throwing":
+      return safeScoreToPercent(throwing.overall_score);
+    case "catching":
+      return safeScoreToPercent(catching.overall_score);
+    case "fielding":
+      return safeScoreToPercent(fielding.overall_score);
+
+    case "accuracy":
+      // Try a few likely paths; adjust if your scoring files differ slightly.
+      return safeScoreToPercent(
+        throwingTests.accuracy_score ??
+          throwingTests.t40_accuracy_score ??
+          throwingTests.t60_accuracy_score
+      );
+
+    // Position-based medals (use derived.position_scores)
+    case "infield":
+      return safeScoreToPercent(positionScores.infield_score);
+    case "outfield":
+      return safeScoreToPercent(positionScores.outfield_score);
+    case "catcher":
+      return safeScoreToPercent(positionScores.catcher ?? b.catcher?.overall_score);
+    case "firstbase":
+      return safeScoreToPercent(positionScores.first_base ?? positionScores.firstbase);
+
+    default:
+      return null;
+  }
+}
+
+interface MedalAwardResult {
+  potential: MedalSummary[];
+  newlyAwarded: MedalSummary[];
+}
+
+async function awardMedalsForAssessment(options: {
+  kind: AssessmentKind;
+  playerId: string;
+  assessmentId: number;
+  ageLabel: string;
+  ratings: RatingResult;
+}): Promise<MedalAwardResult> {
+  const { kind, playerId, assessmentId, ageLabel, ratings } = options;
+
+  const defs = await getMedalDefinitionsForAge(ageLabel);
+
+  if (!defs.length) {
+    return { potential: [], newlyAwarded: [] };
+  }
+
+  // Cache metric percents so we only compute once per metric_code
+  const percentCache = new Map<string, number | null>();
+
+  const getPercent = (metricCodeRaw: string | null): number | null => {
+    const key = normalizeMetricCode(metricCodeRaw || "");
+    if (!key) return null;
+    if (percentCache.has(key)) return percentCache.get(key)!;
+    const p = getMetricPercentFromRatings(key, ratings);
+    percentCache.set(key, p);
+    return p;
+  };
+
+  const potentialDefs: MedalDefinitionRow[] = [];
+
+  for (const def of defs) {
+    const metricCode = normalizeMetricCode(def.metric_code);
+    const tier = def.tier ? def.tier.toLowerCase() : null;
+    const minPercent = def.min_percent;
+
+    if (!metricCode || !tier || minPercent == null) continue;
+
+    const p = getPercent(metricCode);
+    if (p == null) continue;
+
+    if (p >= minPercent) {
+      potentialDefs.push(def);
+    }
+  }
+
+  // For practice evals: we DO NOT insert into player_medals, we just return potentials.
+  if (kind === "practice") {
+    const potentialSummaries: MedalSummary[] = potentialDefs.map((def) => ({
+      medal_id: def.id,
+      metric_code: normalizeMetricCode(def.metric_code!)!,
+      tier: def.tier!.toLowerCase() as MedalTier,
+      name: def.name ?? null,
+      min_percent: def.min_percent,
+    }));
+
+    return {
+      potential: potentialSummaries,
+      newlyAwarded: [],
+    };
+  }
+
+  // Official eval: fetch existing official medals for this player
+  const { data: existingRows, error: existingError } = await supabase
+    .from("player_medals")
+    .select("medal_id")
+    .eq("player_id", playerId)
+    .eq("is_official", true);
+
+  if (existingError) {
+    console.error("Error fetching existing player_medals:", existingError);
+  }
+
+  const ownedIds = new Set<number>(
+    (existingRows || []).map((row: any) => row.medal_id as number)
+  );
+
+  const toInsert: any[] = [];
+  const newlyAwarded: MedalSummary[] = [];
+  const allPotential: MedalSummary[] = [];
+
+  for (const def of potentialDefs) {
+    const metricCode = normalizeMetricCode(def.metric_code)!;
+    const tier = def.tier!.toLowerCase() as MedalTier;
+
+    const summary: MedalSummary = {
+      medal_id: def.id,
+      metric_code: metricCode,
+      tier,
+      name: def.name ?? null,
+      min_percent: def.min_percent,
+    };
+
+    allPotential.push(summary);
+
+    if (!ownedIds.has(def.id)) {
+      // This is a new official medal
+      newlyAwarded.push(summary);
+      toInsert.push({
+        medal_id: def.id,
+        player_id: playerId,
+        player_assessment_id: assessmentId,
+        is_official: true,
+        awarded_at: new Date().toISOString(),
+      });
+    }
+  }
+
+  if (toInsert.length > 0) {
+    const { error: insertError } = await supabase
+      .from("player_medals")
+      .insert(toInsert);
+
+    if (insertError) {
+      console.error("Error inserting player_medals:", insertError);
+    }
+  }
+
+  return {
+    potential: allPotential,
+    newlyAwarded,
+  };
+}
+
+
 /**
  * Look up the user's role for a specific team from user_team_roles.
  * Returns null if they have no role on that team.
@@ -1173,6 +1500,163 @@ app.post("/teams/:teamId/events", requireAuth, async (req: AuthedRequest, res) =
     return res.status(500).json({ error: "Failed to create event" });
   }
 });
+
+type TeamLevel =
+  | "recreational"
+  | "aa"
+  | "aaa"
+  | "majors"
+  | "hs_scholastic"
+  | "ncaa"
+  | "college_summer"
+  | "pro";
+
+function getAgeBucketCoreFraction(ageLabelRaw: string): number {
+  const ageLabel = (ageLabelRaw || "").toUpperCase();
+
+  if (["5U", "6U", "7U"].includes(ageLabel)) return 0.30;        // youth_early
+  if (["8U", "9U", "10U"].includes(ageLabel)) return 0.40;       // youth_mid
+  if (["11U", "12U", "13U"].includes(ageLabel)) return 0.50;     // youth_late
+  if (["14U", "HS"].includes(ageLabel)) return 0.60;             // hs
+  if (["COLLEGE", "COLLEGIATE", "NCAA"].includes(ageLabel)) return 0.70;
+  if (["PRO"].includes(ageLabel)) return 0.70;
+
+  return 0.50;
+}
+
+function getLevelDelta(levelRaw: string | null | undefined): number {
+  const level = (levelRaw || "").toLowerCase() as TeamLevel;
+
+  switch (level) {
+    case "recreational":
+      return -0.10;
+    case "aa":
+      return -0.05;
+    case "aaa":
+      return 0.0;
+    case "majors":
+      return 0.05;
+    case "hs_scholastic":
+      return 0.05;
+    case "college_summer":
+      return 0.10;
+    case "ncaa":
+      return 0.10;
+    case "pro":
+      return 0.20;
+    default:
+      return 0.0;
+  }
+}
+
+function getCoreFraction(ageLabel: string, levelRaw: string | null | undefined): number {
+  const base = getAgeBucketCoreFraction(ageLabel);
+  const delta = getLevelDelta(levelRaw);
+  const raw = base + delta;
+  const rMin = 0.25;
+  const rMax = 0.95;
+  return Math.max(rMin, Math.min(rMax, raw));
+}
+
+function computeTeamPercentForMetric(
+  percents: number[],
+  ageLabel: string,
+  levelRaw: string | null | undefined
+): number | null {
+  if (!percents.length) return null;
+
+  const r = getCoreFraction(ageLabel, levelRaw);
+  const N = percents.length;
+  const K = Math.max(1, Math.ceil(r * N));
+
+  const sorted = [...percents].sort((a, b) => b - a);
+  const topK = sorted.slice(0, K);
+  const sum = topK.reduce((acc, v) => acc + v, 0);
+
+  return sum / topK.length;
+}
+
+app.get(
+  "/teams/:teamId/trophies",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    const { teamId } = req.params;
+
+    // Only team members can view trophies (coach/assistant/player/parent)
+    const role = await assertTeamRoleOr403(req, res, teamId, ANY_MEMBER);
+    if (!role) return;
+
+    try {
+      // 1) Load trophies for this team
+      const { data: rows, error: trophiesError } = await supabase
+        .from("team_trophies")
+        .select("*")
+        .eq("team_id", teamId)
+        .order("awarded_at", { ascending: true });
+
+      if (trophiesError) {
+        console.error("Error fetching team_trophies:", trophiesError);
+        return res.status(500).json({ error: "Failed to load team trophies." });
+      }
+
+      if (!rows || rows.length === 0) {
+        return res.status(200).json({
+          team_id: teamId,
+          trophies: [],
+        });
+      }
+
+      // 2) Fetch trophy definitions
+      const trophyIds = Array.from(
+        new Set(
+          rows
+            .map((row: any) => row.trophy_id as number | null)
+            .filter((id): id is number => id != null)
+        )
+      );
+
+      let defsById: Record<number, any> = {};
+      if (trophyIds.length > 0) {
+        const { data: defs, error: defsError } = await supabase
+          .from("trophy_definitions")
+          .select(
+            "id, name, description, icon_url, age_group_label, metric_code, tier"
+          )
+          .in("id", trophyIds);
+
+        if (defsError) {
+          console.error("Error fetching trophy_definitions:", defsError);
+        } else if (defs) {
+          defsById = Object.fromEntries(
+            (defs as any[]).map((d) => [d.id as number, d])
+          );
+        }
+      }
+
+      // 3) Merge rows + definitions
+      const trophies = rows.map((row: any) => {
+        const def = defsById[row.trophy_id as number] || null;
+        return {
+          id: row.id,
+          trophy_id: row.trophy_id,
+          team_id: row.team_id,
+          awarded_at: row.awarded_at,
+          definition: def,
+        };
+      });
+
+      return res.status(200).json({
+        team_id: teamId,
+        trophies,
+      });
+    } catch (err) {
+      console.error("Unexpected error in GET /teams/:teamId/trophies:", err);
+      return res
+        .status(500)
+        .json({ error: "Failed to load team trophies (internal error)." });
+    }
+  }
+);
 
 
 
@@ -3371,17 +3855,423 @@ app.post("/assessments", requireAuth, async (req: AuthedRequest, res) => {
     },
   ]);
 
-  if (ratingsError) {
-    console.error("Error inserting player_ratings:", ratingsError);
-    // Still return success for the assessment creation
-    return res.status(201).json({ assessment_id: assessmentId });
-  }
+if (ratingsError) {
+  console.error("Error inserting player_ratings:", ratingsError);
+  // Still return success for the assessment creation
+  return res.status(201).json({ assessment_id: assessmentId });
+}
 
-  return res.status(201).json({
-    assessment_id: assessmentId,
-    ratings_inserted: true,
+// 9) Award player medals
+let medalResult: MedalAwardResult | null = null;
+try {
+  medalResult = await awardMedalsForAssessment({
+    kind,
+    playerId: player_id,
+    assessmentId,
+    ageLabel,
+    ratings,
   });
+} catch (err) {
+  console.error("Error awarding medals for assessment", assessmentId, err);
+}
+
+// 10) If this is an OFFICIAL team eval, recalc team trophies
+let teamTrophyResult: TeamTrophyRecalcResult | null = null;
+if (kind === "official" && team_id) {
+  try {
+    teamTrophyResult = await recalcTeamTrophiesForTeam(team_id);
+  } catch (err) {
+    console.error(
+      "Error recalculating team trophies after official assessment",
+      assessmentId,
+      err
+    );
+  }
+}
+
+return res.status(201).json({
+  assessment_id: assessmentId,
+  ratings_inserted: true,
+  medals_potential: medalResult?.potential ?? [],
+  medals_awarded: medalResult?.newlyAwarded ?? [],
+  team_trophies_potential: teamTrophyResult?.trophies_potential ?? [],
+  team_trophies_awarded: teamTrophyResult?.trophies_awarded ?? [],
 });
+});
+
+
+interface TeamTrophyRecalcResult {
+  team_id: string;
+  age_group_label: string;
+  level: string | null;
+  trophies_potential: TrophySummary[];
+  trophies_awarded: TrophySummary[];
+  message?: string;
+}
+
+async function recalcTeamTrophiesForTeam(teamId: string): Promise<TeamTrophyRecalcResult | null> {
+  try {
+    // 1) Load team info (age_group + level)
+    const { data: team, error: teamError } = await supabase
+      .from("teams")
+      .select("id, age_group, level")
+      .eq("id", teamId)
+      .maybeSingle();
+
+    if (teamError) {
+      console.error("Error fetching team in trophies helper:", teamError);
+      return null;
+    }
+    if (!team) {
+      console.warn("Team not found in trophies helper:", teamId);
+      return null;
+    }
+
+    const ageLabel = String(team.age_group); // e.g. "9U"
+    const teamLevel = team.level ? String(team.level) : null;
+
+    // 2) Resolve age_group_id (if present)
+    let ageGroupId: number | null = null;
+    {
+      const { data: ageRow, error: ageError } = await supabase
+        .from("age_groups")
+        .select("id, label")
+        .eq("label", ageLabel)
+        .maybeSingle();
+
+      if (ageError) {
+        console.error("Error fetching age_group for team trophies:", ageError);
+      } else if (ageRow) {
+        ageGroupId = ageRow.id as number;
+      }
+    }
+
+    // 3) Trophy definitions for this age group
+    const trophyDefs = await getTrophyDefinitionsForAge(ageLabel);
+    if (!trophyDefs.length) {
+      return {
+        team_id: teamId,
+        age_group_label: ageLabel,
+        level: teamLevel,
+        trophies_potential: [],
+        trophies_awarded: [],
+        message: "No trophy definitions found for this age group.",
+      };
+    }
+
+    // 4) Medal defs (for thresholds)
+    const medalDefs = await getMedalDefinitionsForAge(ageLabel);
+
+    function getThresholdPercent(metricCode: string, tier: TrophyTier): number | null {
+      const targetMetric = normalizeMetricCode(metricCode);
+      if (!targetMetric) return null;
+
+      const def = medalDefs.find((m) => {
+        const mc = normalizeMetricCode(m.metric_code);
+        const mtier = m.tier ? m.tier.toLowerCase() : null;
+        return mc === targetMetric && mtier === tier;
+      });
+
+      return def?.min_percent ?? null;
+    }
+
+    // 5) All official assessments for this team
+    const { data: assessments, error: assessmentsError } = await supabase
+      .from("player_assessments")
+      .select("id, player_id")
+      .eq("team_id", teamId)
+      .eq("kind", "official");
+
+    if (assessmentsError) {
+      console.error("Error fetching official assessments for team trophies:", assessmentsError);
+      return null;
+    }
+
+    if (!assessments || assessments.length === 0) {
+      return {
+        team_id: teamId,
+        age_group_label: ageLabel,
+        level: teamLevel,
+        trophies_potential: [],
+        trophies_awarded: [],
+        message: "No official assessments found for this team.",
+      };
+    }
+
+    const assessmentIds = Array.from(new Set(assessments.map((a) => a.id as number)));
+    if (assessmentIds.length === 0) {
+      return {
+        team_id: teamId,
+        age_group_label: ageLabel,
+        level: teamLevel,
+        trophies_potential: [],
+        trophies_awarded: [],
+        message: "No official assessments found for this team.",
+      };
+    }
+
+    // 6) Player ratings for those assessments (prefer matching age_group_id)
+    let ratingsQuery = supabase
+      .from("player_ratings")
+      .select(
+        "player_id, assessment_id, overall_score, offense_score, defense_score, pitching_score, breakdown, created_at"
+      )
+      .eq("team_id", teamId)
+      .in("assessment_id", assessmentIds);
+
+    if (ageGroupId !== null) {
+      ratingsQuery = ratingsQuery.eq("age_group_id", ageGroupId);
+    }
+
+    const { data: ratingRows, error: ratingsError } = await ratingsQuery;
+
+    if (ratingsError) {
+      console.error("Error fetching player_ratings for team trophies:", ratingsError);
+      return null;
+    }
+
+    if (!ratingRows || ratingRows.length === 0) {
+      return {
+        team_id: teamId,
+        age_group_label: ageLabel,
+        level: teamLevel,
+        trophies_potential: [],
+        trophies_awarded: [],
+        message: "No ratings found for this team.",
+      };
+    }
+
+    // 7) Latest rating per player
+    interface RatingRow {
+      player_id: string;
+      assessment_id: number;
+      overall_score: number | null;
+      offense_score: number | null;
+      defense_score: number | null;
+      pitching_score: number | null;
+      breakdown: any;
+      created_at: string | null;
+    }
+
+    const latestByPlayer = new Map<string, RatingRow>();
+
+    for (const row of ratingRows as RatingRow[]) {
+      const playerId = row.player_id;
+      const existing = latestByPlayer.get(playerId);
+      if (!existing) {
+        latestByPlayer.set(playerId, row);
+        continue;
+      }
+      const prevTs = existing.created_at || "";
+      const currTs = row.created_at || "";
+      if (currTs > prevTs) {
+        latestByPlayer.set(playerId, row);
+      }
+    }
+
+    if (latestByPlayer.size === 0) {
+      return {
+        team_id: teamId,
+        age_group_label: ageLabel,
+        level: teamLevel,
+        trophies_potential: [],
+        trophies_awarded: [],
+        message: "No latest ratings per player could be resolved.",
+      };
+    }
+
+    // 8) Metric codes we care about (from trophy defs)
+    const metricCodesNeeded = new Set<string>();
+    for (const def of trophyDefs) {
+      const metric = normalizeMetricCode(def.metric_code);
+      if (metric) metricCodesNeeded.add(metric);
+    }
+
+    // 9) Build per-metric percent arrays
+    const percentsByMetric = new Map<string, number[]>();
+    for (const mc of metricCodesNeeded) {
+      percentsByMetric.set(mc, []);
+    }
+
+    for (const row of latestByPlayer.values()) {
+      const ratingLike: RatingResult = {
+        overall_score: row.overall_score ?? null,
+        offense_score: row.offense_score ?? null,
+        defense_score: row.defense_score ?? null,
+        pitching_score: row.pitching_score ?? null,
+        breakdown: row.breakdown ?? null,
+      };
+
+      for (const mc of metricCodesNeeded) {
+        const p = getMetricPercentFromRatings(mc, ratingLike);
+        if (p != null) {
+          const arr = percentsByMetric.get(mc);
+          if (arr) arr.push(p);
+        }
+      }
+    }
+
+    // 10) Existing team trophies
+    const { data: existingTrophies, error: existingError } = await supabase
+      .from("team_trophies")
+      .select("trophy_id")
+      .eq("team_id", teamId);
+
+    if (existingError) {
+      console.error("Error fetching existing team_trophies:", existingError);
+    }
+
+    const ownedTrophyIds = new Set<number>(
+      (existingTrophies || []).map((r: any) => r.trophy_id as number)
+    );
+
+    const trophiesPotential: TrophySummary[] = [];
+    const trophiesAwarded: TrophySummary[] = [];
+    const toInsert: any[] = [];
+
+    // 11) Evaluate each trophy
+    for (const def of trophyDefs) {
+      const metricCode = normalizeMetricCode(def.metric_code);
+      const rawTier = def.tier ? def.tier.toLowerCase() : null;
+      if (!metricCode || !rawTier) continue;
+      const tier = rawTier as TrophyTier;
+
+      const percents = percentsByMetric.get(metricCode) || [];
+      if (!percents.length) continue;
+
+      const teamPercent = computeTeamPercentForMetric(percents, ageLabel, teamLevel);
+      if (teamPercent == null) continue;
+
+      const threshold = getThresholdPercent(metricCode, tier);
+      if (threshold == null) continue;
+
+      const summary: TrophySummary = {
+        trophy_id: def.id,
+        metric_code: metricCode,
+        tier,
+        name: def.name ?? null,
+        threshold_percent: threshold,
+        team_percent: teamPercent,
+      };
+
+      if (teamPercent >= threshold) {
+        trophiesPotential.push(summary);
+
+        if (!ownedTrophyIds.has(def.id)) {
+          trophiesAwarded.push(summary);
+          toInsert.push({
+            trophy_id: def.id,
+            team_id: teamId,
+            awarded_at: new Date().toISOString(),
+          });
+        }
+      }
+    }
+
+    // 12) Insert any newly earned team trophies
+    if (toInsert.length > 0) {
+      const { error: insertError } = await supabase
+        .from("team_trophies")
+        .insert(toInsert);
+      if (insertError) {
+        console.error("Error inserting new team_trophies:", insertError);
+      }
+    }
+
+    return {
+      team_id: teamId,
+      age_group_label: ageLabel,
+      level: teamLevel,
+      trophies_potential: trophiesPotential,
+      trophies_awarded: trophiesAwarded,
+    };
+  } catch (err) {
+    console.error("Unexpected error in recalcTeamTrophiesForTeam:", err);
+    return null;
+  }
+}
+
+app.get(
+  "/players/:playerId/medals",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    const { playerId } = req.params;
+
+    try {
+      // 1) Load official medals for the player
+      const { data: medalRows, error: medalError } = await supabase
+        .from("player_medals")
+        .select("*")
+        .eq("player_id", playerId)
+        .eq("is_official", true)
+        .order("awarded_at", { ascending: true });
+
+      if (medalError) {
+        console.error("Error fetching player_medals:", medalError);
+        return res.status(500).json({ error: "Failed to load player medals." });
+      }
+
+      if (!medalRows || medalRows.length === 0) {
+        return res.status(200).json({
+          player_id: playerId,
+          medals: [],
+        });
+      }
+
+      // 2) Fetch the medal definitions for the medals this player owns
+      const medalIds = Array.from(
+        new Set(
+          medalRows
+            .map((row: any) => row.medal_id as number | null)
+            .filter((id): id is number => id != null)
+        )
+      );
+
+      let defsById: Record<number, any> = {};
+      if (medalIds.length > 0) {
+        const { data: defs, error: defsError } = await supabase
+          .from("medal_definitions")
+          .select(
+            "id, name, description, category, icon_url, age_group_label, metric_code, tier, min_percent"
+          )
+          .in("id", medalIds);
+
+        if (defsError) {
+          console.error("Error fetching medal_definitions:", defsError);
+        } else if (defs) {
+          defsById = Object.fromEntries(
+            (defs as any[]).map((d) => [d.id as number, d])
+          );
+        }
+      }
+
+      // 3) Merge rows + definitions for a nice response shape
+      const medals = medalRows.map((row: any) => {
+        const def = defsById[row.medal_id as number] || null;
+        return {
+          id: row.id,
+          medal_id: row.medal_id,
+          player_id: row.player_id,
+          player_assessment_id: row.player_assessment_id,
+          is_official: row.is_official,
+          awarded_at: row.awarded_at,
+          definition: def,
+        };
+      });
+
+      return res.status(200).json({
+        player_id: playerId,
+        medals,
+      });
+    } catch (err) {
+      console.error("Unexpected error in GET /players/:playerId/medals:", err);
+      return res
+        .status(500)
+        .json({ error: "Failed to load player medals (internal error)." });
+    }
+  }
+);
+
 
 
 app.get("/players/:playerId/evals/5u-full", async (req, res) => {
@@ -5867,6 +6757,37 @@ app.post(
     }
   }
 );
+
+app.post(
+  "/teams/:teamId/trophies/recalculate",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    const { teamId } = req.params;
+
+    // Enforce team role (coach/assistant)
+    const role = await assertTeamRoleOr403(req, res, teamId, COACH_AND_ASSISTANT);
+    if (!role) return;
+
+    try {
+      const result = await recalcTeamTrophiesForTeam(teamId);
+      if (!result) {
+        return res
+          .status(500)
+          .json({ error: "Failed to recalculate team trophies." });
+      }
+
+      return res.status(200).json(result);
+    } catch (err) {
+      console.error("Error in /teams/:teamId/trophies/recalculate:", err);
+      return res
+        .status(500)
+        .json({ error: "Failed to recalculate team trophies." });
+    }
+  }
+);
+
+
+
 
 app.post(
   "/teams/:teamId/lineups/optimize",
