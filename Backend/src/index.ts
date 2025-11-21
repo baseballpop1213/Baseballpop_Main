@@ -1326,6 +1326,139 @@ async function fetchLatestCategoryRating(
   };
   }
 
+// Position codes must match breakdown.derived.position_scores keys
+type PositionCode =
+  | "pitcher"
+  | "pitchers_helper"
+  | "catcher"
+  | "first_base"
+  | "second_base"
+  | "third_base"
+  | "shortstop"
+  | "left_field"
+  | "right_field"
+  | "center_field"
+  | "left_center"
+  | "right_center";
+
+type FieldingSetup = "nine_player" | "ten_player_four_of";
+type PitchingSetup = "coach_pitch_helper" | "player_pitch";
+
+interface OptimizeLineupRequest {
+  age_group_label: string;              // e.g. "8U"
+  fielding_setup: FieldingSetup;
+  pitching_setup: PitchingSetup;        // 5U–7U default = "coach_pitch_helper"
+  hierarchy_id?: string;                // UUID from position_hierarchies
+  custom_positions?: PositionCode[];    // optional override
+  available_player_ids: string[];       // subset of team players
+  locked?: Record<PositionCode, string>; // { position: player_id }
+  save_lineup?: boolean;
+  lineup_name?: string;
+}
+
+interface PlayerWithRatings {
+  player_id: string;
+  display_name: string;
+  jersey_number: number | null;
+  overall_score: number | null;
+  offense_score: number | null;
+  defense_score: number | null;
+  pitching_score: number | null;
+  position_scores: Record<string, any>;
+  speed_score: number | null;
+  infield_score: number | null;
+  outfield_score: number | null;
+}
+
+interface Assignment {
+  position: PositionCode;
+  player_id: string;
+  player_name: string;
+  jersey_number: number | null;
+  position_score: number | null;
+  speed_score: number | null;
+  locked: boolean;
+}
+
+function toNumberOrNull(val: any): number | null {
+  if (val === null || val === undefined) return null;
+  const n = Number(val);
+  return Number.isFinite(n) ? n : null;
+}
+
+function getPositionScore(p: PlayerWithRatings, pos: PositionCode): number | null {
+  const raw = (p.position_scores as any)?.[pos];
+  if (typeof raw === "number") return raw;
+  return toNumberOrNull(raw);
+}
+
+function optimizeLineupAssignments(
+  players: PlayerWithRatings[],
+  positionsToFill: PositionCode[],
+  locks: Record<PositionCode, string | undefined>
+): Assignment[] {
+  const assigned = new Map<PositionCode, PlayerWithRatings>();
+  const usedPlayerIds = new Set<string>();
+
+  // 1) Pre-assign locked
+  for (const pos of positionsToFill) {
+    const lockedPlayerId = locks[pos];
+    if (!lockedPlayerId) continue;
+    const player = players.find((p) => p.player_id === lockedPlayerId);
+    if (!player) continue;
+    assigned.set(pos, player);
+    usedPlayerIds.add(player.player_id);
+  }
+
+  // 2) Greedy by hierarchy order with SPEEDSCORE tiebreaker
+  for (const pos of positionsToFill) {
+    if (assigned.has(pos)) continue;
+
+    const candidates = players.filter((p) => !usedPlayerIds.has(p.player_id));
+    if (candidates.length === 0) break;
+
+    candidates.sort((a, b) => {
+      const aPos = getPositionScore(a, pos) ?? -9999;
+      const bPos = getPositionScore(b, pos) ?? -9999;
+      if (bPos !== aPos) return bPos - aPos;
+
+      const aSpeed = a.speed_score ?? -9999;
+      const bSpeed = b.speed_score ?? -9999;
+      if (bSpeed !== aSpeed) return bSpeed - aSpeed;
+
+      const aOverall = a.overall_score ?? -9999;
+      const bOverall = b.overall_score ?? -9999;
+      return bOverall - aOverall;
+    });
+
+    const best = candidates[0];
+    if (!best) continue;
+
+    assigned.set(pos, best);
+    usedPlayerIds.add(best.player_id);
+  }
+
+  // 3) Build assignments
+  const assignments: Assignment[] = [];
+  for (const pos of positionsToFill) {
+    const player = assigned.get(pos);
+    if (!player) continue;
+    assignments.push({
+      position: pos,
+      player_id: player.player_id,
+      player_name: player.display_name,
+      jersey_number: player.jersey_number,
+      position_score: getPositionScore(player, pos),
+      speed_score: player.speed_score,
+      locked: locks[pos] === player.player_id,
+    });
+  }
+
+  return assignments;
+}
+
+
+
 /**
  * 5U position scores based on category scores + key tests.
  */
@@ -5734,6 +5867,339 @@ app.post(
     }
   }
 );
+
+app.post(
+  "/teams/:teamId/lineups/optimize",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    const authedUserId = req.user!.id;
+    const teamId = req.params.teamId;
+
+    const body = req.body as OptimizeLineupRequest;
+
+    if (!body.age_group_label || !body.fielding_setup || !body.pitching_setup) {
+      return res.status(400).json({
+        error: "age_group_label, fielding_setup, and pitching_setup are required",
+      });
+    }
+
+    if (!Array.isArray(body.available_player_ids) || body.available_player_ids.length === 0) {
+      return res.status(400).json({
+        error: "available_player_ids must be a non-empty array",
+      });
+    }
+
+    // 1) Auth: coach/assistant for this team
+    const role = await assertTeamRoleOr403(req, res, teamId, COACH_ONLY);
+    if (!role) return;
+
+    // 2) Ensure players are active members of the team
+    const { data: members, error: membersError } = await supabase
+      .from("team_members")
+      .select("player_id")
+      .eq("team_id", teamId)
+      .eq("is_active", true);
+
+    if (membersError) {
+      console.error("Error fetching team_members:", membersError);
+      return res.status(500).json({ error: "Failed to load team members" });
+    }
+
+    const activeSet = new Set<string>((members || []).map((m: any) => m.player_id));
+    const eligiblePlayerIds = body.available_player_ids.filter((id) =>
+      activeSet.has(id)
+    );
+
+    if (eligiblePlayerIds.length === 0) {
+      return res.status(400).json({
+        error: "No available_player_ids are active members of this team",
+      });
+    }
+
+    // 3) Resolve age_group_id from label
+    const { data: ageGroup, error: ageGroupError } = await supabase
+      .from("age_groups")
+      .select("id, label")
+      .eq("label", body.age_group_label)
+      .maybeSingle();
+
+    if (ageGroupError || !ageGroup) {
+      console.error("Error fetching age_groups:", ageGroupError);
+      return res.status(400).json({
+        error: `Unknown age_group_label: ${body.age_group_label}`,
+      });
+    }
+
+    const ageGroupId = ageGroup.id;
+
+    // 4) Load hierarchy (or use custom positions)
+    let hierarchy: any | null = null;
+    let positions: PositionCode[] | null = null;
+
+    if (body.custom_positions && body.custom_positions.length > 0) {
+      positions = body.custom_positions;
+    } else if (body.hierarchy_id) {
+      const { data: h, error: hError } = await supabase
+        .from("position_hierarchies")
+        .select("id, age_group_label, fielding_setup, name, positions")
+        .eq("id", body.hierarchy_id)
+        .maybeSingle();
+
+      if (hError || !h) {
+        console.error("Error fetching position_hierarchies by id:", hError);
+        return res.status(400).json({ error: "Invalid hierarchy_id" });
+      }
+
+      if (h.age_group_label !== body.age_group_label) {
+        return res.status(400).json({
+          error: "Hierarchy age_group_label does not match request age_group_label",
+        });
+      }
+      if (h.fielding_setup !== body.fielding_setup) {
+        return res.status(400).json({
+          error: "Hierarchy fielding_setup does not match request fielding_setup",
+        });
+      }
+
+      hierarchy = h;
+      positions = (h.positions || []) as PositionCode[];
+    } else {
+      // Default: system "Standard" hierarchy for this age group + fielding setup
+      const { data: h, error: hError } = await supabase
+        .from("position_hierarchies")
+        .select("id, age_group_label, fielding_setup, name, positions")
+        .eq("age_group_label", body.age_group_label)
+        .eq("fielding_setup", body.fielding_setup)
+        .eq("is_system", true)
+        .ilike("name", "%Standard%")
+        .limit(1)
+        .maybeSingle();
+
+      if (hError || !h) {
+        console.error("No default Standard hierarchy found:", hError);
+        return res.status(400).json({
+          error:
+            "No default Standard position hierarchy found for this age group and fielding setup",
+        });
+      }
+
+      hierarchy = h;
+      positions = (h.positions || []) as PositionCode[];
+    }
+
+    if (!positions || positions.length === 0) {
+      return res.status(400).json({ error: "No positions defined for this hierarchy" });
+    }
+
+    // 5) Apply pitching_setup: if player_pitch, drop pitchers_helper
+    let positionsToFill = positions.slice();
+    if (body.pitching_setup === "player_pitch") {
+      positionsToFill = positionsToFill.filter((p) => p !== "pitchers_helper");
+    }
+
+    // 6) Load latest ratings for each eligible player on this team & age group
+    const { data: ratingsRows, error: ratingsError } = await supabase
+      .from("player_ratings")
+      .select(
+        "player_id, team_id, age_group_id, overall_score, offense_score, defense_score, pitching_score, breakdown, created_at"
+      )
+      .in("player_id", eligiblePlayerIds)
+      .eq("team_id", teamId)
+      .eq("age_group_id", ageGroupId)
+      .order("created_at", { ascending: false });
+
+    if (ratingsError) {
+      console.error("Error fetching player_ratings:", ratingsError);
+      return res.status(500).json({ error: "Failed to load player ratings" });
+    }
+
+    const latestByPlayer = new Map<string, any>();
+    for (const row of ratingsRows || []) {
+      const pid = row.player_id as string;
+      if (!latestByPlayer.has(pid)) {
+        latestByPlayer.set(pid, row);
+      }
+    }
+
+    // 7) Load profile + jersey info
+    const { data: profiles, error: profilesError } = await supabase
+      .from("profiles")
+      .select("id, display_name, first_name, last_name")
+      .in("id", eligiblePlayerIds);
+
+    if (profilesError) {
+      console.error("Error fetching profiles:", profilesError);
+      return res.status(500).json({ error: "Failed to load player profiles" });
+    }
+
+    const profilesById = new Map<string, any>(
+      (profiles || []).map((p: any) => [p.id, p])
+    );
+
+    const { data: teamPlayers, error: teamPlayersError } = await supabase
+      .from("team_players")
+      .select("player_id, jersey_number")
+      .in("player_id", eligiblePlayerIds)
+      .eq("team_id", teamId);
+
+    if (teamPlayersError) {
+      console.error("Error fetching team_players:", teamPlayersError);
+      return res.status(500).json({ error: "Failed to load team player data" });
+    }
+
+    const teamPlayersById = new Map<string, any>(
+      (teamPlayers || []).map((tp: any) => [tp.player_id, tp])
+    );
+
+    // 8) Build PlayerWithRatings list
+    const players: PlayerWithRatings[] = [];
+
+    for (const playerId of eligiblePlayerIds) {
+      const profile = profilesById.get(playerId);
+      const ratingRow = latestByPlayer.get(playerId);
+      const tp = teamPlayersById.get(playerId);
+
+      const breakdown = (ratingRow?.breakdown as any) || {};
+      const derived = breakdown.derived || {};
+      const positionScores = derived.position_scores || {};
+
+      const displayName =
+        profile?.display_name ||
+        [profile?.first_name, profile?.last_name].filter(Boolean).join(" ") ||
+        "Player";
+
+      players.push({
+        player_id: playerId,
+        display_name: displayName,
+        jersey_number: tp?.jersey_number ?? null,
+        overall_score: toNumberOrNull(ratingRow?.overall_score),
+        offense_score: toNumberOrNull(ratingRow?.offense_score),
+        defense_score: toNumberOrNull(ratingRow?.defense_score),
+        pitching_score: toNumberOrNull(ratingRow?.pitching_score),
+        position_scores: positionScores,
+        speed_score: toNumberOrNull(derived.speed_score),
+        infield_score: toNumberOrNull(positionScores.infield_score),
+        outfield_score: toNumberOrNull(positionScores.outfield_score),
+      });
+    }
+
+    // 9) Run optimization (SPEEDSCORE tie-breaker)
+    const locks = (body.locked || {}) as Record<PositionCode, string | undefined>;
+
+    const assignments = optimizeLineupAssignments(
+      players,
+      positionsToFill as PositionCode[],
+      locks
+    );
+
+    const assignedPlayerIds = new Set(assignments.map((a) => a.player_id));
+
+    const unslotted_players = players
+      .filter((p) => !assignedPlayerIds.has(p.player_id))
+      .map((p) => ({
+        player_id: p.player_id,
+        player_name: p.display_name,
+        jersey_number: p.jersey_number,
+      }));
+
+    // 10) Position averages (for the positions we care about in this setup)
+    const uniquePositions = Array.from(new Set(positionsToFill)) as PositionCode[];
+    const position_averages: Record<string, number | null> = {};
+
+    for (const pos of uniquePositions) {
+      const vals: number[] = [];
+      for (const p of players) {
+        const s = getPositionScore(p, pos);
+        if (typeof s === "number") vals.push(s);
+      }
+      if (vals.length === 0) {
+        position_averages[pos] = null;
+      } else {
+        const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+        position_averages[pos] = Number(avg.toFixed(1));
+      }
+    }
+
+    // 11) Team aggregates (use players involved in this optimization)
+    const team_aggregates = {
+      offense: averageNonNull(players.map((p) => p.offense_score)),
+      defense: averageNonNull(players.map((p) => p.defense_score)),
+      pitching: averageNonNull(players.map((p) => p.pitching_score)),
+      infield: averageNonNull(players.map((p) => p.infield_score)),
+      outfield: averageNonNull(players.map((p) => p.outfield_score)),
+      overall: averageNonNull(players.map((p) => p.overall_score)),
+    };
+
+    // 12) Optionally save lineup
+    let saved_lineup_id: string | undefined;
+
+    if (body.save_lineup) {
+      if (!body.lineup_name || body.lineup_name.trim().length === 0) {
+        return res.status(400).json({
+          error: "lineup_name is required when save_lineup is true",
+        });
+      }
+
+      const { data: lineup, error: lineupError } = await supabase
+        .from("team_lineups")
+        .insert([
+          {
+            team_id: teamId,
+            age_group_label: body.age_group_label,
+            fielding_setup: body.fielding_setup,
+            pitching_setup: body.pitching_setup,
+            hierarchy_id: hierarchy?.id ?? null,
+            name: body.lineup_name.trim(),
+            created_by: authedUserId,
+          },
+        ])
+        .select("id")
+        .single();
+
+      if (lineupError || !lineup) {
+        console.error("Error inserting team_lineups:", lineupError);
+        return res.status(500).json({ error: "Failed to save lineup" });
+      }
+
+      saved_lineup_id = lineup.id;
+
+      const slotsToInsert = assignments.map((a) => ({
+        lineup_id: saved_lineup_id,
+        player_id: a.player_id,
+        position: a.position,
+        batting_order: null,
+      }));
+
+      const { error: slotsError } = await supabase
+        .from("team_lineup_slots")
+        .insert(slotsToInsert);
+
+      if (slotsError) {
+        console.error("Error inserting team_lineup_slots:", slotsError);
+        // we still return the optimization results, just without saved lineup
+      }
+    }
+
+    return res.json({
+      team_id: teamId,
+      age_group: body.age_group_label,
+      fielding_setup: body.fielding_setup,
+      pitching_setup: body.pitching_setup,
+      hierarchy_used: {
+        id: hierarchy?.id ?? null,
+        name: hierarchy?.name ?? (body.custom_positions ? "Custom" : null),
+        positions: positionsToFill,
+      },
+      assignments,
+      unslotted_players,
+      position_averages,
+      team_aggregates,
+      saved_lineup_id,
+    });
+  }
+);
+
+
 
 app.listen(port, () => {
   console.log(`BPOP backend listening on port ${port}`);
