@@ -3613,6 +3613,466 @@ function computeHSPositionScores(
 }
 
 
+// ---- Batting order types ----
+
+type BattingOrderStyleCode = "bpop_balanced" | "top_down" | "bpop_top6_balanced";
+type BattingOrderType = "NINE" | "TEN" | "CONTINUOUS";
+
+interface BattingOrderSlotConfig {
+  spot: number;        // batting order position (1–N)
+  priority: number;    // selection priority (1 = pick first, etc.)
+  wCS: number;         // weight for Contact Score
+  wPS: number;         // weight for Power Score
+  wSS: number;         // weight for Speed Score
+  wSC: number;         // weight for Strike Chance penalty (we subtract this)
+}
+
+interface BattingOrderStyleConfig {
+  style: BattingOrderStyleCode;
+  orderType: BattingOrderType;
+  ageGroupLabel: string; // e.g. "9U", "10U"
+  slots: BattingOrderSlotConfig[];
+}
+
+// Metrics we’ll use per player when optimizing
+interface BattingPlayerMetrics {
+  playerId: string;
+  hittingScore: number;   // main offense score (0–50)
+  contactScore: number;   // 0–50
+  powerScore: number;     // 0–50
+  speedScore: number;     // 0–50
+  strikeChance: number;   // 0–1
+}
+
+// Response shape for each lineup slot
+interface BattingOrderSlotResult {
+  batting_order: number;
+  player_id: string;
+  locked: boolean;
+  composite_score: number;
+  hitting_score: number;
+  contact_score: number;
+  power_score: number;
+  speed_score: number;
+  strike_chance: number;
+}
+
+// Request body shape for optimization
+interface BattingOrderOptimizeRequest {
+  style: BattingOrderStyleCode;
+  order_type: BattingOrderType;
+  dh_mode?: "pitcher_hits" | "use_dh";
+  dh_pitcher_player_id?: string | null;
+  player_ids?: string[];                    // optional: explicit list; otherwise team roster
+  locked_slots?: Record<string, string>;    // { "3": "<player_uuid>", "5": "<player_uuid>" }
+}
+
+interface BattingOrderOptimizeResponse {
+  team_id: string;
+  age_group_label: string | null;
+  style: BattingOrderStyleCode;
+  order_type: BattingOrderType;
+  dh_mode: "pitcher_hits" | "use_dh";
+  dh_pitcher_player_id: string | null;
+  lineup: BattingOrderSlotResult[];
+  team_averages: {
+    hitting_score: number | null;
+    contact_score: number | null;
+    power_score: number | null;
+    speed_score: number | null;
+    strike_chance: number | null;
+  };
+  players_considered: BattingPlayerMetrics[];
+}
+
+// ---- Batting order style configs ----
+// NOTE: These are structured to match your spreadsheet, but with simple
+// default weights. You can later replace the numbers for each age group / slot
+// with the exact ones from BPOP_batting_order.xlsx.
+
+const DEFAULT_BATTING_ORDER_CONFIGS: BattingOrderStyleConfig[] = (() => {
+  const makeSlots = (
+    orderType: BattingOrderType,
+    weightsBySpot: Array<Pick<BattingOrderSlotConfig, "wCS" | "wPS" | "wSS" | "wSC">>
+  ): BattingOrderSlotConfig[] => {
+    return weightsBySpot.map((w, idx) => ({
+      spot: idx + 1,
+      priority: idx + 1,
+      ...w,
+    }));
+  };
+
+  // Helper to share same scheme across age groups for now
+  const ageGroups = ["5U", "6U", "7U", "8U", "9U", "10U", "11U", "12U", "13U", "14U"];
+
+  const configs: BattingOrderStyleConfig[] = [];
+
+  for (const age of ageGroups) {
+    // BPOP Balanced: contact + speed heavy, fewer Ks
+    configs.push(
+      {
+        style: "bpop_balanced",
+        orderType: "NINE",
+        ageGroupLabel: age,
+        slots: makeSlots("NINE", [
+          { wCS: 0.6, wPS: 0.15, wSS: 0.15, wSC: 0.3 }, // 1
+          { wCS: 0.6, wPS: 0.15, wSS: 0.15, wSC: 0.3 }, // 2
+          { wCS: 0.55, wPS: 0.25, wSS: 0.1, wSC: 0.3 }, // 3
+          { wCS: 0.5, wPS: 0.3, wSS: 0.1, wSC: 0.3 },   // 4
+          { wCS: 0.5, wPS: 0.3, wSS: 0.1, wSC: 0.3 },   // 5
+          { wCS: 0.5, wPS: 0.25, wSS: 0.15, wSC: 0.3 }, // 6
+          { wCS: 0.5, wPS: 0.2, wSS: 0.2, wSC: 0.3 },   // 7
+          { wCS: 0.55, wPS: 0.15, wSS: 0.1, wSC: 0.3 }, // 8
+          { wCS: 0.6, wPS: 0.15, wSS: 0.1, wSC: 0.3 },  // 9
+        ]),
+      },
+      {
+        style: "bpop_balanced",
+        orderType: "TEN",
+        ageGroupLabel: age,
+        slots: makeSlots("TEN", [
+          { wCS: 0.6,  wPS: 0.15, wSS: 0.15, wSC: 0.3 }, // 1
+          { wCS: 0.6,  wPS: 0.15, wSS: 0.15, wSC: 0.3 }, // 2
+          { wCS: 0.55, wPS: 0.25, wSS: 0.1,  wSC: 0.3 }, // 3
+          { wCS: 0.5,  wPS: 0.3,  wSS: 0.1,  wSC: 0.3 }, // 4
+          { wCS: 0.5,  wPS: 0.3,  wSS: 0.1,  wSC: 0.3 }, // 5
+          { wCS: 0.5,  wPS: 0.25, wSS: 0.15, wSC: 0.3 }, // 6
+          { wCS: 0.5,  wPS: 0.2,  wSS: 0.2,  wSC: 0.3 }, // 7
+          { wCS: 0.55, wPS: 0.15, wSS: 0.1,  wSC: 0.3 }, // 8
+          { wCS: 0.6,  wPS: 0.15, wSS: 0.1,  wSC: 0.3 }, // 9
+          { wCS: 0.55, wPS: 0.15, wSS: 0.15, wSC: 0.3 }, // 10
+        ]),
+      },
+      {
+        style: "bpop_balanced",
+        orderType: "CONTINUOUS",
+        ageGroupLabel: age,
+        // For continuous, treat all 1–12 spots with same weights (like your sheet's 1–12 row)
+        slots: makeSlots("CONTINUOUS", Array.from({ length: 12 }, () => ({
+          wCS: 0.6,
+          wPS: 0.15,
+          wSS: 0.05,
+          wSC: 0.3,
+        }))),
+      }
+    );
+
+    // Top Down: prioritize biggest bats early (power + contact)
+    configs.push(
+      {
+        style: "top_down",
+        orderType: "NINE",
+        ageGroupLabel: age,
+        slots: makeSlots("NINE", Array.from({ length: 9 }, (_, i) => ({
+          wCS: 0.4,
+          wPS: 0.4,
+          wSS: 0.1,
+          wSC: 0.3,
+        }))),
+      },
+      {
+        style: "top_down",
+        orderType: "TEN",
+        ageGroupLabel: age,
+        slots: makeSlots("TEN", Array.from({ length: 10 }, (_, i) => ({
+          wCS: 0.4,
+          wPS: 0.4,
+          wSS: 0.1,
+          wSC: 0.3,
+        }))),
+      },
+      {
+        style: "top_down",
+        orderType: "CONTINUOUS",
+        ageGroupLabel: age,
+        slots: makeSlots("CONTINUOUS", Array.from({ length: 12 }, () => ({
+          wCS: 0.4,
+          wPS: 0.4,
+          wSS: 0.1,
+          wSC: 0.3,
+        }))),
+      }
+    );
+
+    // BPOP Top6 Balanced: first six highly optimized, rest generic
+    configs.push(
+      {
+        style: "bpop_top6_balanced",
+        orderType: "NINE",
+        ageGroupLabel: age,
+        slots: makeSlots("NINE", [
+          { wCS: 0.6,  wPS: 0.15, wSS: 0.15, wSC: 0.3 }, // 1
+          { wCS: 0.6,  wPS: 0.15, wSS: 0.15, wSC: 0.3 }, // 2
+          { wCS: 0.55, wPS: 0.25, wSS: 0.1,  wSC: 0.3 }, // 3
+          { wCS: 0.5,  wPS: 0.3,  wSS: 0.1,  wSC: 0.3 }, // 4
+          { wCS: 0.5,  wPS: 0.3,  wSS: 0.1,  wSC: 0.3 }, // 5
+          { wCS: 0.5,  wPS: 0.25, wSS: 0.15, wSC: 0.3 }, // 6
+          { wCS: 0.5,  wPS: 0.2,  wSS: 0.2,  wSC: 0.3 }, // 7
+          { wCS: 0.5,  wPS: 0.2,  wSS: 0.2,  wSC: 0.3 }, // 8
+          { wCS: 0.5,  wPS: 0.2,  wSS: 0.2,  wSC: 0.3 }, // 9
+        ]),
+      },
+      {
+        style: "bpop_top6_balanced",
+        orderType: "TEN",
+        ageGroupLabel: age,
+        slots: makeSlots("TEN", [
+          { wCS: 0.6,  wPS: 0.15, wSS: 0.15, wSC: 0.3 },
+          { wCS: 0.6,  wPS: 0.15, wSS: 0.15, wSC: 0.3 },
+          { wCS: 0.55, wPS: 0.25, wSS: 0.1,  wSC: 0.3 },
+          { wCS: 0.5,  wPS: 0.3,  wSS: 0.1,  wSC: 0.3 },
+          { wCS: 0.5,  wPS: 0.3,  wSS: 0.1,  wSC: 0.3 },
+          { wCS: 0.5,  wPS: 0.25, wSS: 0.15, wSC: 0.3 },
+          { wCS: 0.5,  wPS: 0.2,  wSS: 0.2,  wSC: 0.3 },
+          { wCS: 0.5,  wPS: 0.2,  wSS: 0.2,  wSC: 0.3 },
+          { wCS: 0.5,  wPS: 0.2,  wSS: 0.2,  wSC: 0.3 },
+          { wCS: 0.5,  wPS: 0.2,  wSS: 0.2,  wSC: 0.3 },
+        ]),
+      },
+      {
+        style: "bpop_top6_balanced",
+        orderType: "CONTINUOUS",
+        ageGroupLabel: age,
+        slots: makeSlots("CONTINUOUS", Array.from({ length: 12 }, (_, i) => ({
+          wCS: i < 6 ? 0.6 : 0.5,
+          wPS: i < 6 ? 0.2 : 0.15,
+          wSS: 0.15,
+          wSC: 0.3,
+        }))),
+      }
+    );
+  }
+
+  return configs;
+})();
+
+function getDefaultBattingOrderConfig(
+  style: BattingOrderStyleCode,
+  orderType: BattingOrderType,
+  ageGroupLabel: string | null
+): BattingOrderStyleConfig | null {
+  const age = ageGroupLabel || "10U";
+  const exact = DEFAULT_BATTING_ORDER_CONFIGS.find(
+    (c) => c.style === style && c.orderType === orderType && c.ageGroupLabel === age
+  );
+  if (exact) return exact;
+
+  const fallback = DEFAULT_BATTING_ORDER_CONFIGS.find(
+    (c) => c.style === style && c.orderType === orderType
+  );
+  return fallback || null;
+}
+
+
+
+// ratingRow is one row from player_ratings with breakdown json
+function getBattingMetricsFromRating(ratingRow: any): BattingPlayerMetrics | null {
+  const playerId = ratingRow.player_id as string | undefined;
+  if (!playerId) return null;
+
+  const hittingScoreRaw = ratingRow.offense_score as number | null;
+  const breakdown = (ratingRow.breakdown ?? {}) as any;
+
+  // These keys may need to be tweaked to match your exact breakdown structure.
+  // For now, we look in a few likely places and fall back to offense_score.
+  const contact =
+    breakdown?.hitting?.contact_score ??
+    breakdown?.offense?.contact_score ??
+    breakdown?.contact_score ??
+    hittingScoreRaw ??
+    0;
+
+  const power =
+    breakdown?.hitting?.power_score ??
+    breakdown?.offense?.power_score ??
+    breakdown?.power_score ??
+    hittingScoreRaw ??
+    0;
+
+  const speed =
+    breakdown?.speed_score ??
+    breakdown?.athlete?.speed_score ??
+    breakdown?.running?.speed_score ??
+    0;
+
+  const hittingScore = typeof hittingScoreRaw === "number" ? hittingScoreRaw : 0;
+
+  // Strike chance: (1 - (contactScore/90)), as requested
+  const contactScore = Number(contact) || 0;
+  const powerScore = Number(power) || 0;
+  const speedScore = Number(speed) || 0;
+  const strikeChance = Math.max(0, Math.min(1, 1 - contactScore / 90));
+
+  return {
+    playerId,
+    hittingScore,
+    contactScore,
+    powerScore,
+    speedScore,
+    strikeChance,
+  };
+}
+
+function computeSlotCompositeScore(
+  metrics: BattingPlayerMetrics,
+  slot: BattingOrderSlotConfig
+): number {
+  // wCS + wPS + wSS - wSC * StrikeChance
+  return (
+    slot.wCS * metrics.contactScore +
+    slot.wPS * metrics.powerScore +
+    slot.wSS * metrics.speedScore -
+    slot.wSC * metrics.strikeChance
+  );
+}
+
+function optimizeBattingOrderGreedy(
+  players: BattingPlayerMetrics[],
+  config: BattingOrderStyleConfig,
+  lockedSlots: Record<number, string> // batting_order -> player_id
+): BattingOrderSlotResult[] {
+  const slots = [...config.slots].sort((a, b) => a.priority - b.priority);
+  const availableMap = new Map<string, BattingPlayerMetrics>();
+  for (const p of players) {
+    availableMap.set(p.playerId, p);
+  }
+
+  // Remove any locked players from availability
+  for (const playerId of Object.values(lockedSlots)) {
+    availableMap.delete(playerId);
+  }
+
+  const resultBySpot = new Map<number, BattingOrderSlotResult>();
+
+  for (const slot of slots) {
+    const spot = slot.spot;
+    const lockedPlayerId = lockedSlots[spot];
+
+    if (lockedPlayerId) {
+      // Just use the locked player (if we still have metrics)
+      const metrics = players.find((p) => p.playerId === lockedPlayerId);
+      if (!metrics) continue;
+
+      resultBySpot.set(spot, {
+        batting_order: spot,
+        player_id: lockedPlayerId,
+        locked: true,
+        composite_score: computeSlotCompositeScore(metrics, slot),
+        hitting_score: metrics.hittingScore,
+        contact_score: metrics.contactScore,
+        power_score: metrics.powerScore,
+        speed_score: metrics.speedScore,
+        strike_chance: metrics.strikeChance,
+      });
+
+      continue;
+    }
+
+    // Choose the best available player for this slot
+    let best: BattingPlayerMetrics | null = null;
+    let bestScore = -Infinity;
+
+    for (const metrics of availableMap.values()) {
+      const score = computeSlotCompositeScore(metrics, slot);
+      if (score > bestScore) {
+        bestScore = score;
+        best = metrics;
+      }
+    }
+
+    if (!best) {
+      // no players left, leave slot empty
+      continue;
+    }
+
+    resultBySpot.set(spot, {
+      batting_order: spot,
+      player_id: best.playerId,
+      locked: false,
+      composite_score: bestScore,
+      hitting_score: best.hittingScore,
+      contact_score: best.contactScore,
+      power_score: best.powerScore,
+      speed_score: best.speedScore,
+      strike_chance: best.strikeChance,
+    });
+
+    // remove from pool
+    availableMap.delete(best.playerId);
+  }
+
+  // Return in batting_order order
+  return Array.from(resultBySpot.values()).sort(
+    (a, b) => a.batting_order - b.batting_order
+  );
+}
+
+async function loadBattingOrderConfigFromDb(
+  style: BattingOrderStyleCode,
+  orderType: BattingOrderType,
+  ageGroupLabel: string | null
+): Promise<BattingOrderStyleConfig | null> {
+  const age = ageGroupLabel || "10U";
+
+  const { data, error } = await supabase
+    .from("batting_order_weights")
+    .select(
+      "position_start, position_end, priority, w_cs, w_ps, w_ss, w_sc"
+    )
+    .eq("style_code", style)
+    .eq("order_type", orderType)
+    .eq("age_group_label", age)
+    .order("priority", { ascending: true })
+    .order("position_start", { ascending: true });
+
+  if (error) {
+    console.error("Error loading batting_order_weights:", error);
+    return null;
+  }
+
+  if (!data || data.length === 0) {
+    return null;
+  }
+
+  const slots: BattingOrderSlotConfig[] = [];
+
+  for (const row of data as any[]) {
+    const start = row.position_start as number;
+    const end = row.position_end as number;
+    const prio = row.priority as number;
+
+    const wCS = Number(row.w_cs);
+    const wPS = Number(row.w_ps);
+    const wSS = Number(row.w_ss);
+    const wSC = Number(row.w_sc);
+
+    for (let spot = start; spot <= end; spot++) {
+      slots.push({
+        spot,
+        priority: prio,
+        wCS,
+        wPS,
+        wSS,
+        wSC,
+      });
+    }
+  }
+
+  // Ensure deterministic order: by priority then spot
+  slots.sort((a, b) => {
+    if (a.priority !== b.priority) return a.priority - b.priority;
+    return a.spot - b.spot;
+  });
+
+  return {
+    style,
+    orderType,
+    ageGroupLabel: age,
+    slots,
+  };
+}
+
+
 
 /**
  * Create an assessment (official or practice) + store raw values.
@@ -7119,6 +7579,312 @@ app.post(
     });
   }
 );
+
+
+app.post(
+  "/teams/:teamId/batting-order/optimize",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    const { teamId } = req.params;
+    const body = req.body as BattingOrderOptimizeRequest;
+
+    // Only coaches/assistants can run the optimizer
+    const role = await assertTeamRoleOr403(req, res, teamId, COACH_AND_ASSISTANT);
+    if (!role) return;
+
+    const {
+      style,
+      order_type,
+      dh_mode = "pitcher_hits",
+      dh_pitcher_player_id = null,
+      player_ids,
+      locked_slots,
+    } = body;
+
+    if (!style || !order_type) {
+      return res.status(400).json({ error: "style and order_type are required" });
+    }
+
+    try {
+      // 1) Load team to get age_group
+      const { data: team, error: teamError } = await supabase
+        .from("teams")
+        .select("id, age_group")
+        .eq("id", teamId)
+        .maybeSingle();
+
+      if (teamError) {
+        console.error("Error fetching team for batting order:", teamError);
+        return res.status(500).json({ error: "Failed to load team." });
+      }
+
+      if (!team) {
+        return res.status(404).json({ error: "Team not found." });
+      }
+
+      const ageGroupLabel: string | null = team.age_group
+        ? String(team.age_group)
+        : null;
+
+      // 2) Determine lineup size
+      let lineupSize = 9;
+      if (order_type === "TEN") lineupSize = 10;
+      if (order_type === "CONTINUOUS") lineupSize = 99; // effectively "all available"
+
+      // 3) Figure out which players to consider
+      let candidatePlayerIds: string[] = [];
+
+      if (player_ids && player_ids.length > 0) {
+        candidatePlayerIds = Array.from(new Set(player_ids));
+      } else {
+        // fallback: all players on the team
+        const { data: teamPlayers, error: teamPlayersError } = await supabase
+          .from("team_players")
+          .select("player_id")
+          .eq("team_id", teamId);
+
+        if (teamPlayersError) {
+          console.error("Error fetching team_players for batting order:", teamPlayersError);
+          return res
+            .status(500)
+            .json({ error: "Failed to load team players." });
+        }
+
+        candidatePlayerIds = Array.from(
+          new Set((teamPlayers || []).map((tp: any) => tp.player_id as string))
+        );
+      }
+
+      // Apply DH mode: if using DH, remove pitcher from candidate hitters
+      let effectivePlayerIds = [...candidatePlayerIds];
+      if (dh_mode === "use_dh" && dh_pitcher_player_id) {
+        effectivePlayerIds = effectivePlayerIds.filter(
+          (id) => id !== dh_pitcher_player_id
+        );
+      }
+
+      if (effectivePlayerIds.length === 0) {
+        return res.status(200).json({
+          team_id: teamId,
+          age_group_label: ageGroupLabel,
+          style,
+          order_type,
+          dh_mode,
+          dh_pitcher_player_id,
+          lineup: [],
+          team_averages: {
+            hitting_score: null,
+            contact_score: null,
+            power_score: null,
+            speed_score: null,
+            strike_chance: null,
+          },
+          players_considered: [],
+        } as BattingOrderOptimizeResponse);
+      }
+
+      // If not continuous, cap the number of hitters
+      if (order_type !== "CONTINUOUS" && effectivePlayerIds.length > lineupSize) {
+        // keep as many as we need; frontend can decide which subset to send if desired
+        effectivePlayerIds = effectivePlayerIds.slice(0, lineupSize);
+      }
+
+      // 4) Resolve age_group_id (for ratings)
+      let ageGroupId: number | null = null;
+      if (ageGroupLabel) {
+        const { data: ageRow, error: ageError } = await supabase
+          .from("age_groups")
+          .select("id, label")
+          .eq("label", ageGroupLabel)
+          .maybeSingle();
+
+        if (ageError) {
+          console.error("Error fetching age_group for batting order:", ageError);
+        } else if (ageRow) {
+          ageGroupId = ageRow.id as number;
+        }
+      }
+
+      // 5) Load latest ratings for these players on this team / age group
+      let ratingsQuery = supabase
+        .from("player_ratings")
+        .select(
+          "player_id, team_id, age_group_id, overall_score, offense_score, defense_score, pitching_score, breakdown, created_at"
+        )
+        .eq("team_id", teamId)
+        .in("player_id", effectivePlayerIds);
+
+      if (ageGroupId !== null) {
+        ratingsQuery = ratingsQuery.eq("age_group_id", ageGroupId);
+      }
+
+      const { data: ratingRows, error: ratingsError } = await ratingsQuery;
+
+      if (ratingsError) {
+        console.error("Error fetching player_ratings for batting order:", ratingsError);
+        return res.status(500).json({ error: "Failed to load player ratings." });
+      }
+
+      if (!ratingRows || ratingRows.length === 0) {
+        return res.status(200).json({
+          team_id: teamId,
+          age_group_label: ageGroupLabel,
+          style,
+          order_type,
+          dh_mode,
+          dh_pitcher_player_id,
+          lineup: [],
+          team_averages: {
+            hitting_score: null,
+            contact_score: null,
+            power_score: null,
+            speed_score: null,
+            strike_chance: null,
+          },
+          players_considered: [],
+          message: "No ratings found for selected players.",
+        } as BattingOrderOptimizeResponse & { message: string });
+      }
+
+      interface RatingRow {
+        player_id: string;
+        created_at: string | null;
+        offense_score: number | null;
+        defense_score: number | null;
+        overall_score: number | null;
+        pitching_score: number | null;
+        breakdown: any;
+      }
+
+      // Keep latest rating per player
+      const latestByPlayer = new Map<string, RatingRow>();
+      for (const row of ratingRows as RatingRow[]) {
+        const pid = row.player_id;
+        const existing = latestByPlayer.get(pid);
+        if (!existing) {
+          latestByPlayer.set(pid, row);
+          continue;
+        }
+        const prevTs = existing.created_at || "";
+        const currTs = row.created_at || "";
+        if (currTs > prevTs) {
+          latestByPlayer.set(pid, row);
+        }
+      }
+
+      const battingMetrics: BattingPlayerMetrics[] = [];
+      for (const row of latestByPlayer.values()) {
+        const metrics = getBattingMetricsFromRating(row);
+        if (metrics) {
+          battingMetrics.push(metrics);
+        }
+      }
+
+      if (battingMetrics.length === 0) {
+        return res.status(200).json({
+          team_id: teamId,
+          age_group_label: ageGroupLabel,
+          style,
+          order_type,
+          dh_mode,
+          dh_pitcher_player_id,
+          lineup: [],
+          team_averages: {
+            hitting_score: null,
+            contact_score: null,
+            power_score: null,
+            speed_score: null,
+            strike_chance: null,
+          },
+          players_considered: [],
+          message: "No usable batting metrics for selected players.",
+        } as BattingOrderOptimizeResponse & { message: string });
+      }
+
+      // 6) Get style config (DB first, then fallback to in-code defaults)
+      let config = await loadBattingOrderConfigFromDb(style, order_type, ageGroupLabel);
+
+      if (!config) {
+        config = getDefaultBattingOrderConfig(style, order_type, ageGroupLabel);
+      }
+
+      if (!config) {
+        return res.status(400).json({
+          error: `No batting order config found for style=${style}, order_type=${order_type}, age_group=${ageGroupLabel}`,
+        });
+      }
+
+
+      // Trim config slots to actual lineupSize if needed
+      const slotsForUse =
+        order_type === "CONTINUOUS"
+          ? config.slots.slice(0, Math.min(config.slots.length, battingMetrics.length))
+          : config.slots.slice(0, Math.min(lineupSize, config.slots.length));
+
+      const configForUse: BattingOrderStyleConfig = {
+        ...config,
+        slots: slotsForUse,
+      };
+
+      // 7) Process locked slots
+      const lockedSlotsNumeric: Record<number, string> = {};
+      if (locked_slots) {
+        for (const [key, playerId] of Object.entries(locked_slots)) {
+          const pos = parseInt(key, 10);
+          if (!Number.isNaN(pos)) {
+            lockedSlotsNumeric[pos] = playerId;
+          }
+        }
+      }
+
+      // 8) Run greedy optimizer
+      const lineup = optimizeBattingOrderGreedy(
+        battingMetrics,
+        configForUse,
+        lockedSlotsNumeric
+      );
+
+      // 9) Compute team averages over players actually in the lineup
+      const playersInLineup = new Set(lineup.map((s) => s.player_id));
+      const metricsInLineup = battingMetrics.filter((m) =>
+        playersInLineup.has(m.playerId)
+      );
+
+      const avg = (arr: number[]): number | null =>
+        arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+
+      const team_averages = {
+        hitting_score: avg(metricsInLineup.map((m) => m.hittingScore)),
+        contact_score: avg(metricsInLineup.map((m) => m.contactScore)),
+        power_score: avg(metricsInLineup.map((m) => m.powerScore)),
+        speed_score: avg(metricsInLineup.map((m) => m.speedScore)),
+        strike_chance: avg(metricsInLineup.map((m) => m.strikeChance)),
+      };
+
+      const response: BattingOrderOptimizeResponse = {
+        team_id: teamId,
+        age_group_label: ageGroupLabel,
+        style,
+        order_type,
+        dh_mode,
+        dh_pitcher_player_id: dh_mode === "use_dh" ? dh_pitcher_player_id : null,
+        lineup,
+        team_averages,
+        players_considered: battingMetrics,
+      };
+
+      return res.status(200).json(response);
+    } catch (err) {
+      console.error("Unexpected error in POST /teams/:teamId/batting-order/optimize:", err);
+      return res
+        .status(500)
+        .json({ error: "Failed to optimize batting order." });
+    }
+  }
+);
+
+
+
 
 
 
