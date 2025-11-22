@@ -3613,6 +3613,226 @@ function computeHSPositionScores(
 }
 
 
+// ---- Pitching optimization types ----
+
+type PitcherRole = "starter" | "relief" | "closer";
+
+type PitchingTier = "PRO" | "YOUTH" | "LITTLE";
+
+interface PitchingPlayerMetrics {
+  playerId: string;
+  bpopPitcherRating: number;
+  pitchScore: number;
+  pitchSpeedScore: number;
+  pitchAccScore: number;
+  addPitches: number;
+  addPitchAccScore: number;
+  strikeoutChance: number; // 0–1
+}
+
+interface PitchingRotationSlotResult {
+  slot_id: string; // 'ACE','SP2','SP3',...
+  player_id: string;
+  locked: boolean;
+  bpop_pitcher_rating: number;
+  pitch_score: number;
+  pitch_speed_score: number;
+  pitch_acc_score: number;
+  add_pitches: number;
+  add_pitch_acc_score: number;
+  strikeout_chance: number;
+}
+
+interface PitchingBullpenSlotResult {
+  slot_id: string; // 'RP1','RP2','RP3','CLOSER',...
+  player_id: string;
+  locked: boolean;
+  role: PitcherRole;
+  score: number; // relief or closer score used for ranking
+  bpop_pitcher_rating: number;
+  pitch_score: number;
+  pitch_speed_score: number;
+  pitch_acc_score: number;
+  add_pitches: number;
+  add_pitch_acc_score: number;
+  strikeout_chance: number;
+}
+
+interface PitchingOptimizeRequest {
+  num_starters?: number;             // default 5 for PRO tier
+  base_configuration_id?: number;    // use saved config as starting point
+
+  player_ids?: string[];             // optional explicit list, otherwise all team pitchers
+  excluded_player_ids?: string[];    // temporarily remove (pitch count, injury, etc.)
+
+  // Optional per-call overrides
+  locked_rotation?: Record<string, string>; // { "ACE": playerId, "SP2": playerId }
+  locked_bullpen?: Record<string, string>;  // { "RP1": playerId, "CLOSER": playerId }
+}
+
+interface PitchingOptimizeResponse {
+  team_id: string;
+  age_group_label: string | null;
+  tier: PitchingTier;
+  num_starters: number | null;
+  base_configuration_id: number | null;
+  rotation: PitchingRotationSlotResult[];
+  bullpen: PitchingBullpenSlotResult[] | null; // null for younger tiers
+  pitchers: PitchingPlayerMetrics[];           // raw metrics for table views
+}
+
+//age tier helper for pitching optimization
+
+function pitchingAgeTier(ageGroupLabel: string | null): PitchingTier {
+  if (!ageGroupLabel) return "YOUTH";
+  const norm = ageGroupLabel.toLowerCase();
+
+  // Treat these as PRO tier
+  if (norm.includes("pro")) return "PRO";
+  if (norm.includes("college")) return "PRO";
+  if (norm === "highschool" || norm === "high_school" || norm === "hs") return "PRO";
+
+  // Try numeric age like "10U"
+  const m = norm.match(/^(\d+)\s*u$/);
+  if (m) {
+    const age = parseInt(m[1], 10);
+    if (age <= 7) return "LITTLE";
+    return "YOUTH"; // 8U–14U
+  }
+
+  return "YOUTH";
+}
+
+function getPitchingMetricsFromRating(row: any): PitchingPlayerMetrics | null {
+  const playerId = row.player_id as string | undefined;
+  if (!playerId) return null;
+
+  const breakdown = (row.breakdown ?? {}) as any;
+  const pitching = breakdown.pitching ?? breakdown.pitch ?? {};
+
+  const pitchScoreRaw =
+    typeof row.pitching_score === "number"
+      ? row.pitching_score
+      : typeof pitching.pitch_score === "number"
+      ? pitching.pitch_score
+      : 0;
+
+  const pitchSpeedRaw =
+    pitching.pitch_speed_score ??
+    pitching.speed_score ??
+    pitching.velocity_score ??
+    0;
+
+  const pitchAccRaw =
+    pitching.pitch_acc_score ??
+    pitching.accuracy_score ??
+    pitching.command_score ??
+    0;
+
+  const addPitchesRaw =
+    typeof pitching.additional_pitches === "number"
+      ? pitching.additional_pitches
+      : typeof pitching.add_pitches === "number"
+      ? pitching.add_pitches
+      : 0;
+
+  const addPitchAccRaw =
+    pitching.additional_pitch_accuracy_score ??
+    pitching.add_pitch_acc_score ??
+    0;
+
+  let strikeoutChanceRaw =
+    pitching.strikeout_chance ??
+    pitching.k_chance ??
+    pitching.strikeout_prob ??
+    0;
+
+  // Normalize strikeout chance to [0,1]
+  if (strikeoutChanceRaw > 1) {
+    strikeoutChanceRaw = strikeoutChanceRaw / 100;
+  }
+  const strikeoutChance = Math.max(0, Math.min(1, Number(strikeoutChanceRaw) || 0));
+
+  return {
+    playerId,
+    bpopPitcherRating: Number(pitchScoreRaw) || 0,
+    pitchScore: Number(pitchScoreRaw) || 0,
+    pitchSpeedScore: Number(pitchSpeedRaw) || 0,
+    pitchAccScore: Number(pitchAccRaw) || 0,
+    addPitches: Number(addPitchesRaw) || 0,
+    addPitchAccScore: Number(addPitchAccRaw) || 0,
+    strikeoutChance,
+  };
+}
+
+function computeReliefScoreStrong(metrics: PitchingPlayerMetrics): number {
+  // RP1–RP2
+  return 0.7 * metrics.pitchAccScore + 0.3 * metrics.pitchSpeedScore;
+}
+
+function computeReliefScoreBalanced(metrics: PitchingPlayerMetrics): number {
+  // RP3+
+  return 0.6 * metrics.pitchAccScore + 0.4 * metrics.pitchSpeedScore;
+}
+
+function computeCloserScore(metrics: PitchingPlayerMetrics): number {
+  // 0.4 * PITCHACCSCORE + 0.4 * PITCHSPEEDSCORE + 0.2 * STRIKEOUTCHANCE
+  return (
+    0.4 * metrics.pitchAccScore +
+    0.4 * metrics.pitchSpeedScore +
+    0.2 * metrics.strikeoutChance
+  );
+}
+
+interface LoadedPitchingConfig {
+  id: number;
+  slots: {
+    slot_id: string;
+    player_id: string;
+    role: PitcherRole;
+    locked: boolean;
+  }[];
+}
+
+async function loadPitchingConfiguration(
+  configId: number
+): Promise<LoadedPitchingConfig | null> {
+  const { data: config, error: configError } = await supabase
+    .from("pitching_configurations")
+    .select("id")
+    .eq("id", configId)
+    .maybeSingle();
+
+  if (configError) {
+    console.error("Error loading pitching_configurations:", configError);
+    return null;
+  }
+  if (!config) return null;
+
+  const { data: slots, error: slotsError } = await supabase
+    .from("pitching_configuration_slots")
+    .select("slot_id, player_id, role, locked")
+    .eq("configuration_id", configId);
+
+  if (slotsError) {
+    console.error("Error loading pitching_configuration_slots:", slotsError);
+    return null;
+  }
+
+  return {
+    id: config.id as number,
+    slots: (slots || []).map((s: any) => ({
+      slot_id: s.slot_id as string,
+      player_id: s.player_id as string,
+      role: (s.role as PitcherRole) || "starter",
+      locked: !!s.locked,
+    })),
+  };
+}
+
+
+
+
 // ---- Batting order types ----
 
 type BattingOrderStyleCode = "bpop_balanced" | "top_down" | "bpop_top6_balanced";
@@ -7884,7 +8104,748 @@ app.post(
 );
 
 
+app.get(
+  "/teams/:teamId/pitching/configurations",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    const { teamId } = req.params;
 
+    // Anyone on staff can view
+    const role = await assertTeamRoleOr403(req, res, teamId, COACH_AND_ASSISTANT);
+    if (!role) return;
+
+    try {
+      const { data: configs, error } = await supabase
+        .from("pitching_configurations")
+        .select("id, name, is_default, created_by, created_at, updated_at")
+        .eq("team_id", teamId)
+        .order("is_default", { ascending: false })
+        .order("created_at", { ascending: true });
+
+      if (error) {
+        console.error("Error fetching pitching_configurations:", error);
+        return res.status(500).json({ error: "Failed to load pitching configurations." });
+      }
+
+      if (!configs || configs.length === 0) {
+        return res.status(200).json([]);
+      }
+
+      // Optionally include slots for each config
+      const configIds = configs.map((c: any) => c.id as number);
+
+      const { data: slots, error: slotsError } = await supabase
+        .from("pitching_configuration_slots")
+        .select("configuration_id, slot_id, player_id, role, locked, order_index")
+        .in("configuration_id", configIds)
+        .order("order_index", { ascending: true });
+
+      if (slotsError) {
+        console.error("Error fetching pitching_configuration_slots:", slotsError);
+        return res.status(500).json({ error: "Failed to load configuration slots." });
+      }
+
+      const slotsByConfig = new Map<number, any[]>();
+      for (const s of slots || []) {
+        const cid = s.configuration_id as number;
+        if (!slotsByConfig.has(cid)) slotsByConfig.set(cid, []);
+        slotsByConfig.get(cid)!.push({
+          slot_id: s.slot_id,
+          player_id: s.player_id,
+          role: s.role,
+          locked: s.locked,
+          order_index: s.order_index,
+        });
+      }
+
+      const result = configs.map((c: any) => ({
+        id: c.id,
+        name: c.name,
+        is_default: c.is_default,
+        created_by: c.created_by,
+        created_at: c.created_at,
+        updated_at: c.updated_at,
+        slots: slotsByConfig.get(c.id as number) || [],
+      }));
+
+      return res.status(200).json(result);
+    } catch (err) {
+      console.error("Unexpected error in GET /teams/:teamId/pitching/configurations:", err);
+      return res.status(500).json({ error: "Failed to load pitching configurations." });
+    }
+  }
+);
+
+interface CreatePitchingConfigRequest {
+  name: string;
+  is_default?: boolean;
+  slots?: {
+    slot_id: string;
+    player_id: string;
+    role: PitcherRole;
+    locked?: boolean;
+    order_index?: number;
+  }[];
+}
+
+app.post(
+  "/teams/:teamId/pitching/configurations",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    const { teamId } = req.params;
+    const body = req.body as CreatePitchingConfigRequest;
+
+    const role = await assertTeamRoleOr403(req, res, teamId, COACH_AND_ASSISTANT);
+    if (!role) return;
+
+    if (!body.name) {
+      return res.status(400).json({ error: "name is required" });
+    }
+
+    const userId = req.user!.id;
+
+    try {
+      // Insert configuration
+      const { data: inserted, error: insertError } = await supabase
+        .from("pitching_configurations")
+        .insert({
+          team_id: teamId,
+          name: body.name,
+          is_default: !!body.is_default,
+          created_by: userId,
+        })
+        .select("id, is_default")
+        .maybeSingle();
+
+      if (insertError || !inserted) {
+        console.error("Error inserting pitching_configurations:", insertError);
+        return res.status(500).json({ error: "Failed to create configuration." });
+      }
+
+      const configId = inserted.id as number;
+
+      // If default, clear existing default for team
+      if (inserted.is_default) {
+        await supabase
+          .from("pitching_configurations")
+          .update({ is_default: false })
+          .eq("team_id", teamId)
+          .neq("id", configId);
+      }
+
+      // Insert slots, if any
+      if (body.slots && body.slots.length > 0) {
+        const slotsPayload = body.slots.map((s, index) => ({
+          configuration_id: configId,
+          slot_id: s.slot_id,
+          player_id: s.player_id,
+          role: s.role,
+          locked: s.locked ?? true,
+          order_index: s.order_index ?? index,
+        }));
+
+        const { error: slotsError } = await supabase
+          .from("pitching_configuration_slots")
+          .insert(slotsPayload);
+
+        if (slotsError) {
+          console.error("Error inserting pitching_configuration_slots:", slotsError);
+          return res
+            .status(500)
+            .json({ error: "Configuration created, but failed to insert slots." });
+        }
+      }
+
+      const loaded = await loadPitchingConfiguration(configId);
+      return res.status(201).json(loaded);
+    } catch (err) {
+      console.error("Unexpected error in POST /teams/:teamId/pitching/configurations:", err);
+      return res.status(500).json({ error: "Failed to create pitching configuration." });
+    }
+  }
+);
+
+
+interface UpdatePitchingConfigRequest {
+  name?: string;
+  is_default?: boolean;
+  slots?: {
+    slot_id: string;
+    player_id: string;
+    role: PitcherRole;
+    locked?: boolean;
+    order_index?: number;
+  }[];
+}
+
+app.put(
+  "/teams/:teamId/pitching/configurations/:configId",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    const { teamId, configId } = req.params;
+    const body = req.body as UpdatePitchingConfigRequest;
+
+    const role = await assertTeamRoleOr403(req, res, teamId, COACH_AND_ASSISTANT);
+    if (!role) return;
+
+    const idNum = Number(configId);
+    if (!Number.isFinite(idNum)) {
+      return res.status(400).json({ error: "Invalid configuration id" });
+    }
+
+    try {
+      const updates: any = { updated_at: new Date().toISOString() };
+      if (typeof body.name === "string") updates.name = body.name;
+      if (typeof body.is_default === "boolean") updates.is_default = body.is_default;
+
+      if (Object.keys(updates).length > 1) {
+        const { error: updateError } = await supabase
+          .from("pitching_configurations")
+          .update(updates)
+          .eq("id", idNum)
+          .eq("team_id", teamId);
+
+        if (updateError) {
+          console.error("Error updating pitching_configurations:", updateError);
+          return res.status(500).json({ error: "Failed to update configuration." });
+        }
+
+        if (body.is_default === true) {
+          await supabase
+            .from("pitching_configurations")
+            .update({ is_default: false })
+            .eq("team_id", teamId)
+            .neq("id", idNum);
+        }
+      }
+
+      if (body.slots) {
+        // Replace existing slots
+        const { error: delError } = await supabase
+          .from("pitching_configuration_slots")
+          .delete()
+          .eq("configuration_id", idNum);
+
+        if (delError) {
+          console.error("Error deleting old slots:", delError);
+          return res.status(500).json({ error: "Failed to replace slots." });
+        }
+
+        const slotsPayload = body.slots.map((s, index) => ({
+          configuration_id: idNum,
+          slot_id: s.slot_id,
+          player_id: s.player_id,
+          role: s.role,
+          locked: s.locked ?? true,
+          order_index: s.order_index ?? index,
+        }));
+
+        const { error: slotsError } = await supabase
+          .from("pitching_configuration_slots")
+          .insert(slotsPayload);
+
+        if (slotsError) {
+          console.error("Error inserting new slots:", slotsError);
+          return res.status(500).json({ error: "Failed to insert new slots." });
+        }
+      }
+
+      const loaded = await loadPitchingConfiguration(idNum);
+      return res.status(200).json(loaded);
+    } catch (err) {
+      console.error(
+        "Unexpected error in PUT /teams/:teamId/pitching/configurations/:configId:",
+        err
+      );
+      return res.status(500).json({ error: "Failed to update pitching configuration." });
+    }
+  }
+);
+
+app.post(
+  "/teams/:teamId/pitching/optimize",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    const { teamId } = req.params;
+    const body = req.body as PitchingOptimizeRequest;
+
+    const role = await assertTeamRoleOr403(req, res, teamId, COACH_AND_ASSISTANT);
+    if (!role) return;
+
+    try {
+      // 1) Load team to get age_group
+      const { data: team, error: teamError } = await supabase
+        .from("teams")
+        .select("id, age_group")
+        .eq("id", teamId)
+        .maybeSingle();
+
+      if (teamError) {
+        console.error("Error fetching team for pitching optimize:", teamError);
+        return res.status(500).json({ error: "Failed to load team." });
+      }
+      if (!team) {
+        return res.status(404).json({ error: "Team not found." });
+      }
+
+      const ageGroupLabel: string | null = team.age_group
+        ? String(team.age_group)
+        : null;
+
+      const tier = pitchingAgeTier(ageGroupLabel);
+
+      // 2) Determine candidate pitcher IDs
+      let candidatePlayerIds: string[] = [];
+
+      if (body.player_ids && body.player_ids.length > 0) {
+        candidatePlayerIds = Array.from(new Set(body.player_ids));
+      } else {
+        // fallback: all players on the team; frontend can pre-filter to pitchers if desired
+        const { data: teamPlayers, error: teamPlayersError } = await supabase
+          .from("team_players")
+          .select("player_id")
+          .eq("team_id", teamId)
+          .eq("is_primary_team", true);
+
+        if (teamPlayersError) {
+          console.error(
+            "Error fetching team_players for pitching optimize:",
+            teamPlayersError
+          );
+          return res
+            .status(500)
+            .json({ error: "Failed to load team players." });
+        }
+
+        candidatePlayerIds = Array.from(
+          new Set((teamPlayers || []).map((tp: any) => tp.player_id as string))
+        );
+      }
+
+      const excludedSet = new Set<string>(body.excluded_player_ids || []);
+      candidatePlayerIds = candidatePlayerIds.filter((id) => !excludedSet.has(id));
+
+      if (candidatePlayerIds.length === 0) {
+        const empty: PitchingOptimizeResponse = {
+          team_id: teamId,
+          age_group_label: ageGroupLabel,
+          tier,
+          num_starters: null,
+          base_configuration_id: body.base_configuration_id ?? null,
+          rotation: [],
+          bullpen: tier === "PRO" ? [] : null,
+          pitchers: [],
+        };
+        return res.status(200).json(empty);
+      }
+
+      // 3) Resolve age_group_id for ratings (if possible)
+      let ageGroupId: number | null = null;
+      if (ageGroupLabel) {
+        const { data: ageRow, error: ageError } = await supabase
+          .from("age_groups")
+          .select("id, label")
+          .eq("label", ageGroupLabel)
+          .maybeSingle();
+
+        if (ageError) {
+          console.error("Error fetching age_group for pitching optimize:", ageError);
+        } else if (ageRow) {
+          ageGroupId = ageRow.id as number;
+        }
+      }
+
+      // 4) Load latest ratings for these players
+      let ratingsQuery = supabase
+        .from("player_ratings")
+        .select(
+          "player_id, team_id, age_group_id, overall_score, offense_score, defense_score, pitching_score, breakdown, created_at"
+        )
+        .eq("team_id", teamId)
+        .in("player_id", candidatePlayerIds);
+
+      if (ageGroupId !== null) {
+        ratingsQuery = ratingsQuery.eq("age_group_id", ageGroupId);
+      }
+
+      const { data: ratingRows, error: ratingsError } = await ratingsQuery;
+
+      if (ratingsError) {
+        console.error("Error fetching player_ratings for pitching optimize:", ratingsError);
+        return res.status(500).json({ error: "Failed to load player ratings." });
+      }
+
+      if (!ratingRows || ratingRows.length === 0) {
+        const empty: PitchingOptimizeResponse = {
+          team_id: teamId,
+          age_group_label: ageGroupLabel,
+          tier,
+          num_starters: null,
+          base_configuration_id: body.base_configuration_id ?? null,
+          rotation: [],
+          bullpen: tier === "PRO" ? [] : null,
+          pitchers: [],
+        };
+        return res.status(200).json(empty);
+      }
+
+      interface RatingRow {
+        player_id: string;
+        created_at: string | null;
+        pitching_score: number | null;
+        breakdown: any;
+      }
+
+      const latestByPlayer = new Map<string, RatingRow>();
+      for (const row of ratingRows as RatingRow[]) {
+        const pid = row.player_id;
+        const existing = latestByPlayer.get(pid);
+        if (!existing) {
+          latestByPlayer.set(pid, row);
+          continue;
+        }
+        const prevTs = existing.created_at || "";
+        const currTs = row.created_at || "";
+        if (currTs > prevTs) {
+          latestByPlayer.set(pid, row);
+        }
+      }
+
+      const pitchingMetrics: PitchingPlayerMetrics[] = [];
+      for (const row of latestByPlayer.values()) {
+        const metrics = getPitchingMetricsFromRating(row);
+        if (metrics) {
+          pitchingMetrics.push(metrics);
+        }
+      }
+
+      if (pitchingMetrics.length === 0) {
+        const empty: PitchingOptimizeResponse = {
+          team_id: teamId,
+          age_group_label: ageGroupLabel,
+          tier,
+          num_starters: null,
+          base_configuration_id: body.base_configuration_id ?? null,
+          rotation: [],
+          bullpen: tier === "PRO" ? [] : null,
+          pitchers: [],
+        };
+        return res.status(200).json(empty);
+      }
+
+      // Ensure metrics are only for candidatePlayerIds (exclude any weird extra rows)
+      const candidateSet = new Set(candidatePlayerIds);
+      const metricsFiltered = pitchingMetrics.filter((m) =>
+        candidateSet.has(m.playerId)
+      );
+
+      if (metricsFiltered.length === 0) {
+        const empty: PitchingOptimizeResponse = {
+          team_id: teamId,
+          age_group_label: ageGroupLabel,
+          tier,
+          num_starters: null,
+          base_configuration_id: body.base_configuration_id ?? null,
+          rotation: [],
+          bullpen: tier === "PRO" ? [] : null,
+          pitchers: [],
+        };
+        return res.status(200).json(empty);
+      }
+
+      // 5) Load base configuration & build lock maps
+      const baseConfigId = body.base_configuration_id ?? null;
+      const baseConfig = baseConfigId
+        ? await loadPitchingConfiguration(baseConfigId)
+        : null;
+
+      const lockedRotationFromConfig: Record<string, string> = {};
+      const lockedBullpenFromConfig: Record<string, string> = {};
+
+      if (baseConfig) {
+        for (const slot of baseConfig.slots) {
+          if (!slot.locked) continue;
+          const slotId = slot.slot_id.toUpperCase();
+          if (slotId === "ACE" || slotId.startsWith("SP")) {
+            lockedRotationFromConfig[slotId] = slot.player_id;
+          } else if (slotId.startsWith("RP") || slotId === "CLOSER") {
+            lockedBullpenFromConfig[slotId] = slot.player_id;
+          }
+        }
+      }
+
+      // Merge per-call overrides
+      const lockedRotation: Record<string, string> = { ...lockedRotationFromConfig };
+      if (body.locked_rotation) {
+        for (const [slotId, playerId] of Object.entries(body.locked_rotation)) {
+          lockedRotation[slotId.toUpperCase()] = playerId;
+        }
+      }
+
+      const lockedBullpen: Record<string, string> = { ...lockedBullpenFromConfig };
+      if (body.locked_bullpen) {
+        for (const [slotId, playerId] of Object.entries(body.locked_bullpen)) {
+          lockedBullpen[slotId.toUpperCase()] = playerId;
+        }
+      }
+
+      // 6) Branch by tier
+      if (tier !== "PRO") {
+        // YOUTH / LITTLE: single ranked list by BPOP PITCHER RATING
+        const sorted = [...metricsFiltered].sort(
+          (a, b) => b.bpopPitcherRating - a.bpopPitcherRating
+        );
+
+        const rotation: PitchingRotationSlotResult[] = sorted.map((m, index) => ({
+          slot_id: `P${index + 1}`,
+          player_id: m.playerId,
+          locked: false,
+          bpop_pitcher_rating: m.bpopPitcherRating,
+          pitch_score: m.pitchScore,
+          pitch_speed_score: m.pitchSpeedScore,
+          pitch_acc_score: m.pitchAccScore,
+          add_pitches: m.addPitches,
+          add_pitch_acc_score: m.addPitchAccScore,
+          strikeout_chance: m.strikeoutChance,
+        }));
+
+        const response: PitchingOptimizeResponse = {
+          team_id: teamId,
+          age_group_label: ageGroupLabel,
+          tier,
+          num_starters: null,
+          base_configuration_id: baseConfigId,
+          rotation,
+          bullpen: null,
+          pitchers: metricsFiltered,
+        };
+
+        return res.status(200).json(response);
+      }
+
+      // PRO tier: full rotation + bullpen
+      const numStartersRequested = body.num_starters && body.num_starters > 0
+        ? body.num_starters
+        : 5;
+
+      // Build rotation slot IDs: ACE, SP2, SP3,...
+      const rotationSlotIds: string[] = [];
+      if (numStartersRequested > 0) rotationSlotIds.push("ACE");
+      for (let i = 2; i <= numStartersRequested; i++) {
+        rotationSlotIds.push(`SP${i}`);
+      }
+
+      const available = new Map<string, PitchingPlayerMetrics>();
+      for (const m of metricsFiltered) {
+        if (!excludedSet.has(m.playerId)) {
+          available.set(m.playerId, m);
+        }
+      }
+
+      const rotationResults = new Map<string, PitchingRotationSlotResult>();
+
+      // First, assign locked rotation players
+      for (const slotId of rotationSlotIds) {
+        const lockedPlayerId = lockedRotation[slotId];
+        if (!lockedPlayerId) continue;
+        const metrics = available.get(lockedPlayerId);
+        if (!metrics) continue; // excluded or not found
+
+        rotationResults.set(slotId, {
+          slot_id: slotId,
+          player_id: lockedPlayerId,
+          locked: true,
+          bpop_pitcher_rating: metrics.bpopPitcherRating,
+          pitch_score: metrics.pitchScore,
+          pitch_speed_score: metrics.pitchSpeedScore,
+          pitch_acc_score: metrics.pitchAccScore,
+          add_pitches: metrics.addPitches,
+          add_pitch_acc_score: metrics.addPitchAccScore,
+          strikeout_chance: metrics.strikeoutChance,
+        });
+
+        available.delete(lockedPlayerId);
+      }
+
+      // Then fill remaining rotation slots by BPOP PITCHER RATING
+      for (const slotId of rotationSlotIds) {
+        if (rotationResults.has(slotId)) continue;
+
+        let best: PitchingPlayerMetrics | null = null;
+        let bestScore = -Infinity;
+        for (const metrics of available.values()) {
+          if (metrics.bpopPitcherRating > bestScore) {
+            bestScore = metrics.bpopPitcherRating;
+            best = metrics;
+          }
+        }
+
+        if (!best) break;
+
+        rotationResults.set(slotId, {
+          slot_id: slotId,
+          player_id: best.playerId,
+          locked: false,
+          bpop_pitcher_rating: best.bpopPitcherRating,
+          pitch_score: best.pitchScore,
+          pitch_speed_score: best.pitchSpeedScore,
+          pitch_acc_score: best.pitchAccScore,
+          add_pitches: best.addPitches,
+          add_pitch_acc_score: best.addPitchAccScore,
+          strikeout_chance: best.strikeoutChance,
+        });
+
+        available.delete(best.playerId);
+      }
+
+      // Bullpen: RP1..RPn + CLOSER
+      const bullpenResults: PitchingBullpenSlotResult[] = [];
+
+      // 1) Closer
+      const lockedCloserId = lockedBullpen["CLOSER"];
+      if (lockedCloserId) {
+        const metrics = available.get(lockedCloserId);
+        if (metrics) {
+          bullpenResults.push({
+            slot_id: "CLOSER",
+            player_id: lockedCloserId,
+            locked: true,
+            role: "closer",
+            score: computeCloserScore(metrics),
+            bpop_pitcher_rating: metrics.bpopPitcherRating,
+            pitch_score: metrics.pitchScore,
+            pitch_speed_score: metrics.pitchSpeedScore,
+            pitch_acc_score: metrics.pitchAccScore,
+            add_pitches: metrics.addPitches,
+            add_pitch_acc_score: metrics.addPitchAccScore,
+            strikeout_chance: metrics.strikeoutChance,
+          });
+          available.delete(lockedCloserId);
+        }
+      } else {
+        // Choose best closer by closer score
+        let best: PitchingPlayerMetrics | null = null;
+        let bestScore = -Infinity;
+        for (const m of available.values()) {
+          const score = computeCloserScore(m);
+          if (score > bestScore) {
+            bestScore = score;
+            best = m;
+          }
+        }
+
+        if (best) {
+          bullpenResults.push({
+            slot_id: "CLOSER",
+            player_id: best.playerId,
+            locked: false,
+            role: "closer",
+            score: bestScore,
+            bpop_pitcher_rating: best.bpopPitcherRating,
+            pitch_score: best.pitchScore,
+            pitch_speed_score: best.pitchSpeedScore,
+            pitch_acc_score: best.pitchAccScore,
+            add_pitches: best.addPitches,
+            add_pitch_acc_score: best.addPitchAccScore,
+            strikeout_chance: best.strikeoutChance,
+          });
+          available.delete(best.playerId);
+        }
+      }
+
+      // 2) Relief pitchers: RP1..RPn
+      const remaining = Array.from(available.values());
+
+      // Assign RP1 & RP2 via strong relief score first
+      remaining.sort(
+        (a, b) => computeReliefScoreStrong(b) - computeReliefScoreStrong(a)
+      );
+
+      let rpIndex = 1;
+
+      const assignRpSlot = (slotId: string, metrics: PitchingPlayerMetrics, locked: boolean) => {
+        const scoreBase =
+          rpIndex <= 2
+            ? computeReliefScoreStrong(metrics)
+            : computeReliefScoreBalanced(metrics);
+
+        bullpenResults.push({
+          slot_id: slotId,
+          player_id: metrics.playerId,
+          locked,
+          role: "relief",
+          score: scoreBase,
+          bpop_pitcher_rating: metrics.bpopPitcherRating,
+          pitch_score: metrics.pitchScore,
+          pitch_speed_score: metrics.pitchSpeedScore,
+          pitch_acc_score: metrics.pitchAccScore,
+          add_pitches: metrics.addPitches,
+          add_pitch_acc_score: metrics.addPitchAccScore,
+          strikeout_chance: metrics.strikeoutChance,
+        });
+      };
+
+      // First handle any locked RP slots (RP1, RP2, RP3,...)
+      const availableMap = new Map<string, PitchingPlayerMetrics>();
+      for (const m of remaining) {
+        availableMap.set(m.playerId, m);
+      }
+
+      // Collect all RP slot IDs that might be locked
+      const rpLockedEntries = Object.entries(lockedBullpen).filter(([slotId]) =>
+        slotId.startsWith("RP")
+      );
+      rpLockedEntries.sort((a, b) => {
+        const ai = parseInt(a[0].substring(2) || "0", 10);
+        const bi = parseInt(b[0].substring(2) || "0", 10);
+        return ai - bi;
+      });
+
+      for (const [slotId, playerId] of rpLockedEntries) {
+        const metrics = availableMap.get(playerId);
+        if (!metrics) continue;
+        rpIndex = parseInt(slotId.substring(2) || "1", 10) || rpIndex;
+        assignRpSlot(slotId, metrics, true);
+        availableMap.delete(playerId);
+      }
+
+      // Now fill remaining RP slots with remaining pitchers
+      const remainingRps = Array.from(availableMap.values());
+
+      // Re-sort by strong score, assign sequential RP slots
+      remainingRps.sort(
+        (a, b) => computeReliefScoreStrong(b) - computeReliefScoreStrong(a)
+      );
+
+      for (const m of remainingRps) {
+        const slotId = `RP${rpIndex}`;
+        assignRpSlot(slotId, m, false);
+        rpIndex++;
+      }
+
+      // Build rotation array in slot order
+      const rotationArray: PitchingRotationSlotResult[] = rotationSlotIds
+        .map((slotId) => rotationResults.get(slotId))
+        .filter((x): x is PitchingRotationSlotResult => !!x);
+
+      const response: PitchingOptimizeResponse = {
+        team_id: teamId,
+        age_group_label: ageGroupLabel,
+        tier,
+        num_starters: rotationSlotIds.length,
+        base_configuration_id: baseConfigId,
+        rotation: rotationArray,
+        bullpen: bullpenResults,
+        pitchers: metricsFiltered,
+      };
+
+      return res.status(200).json(response);
+    } catch (err) {
+      console.error("Unexpected error in POST /teams/:teamId/pitching/optimize:", err);
+      return res.status(500).json({ error: "Failed to optimize pitching." });
+    }
+  }
+);
 
 
 
