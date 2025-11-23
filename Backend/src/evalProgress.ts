@@ -32,11 +32,14 @@ interface EvalSessionData {
 export async function createEvalSession(req: AuthedRequest, res: Response) {
   try {
     const {
-      team_id = null,
+      team_id,
       template_id,
-      mode = "official",
-      player_ids = [],
-    } = req.body ?? {};
+      mode,
+      player_ids,
+      evaluation_type,
+      session_mode,
+    } = req.body;
+
 
     if (!template_id) {
       return res.status(400).json({ error: "template_id is required" });
@@ -47,11 +50,14 @@ export async function createEvalSession(req: AuthedRequest, res: Response) {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    const sessionData: EvalSessionData = {
+    const sessionData = {
       player_ids,
       values: {},
       completed_metric_ids: [],
+      evaluation_type: evaluation_type || null,
+      session_mode: session_mode || "single", // "single" | "multi_station"
     };
+
 
     const { data, error } = await supabase
       .from("eval_sessions")

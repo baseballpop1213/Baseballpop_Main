@@ -1,15 +1,9 @@
 // src/api/coach.ts
 import api from "./client";
-
-export interface TeamWithRole {
-  id: string;
-  name: string;
-  age_group: string | null;
-  level: string | null;
-  role: string;
-}
+import type { TeamWithRole } from "./types";
 
 export async function getMyTeams(): Promise<TeamWithRole[]> {
-  const res = await api.get("/me/teams");
-  return res.data;
+  const res = await api.get<{ teams: TeamWithRole[] }>("/coach/my-teams");
+  // Handle both shapes gracefully (just in case older data exists)
+  return res.data.teams ?? (res.data as any);
 }

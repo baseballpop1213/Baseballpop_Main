@@ -549,6 +549,67 @@ app.get("/me", requireAuth, async (req: AuthedRequest, res) => {
   return res.json(data);
 });
 
+
+// List all teams this user is attached to (coach/assistant/player/parent)
+app.get("/coach/my-teams", requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const userId = req.user!.id;
+
+    // 1) Get all team roles for this user
+    const { data: roles, error: rolesError } = await supabase
+      .from("user_team_roles")
+      .select("team_id, role")
+      .eq("user_id", userId);
+
+    if (rolesError) {
+      console.error("Error fetching user_team_roles", rolesError);
+      return res.status(500).json({ message: "Failed to load teams" });
+    }
+
+    if (!roles || roles.length === 0) {
+      return res.json({ teams: [] });
+    }
+
+    const teamIds = Array.from(new Set(roles.map((r) => r.team_id)));
+
+    // 2) Fetch the corresponding team records
+    const { data: teams, error: teamsError } = await supabase
+      .from("teams")
+      .select("id, name, age_group, level, logo_url, motto")
+      .in("id", teamIds);
+
+    if (teamsError) {
+      console.error("Error fetching teams", teamsError);
+      return res.status(500).json({ message: "Failed to load teams" });
+    }
+
+    const teamsById = new Map(teams.map((t) => [t.id, t]));
+
+    // 3) Merge team data with the user's role on that team
+    const result = roles
+      .map((r) => {
+        const t = teamsById.get(r.team_id);
+        if (!t) return null;
+        return {
+          id: t.id,
+          name: t.name,
+          age_group: t.age_group,
+          level: t.level,
+          logo_url: t.logo_url,
+          motto: t.motto,
+          role: r.role, // "coach" | "assistant" | "player" | "parent"
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => Boolean(x));
+
+    return res.json({ teams: result });
+  } catch (err) {
+    console.error("Unexpected error in /coach/my-teams", err);
+    return res.status(500).json({ message: "Failed to load teams" });
+  }
+});
+
+
 /**
  * Get current user's teams via user_team_roles (2-step query).
  */

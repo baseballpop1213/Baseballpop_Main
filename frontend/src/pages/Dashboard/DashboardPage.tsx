@@ -1,11 +1,13 @@
 // src/pages/Dashboard/DashboardPage.tsx
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { getMyTeams } from "../../api/coach";
 import type { TeamWithRole } from "../../api/types";
 
 export default function DashboardPage() {
   const { profile } = useAuth();
+  const navigate = useNavigate();
 
   const name =
     profile?.display_name ||
@@ -13,7 +15,6 @@ export default function DashboardPage() {
     "Coach";
 
   const role = profile?.role ?? "unknown";
-
   const isCoachLike = role === "coach" || role === "assistant";
 
   const [teams, setTeams] = useState<TeamWithRole[]>([]);
@@ -75,8 +76,7 @@ export default function DashboardPage() {
           description="Run an official or practice evaluation for one of your teams or players."
           buttonLabel="Start assessment"
           onClick={() => {
-            // Stub for now
-            alert("Stub: this will open the assessment flow.");
+            navigate("/assessments/start");
           }}
         />
         {isCoachLike && (
@@ -179,7 +179,6 @@ function TeamRow({ team }: { team: TeamWithRole }) {
       </div>
       {team.logo_url && (
         <div className="w-10 h-10 rounded-full bg-slate-800 overflow-hidden border border-slate-700 flex items-center justify-center text-[10px] text-slate-400">
-          {/* Later: real logo image; for now just initials */}
           <span className="px-1 text-center">
             {team.name
               .split(" ")
@@ -193,3 +192,5 @@ function TeamRow({ team }: { team: TeamWithRole }) {
     </div>
   );
 }
+
+
