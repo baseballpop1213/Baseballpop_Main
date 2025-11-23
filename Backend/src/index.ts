@@ -6897,12 +6897,9 @@ app.get("/players/:id/evals/pro-full", async (req, res) => {
   }
 });
 
-/**
- * Get the full team roster (team_players joined to profiles).
- * Any member of the team (coach, assistant, player, parent) can view.
- */
+// Get the full team roster (team_players joined to profiles).
+// Any member of the team (coach, assistant, player, parent) can view.
 app.get("/teams/:teamId/players", requireAuth, async (req: AuthedRequest, res) => {
-  const userId = req.user!.id;
   const { teamId } = req.params;
 
   // Must at least be on the team in some role
@@ -6912,7 +6909,9 @@ app.get("/teams/:teamId/players", requireAuth, async (req: AuthedRequest, res) =
   try {
     const { data: teamPlayers, error } = await supabase
       .from("team_players")
-      .select("player_id, status, jersey_number, is_primary_team, created_at, updated_at, profiles!inner(*)")
+      .select(
+        "player_id, status, jersey_number, is_primary_team, created_at, updated_at"
+      )
       .eq("team_id", teamId);
 
     if (error) {
@@ -6920,12 +6919,95 @@ app.get("/teams/:teamId/players", requireAuth, async (req: AuthedRequest, res) =
       return res.status(500).json({ error: error.message });
     }
 
-    return res.json(teamPlayers ?? []);
+    const rows = teamPlayers ?? [];
+    const playerIds = rows.map((row: any) => row.player_id).filter(Boolean);
+
+    // Manually fetch profiles so we don't rely on Supabase's implicit embedding.
+    let profilesById: Record<string, any> = {};
+    if (playerIds.length > 0) {
+      const { data: profiles, error: profilesError } = await supabase
+        .from("profiles")
+        .select("*")
+        .in("id", playerIds);
+
+      if (profilesError) {
+        console.error("Error fetching profiles for team players:", profilesError);
+        // We'll still return the roster, just without embedded profile data.
+      } else if (profiles) {
+        profilesById = Object.fromEntries(
+          profiles.map((p: any) => [p.id, p])
+        );
+      }
+    }
+
+    const rowsWithProfiles = rows.map((row: any) => ({
+      ...row,
+      profiles: profilesById[row.player_id] ?? null,
+    }));
+
+    return res.json(rowsWithProfiles);
   } catch (err) {
     console.error("Unexpected error in GET /teams/:teamId/players:", err);
     return res.status(500).json({ error: "Failed to load team roster" });
   }
 });
+
+
+// Get a single assessment template and its metrics
+app.get(
+  "/assessment-templates/:id",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    const { id } = req.params;
+    const templateId = Number(id);
+
+    if (!Number.isFinite(templateId)) {
+      return res.status(400).json({ error: "Invalid template id" });
+    }
+
+    try {
+      const { data: template, error: templateError } = await supabase
+        .from("assessment_templates")
+        .select("*")
+        .eq("id", templateId)
+        .single();
+
+      if (templateError) {
+        console.error("Error fetching assessment_template:", templateError);
+        return res.status(500).json({ error: templateError.message });
+      }
+
+      if (!template) {
+        return res.status(404).json({ error: "Template not found" });
+      }
+
+      const { data: metrics, error: metricsError } = await supabase
+        .from("assessment_metrics")
+        .select("*")
+        .eq("template_id", templateId)
+        .order("sort_order", { ascending: true });
+
+      if (metricsError) {
+        console.error("Error fetching assessment_metrics:", metricsError);
+        return res.status(500).json({ error: metricsError.message });
+      }
+
+      return res.json({
+        template,
+        metrics: metrics ?? [],
+      });
+    } catch (err) {
+      console.error(
+        "Unexpected error in GET /assessment-templates/:id:",
+        err
+      );
+      return res
+        .status(500)
+        .json({ error: "Failed to load assessment template" });
+    }
+  }
+);
+
 
 /**
  * Add a player to the team roster.

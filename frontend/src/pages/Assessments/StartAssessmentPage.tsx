@@ -4,91 +4,155 @@ import type { FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { getMyTeams } from "../../api/coach";
+import { startAssessmentSession } from "../../api/assessments";
 import type { TeamWithRole } from "../../api/types";
-import {
-  createEvalSession,
-  type EvalMode,
-} from "../../api/assessments";
 
-type OlderEvalTypeKey =
-  | "full"
-  | "athletic"
-  | "hitting"
-  | "pitching"
-  | "catcher"
-  | "firstbase"
-  | "infield"
-  | "outfield";
+type Mode = "official" | "practice";
+type SessionMode = "single" | "multi_station";
 
-type YouthEvalTypeKey =
-  | "full"
-  | "athletic"
-  | "hitting"
-  | "throwing"
-  | "catching"
-  | "fielding";
+// Map team.age_group + evaluation_type → evaluation_templates.id
+// Based on the template list you pasted.
+const TEMPLATE_IDS: Record<string, Record<string, number>> = {
+  // 5U–9U use: athletic, hitting, throwing, catching, fielding
+  "5u": {
+    athletic: 1,
+    hitting: 2,
+    throwing: 3,
+    catching: 4,
+    fielding: 5,
+  },
+  "6u": {
+    athletic: 16,
+    hitting: 17,
+    throwing: 18,
+    catching: 19,
+    fielding: 20,
+  },
+  "7u": {
+    athletic: 21,
+    hitting: 22,
+    throwing: 23,
+    catching: 24,
+    fielding: 25,
+  },
+  "8u": {
+    athletic: 26,
+    hitting: 27,
+    throwing: 28,
+    catching: 29,
+    fielding: 30,
+  },
+  "9u": {
+    athletic: 31,
+    hitting: 32,
+    // "9U Throwing & Pitching"
+    throwing: 33,
+    catching: 34,
+    fielding: 35,
+  },
 
-type EvalTypeKey = OlderEvalTypeKey | YouthEvalTypeKey;
+  // 10U–pro use: athletic, hitting, pitching, catcher, firstbase, infield, outfield
+  "10u": {
+    athletic: 36,
+    hitting: 37,
+    pitching: 38,
+    catcher: 39,
+    firstbase: 40,
+    infield: 41,
+    outfield: 42,
+  },
+  "11u": {
+    athletic: 43,
+    hitting: 44,
+    pitching: 45,
+    catcher: 46,
+    firstbase: 47,
+    infield: 48,
+    outfield: 49,
+  },
+  "12u": {
+    athletic: 50,
+    hitting: 51,
+    pitching: 52,
+    catcher: 53,
+    firstbase: 54,
+    infield: 55,
+    outfield: 56,
+  },
+  "13u": {
+    athletic: 57,
+    hitting: 58,
+    pitching: 59,
+    catcher: 60,
+    firstbase: 61,
+    infield: 62,
+    outfield: 63,
+  },
+  "14u": {
+    athletic: 64,
+    hitting: 65,
+    pitching: 66,
+    catcher: 67,
+    firstbase: 68,
+    infield: 69,
+    outfield: 70,
+  },
+  high_school: {
+    athletic: 71,
+    hitting: 72,
+    pitching: 73,
+    catcher: 74,
+    firstbase: 75,
+    infield: 76,
+    outfield: 77,
+  },
+  college: {
+    athletic: 78,
+    hitting: 79,
+    pitching: 80,
+    catcher: 81,
+    firstbase: 82,
+    infield: 83,
+    outfield: 84,
+  },
+  pro: {
+    athletic: 85,
+    hitting: 86,
+    pitching: 87,
+    catcher: 88,
+    firstbase: 89,
+    infield: 90,
+    outfield: 91,
+  },
+};
 
-interface EvalTypeOption {
-  key: EvalTypeKey;
-  label: string;
-}
+// Helper to map team + evaluation_type → template_id
+function resolveTemplateId(team: TeamWithRole, evaluationType: string): number {
+  const ageKey = (team.age_group || "").toLowerCase();
+  const byAge = TEMPLATE_IDS[ageKey];
 
-const OLDER_EVAL_OPTIONS: EvalTypeOption[] = [
-  { key: "full", label: "Full Assessment" },
-  { key: "athletic", label: "Athletic Skills Assessment" },
-  { key: "hitting", label: "Hitting Assessment" },
-  { key: "pitching", label: "Pitching Assessment" },
-  { key: "catcher", label: "Catcher Assessment" },
-  { key: "firstbase", label: "Firstbase Assessment" },
-  { key: "infield", label: "Infield Assessment" },
-  { key: "outfield", label: "Outfield Assessment" },
-];
-
-const YOUTH_EVAL_OPTIONS: EvalTypeOption[] = [
-  { key: "full", label: "Full Assessment" },
-  { key: "athletic", label: "Athletic Skills Assessment" },
-  { key: "hitting", label: "Hitting Assessment" },
-  { key: "throwing", label: "Throwing Assessment" },
-  { key: "catching", label: "Catching Assessment" },
-  { key: "fielding", label: "Fielding Assessment" },
-];
-
-// For now we only wire 10u to template ids.
-// Later we can extend this mapping for other age groups.
-function resolveTemplateId(
-  ageGroup: string | null,
-  evalType: EvalTypeKey
-): number | null {
-  if (!ageGroup) return null;
-
-  const ag = ageGroup.toLowerCase();
-
-  if (ag === "10u") {
-    switch (evalType) {
-      case "athletic":
-        return 36; // 10U Athletic Skills
-      case "hitting":
-        return 37; // 10U Hitting Skills
-      case "pitching":
-        return 38; // 10U Pitching Eval
-      case "catcher":
-        return 39; // 10U Catcher Eval
-      case "firstbase":
-        return 40; // 10U First Base Eval
-      case "infield":
-        return 41; // 10U Infield Eval
-      case "outfield":
-        return 42; // 10U Outfield Eval
-      // Full assessment not wired yet – we’ll design that flow later
-      default:
-        return null;
-    }
+  if (!byAge) {
+    throw new Error(
+      `No templates configured yet for age group "${team.age_group}"`
+    );
   }
 
-  // Other age groups can be mapped later
-  return null;
+  if (evaluationType === "full") {
+    // We don't have explicit "Full Assessment" templates in the list you sent,
+    // so for now we treat this as "not wired yet".
+    throw new Error(
+      'Full Assessment templates are not wired yet. Please pick a specific section (Athletic, Hitting, etc.).'
+    );
+  }
+
+  const templateId = (byAge as Record<string, number>)[evaluationType];
+  if (!templateId) {
+    throw new Error(
+      `No template configured for "${evaluationType}" at age group "${team.age_group}"`
+    );
+  }
+
+  return templateId;
 }
 
 export default function StartAssessmentPage() {
@@ -100,17 +164,17 @@ export default function StartAssessmentPage() {
   const [teamsError, setTeamsError] = useState<string | null>(null);
 
   const [selectedTeamId, setSelectedTeamId] = useState<string>("");
-  const [assessmentType, setAssessmentType] = useState<EvalTypeKey | "">("");
-  const [mode, setMode] = useState<EvalMode>("official");
-
+  const [evaluationType, setEvaluationType] = useState<string>("");
+  const [mode, setMode] = useState<Mode>("official");
+  const [sessionMode, setSessionMode] = useState<SessionMode>("single");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  // Load teams once (same as the Dashboard)
+  // Load teams on mount (same as Dashboard)
   useEffect(() => {
     let cancelled = false;
 
-    async function loadTeams() {
+    async function load() {
       setLoadingTeams(true);
       setTeamsError(null);
       try {
@@ -133,7 +197,8 @@ export default function StartAssessmentPage() {
       }
     }
 
-    loadTeams();
+    load();
+
     return () => {
       cancelled = true;
     };
@@ -144,234 +209,333 @@ export default function StartAssessmentPage() {
     [teams, selectedTeamId]
   );
 
-  const isYouthAgeGroup = useMemo(() => {
-    if (!selectedTeam?.age_group) return false;
-    const ag = selectedTeam.age_group.toLowerCase();
-    return ["5u", "6u", "7u", "8u", "9u"].includes(ag);
-  }, [selectedTeam]);
+  const isYouth =
+    selectedTeam?.age_group &&
+    ["5u", "6u", "7u", "8u", "9u"].includes(
+      selectedTeam.age_group.toLowerCase()
+    );
 
-  const availableEvalOptions = useMemo<EvalTypeOption[]>(() => {
+  // Eval options depend on age group
+  const evalOptions = useMemo(() => {
     if (!selectedTeam) return [];
-    return isYouthAgeGroup ? YOUTH_EVAL_OPTIONS : OLDER_EVAL_OPTIONS;
-  }, [selectedTeam, isYouthAgeGroup]);
 
-  // When team/eval options change, default the assessment type
-  useEffect(() => {
-    if (availableEvalOptions.length === 0) {
-      setAssessmentType("");
-      return;
+    if (isYouth) {
+      // 5u–9u
+      return [
+        {
+          value: "full",
+          label: "Full Assessment",
+          description: "All BPOP stations for this age group.",
+        },
+        {
+          value: "athletic",
+          label: "Athletic Skills Assessment",
+          description: "Speed, agility, strength, balance, mobility.",
+        },
+        {
+          value: "hitting",
+          label: "Hitting Assessment",
+          description: "Contact, power, swing mechanics.",
+        },
+        {
+          value: "throwing",
+          label: "Throwing Assessment",
+          description: "Arm strength & throwing mechanics.",
+        },
+        {
+          value: "catching",
+          label: "Catching Assessment",
+          description: "Receiving & catching fundamentals.",
+        },
+        {
+          value: "fielding",
+          label: "Fielding Assessment",
+          description: "Ground balls, fly balls, and fielding skills.",
+        },
+      ];
     }
-    if (!assessmentType) {
-      setAssessmentType(availableEvalOptions[0].key);
-    } else if (
-      !availableEvalOptions.some((opt) => opt.key === assessmentType)
-    ) {
-      setAssessmentType(availableEvalOptions[0].key);
-    }
-  }, [availableEvalOptions, assessmentType]);
 
-  async function handleSubmit(e: FormEvent) {
+    // 10u – pro
+    return [
+      {
+        value: "full",
+        label: "Full Assessment",
+        description: "All BPOP stations for this age group.",
+      },
+      {
+        value: "athletic",
+          label: "Athletic Skills Assessment",
+        description: "Speed, agility, strength, balance, mobility.",
+      },
+      {
+        value: "hitting",
+        label: "Hitting Assessment",
+        description: "Contact, power, approach, and swing mechanics.",
+      },
+      {
+        value: "pitching",
+        label: "Pitching Assessment",
+        description: "Pitch quality, command, and pitchability.",
+      },
+      {
+        value: "catcher",
+        label: "Catcher Assessment",
+        description: "Receiving, blocking, and throwing.",
+      },
+      {
+        value: "firstbase",
+        label: "First Base Assessment",
+        description: "Receiving, footwork, and pick plays.",
+      },
+      {
+        value: "infield",
+        label: "Infield Assessment",
+        description: "Range, hands, and throwing from the dirt.",
+      },
+      {
+        value: "outfield",
+        label: "Outfield Assessment",
+        description: "Reads, routes, and throwing from the grass.",
+      },
+    ];
+  }, [selectedTeam, isYouth]);
+
+  function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setSubmitError(null);
 
     if (!selectedTeam) {
       setSubmitError("Please select a team.");
       return;
     }
-    if (!assessmentType) {
-      setSubmitError("Please select an assessment type.");
+    if (!evaluationType) {
+      setSubmitError("Please choose an assessment type.");
       return;
     }
 
-    const templateId = resolveTemplateId(
-      selectedTeam.age_group,
-      assessmentType
-    );
+    setSubmitting(true);
+    setSubmitError(null);
 
-    if (!templateId) {
-      setSubmitError(
-        "This team / assessment combination isn’t wired to templates yet. For now, try 10U Hitting/Athletic/Pitching/etc."
-      );
-      return;
-    }
+    (async () => {
+      try {
+        const templateId = resolveTemplateId(selectedTeam, evaluationType);
 
-    try {
-      setSubmitting(true);
+        const res = await startAssessmentSession({
+          team_id: selectedTeam.id,
+          template_id: templateId,
+          evaluation_type: evaluationType,
+          mode,
+          session_mode: sessionMode,
+          // For now we let the backend treat player_ids as optional / empty.
+          player_ids: [],
+        });
 
-      const session = await createEvalSession({
-        team_id: selectedTeam.id,
-        template_id: templateId,
-        mode,
-        // player_ids: later we can pass real team player IDs here
-      });
-
-      // For debugging if needed:
-      // console.log("Created eval session:", session);
-
-      navigate(`/assessments/${session.id}`);
-    } catch (err: any) {
-      setSubmitError(
-        err?.response?.data?.message ||
+        // Navigate to /assessments/:sessionId
+        navigate(`/assessments/${res.id}`);
+      } catch (err: any) {
+        const msg =
           err?.message ||
-          "Failed to create assessment session."
-      );
-    } finally {
-      setSubmitting(false);
-    }
+          err?.response?.data?.message ||
+          err?.response?.data?.error ||
+          "Failed to start assessment";
+        setSubmitError(msg);
+      } finally {
+        setSubmitting(false);
+      }
+    })();
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-xl">
       <section className="space-y-1">
         <h2 className="text-xl font-semibold">Start a new assessment</h2>
         <p className="text-sm text-slate-300">
           Set up an evaluation session for your team. You can choose the
           assessment type, mode, and whether this is a single-coach or
-          multi-coach station setup (later).
-        </p>
-        <p className="text-xs text-slate-400">
-          Running as:{" "}
-          <span className="font-semibold">
-            {profile?.display_name || "Unknown"}
-          </span>
+          multi-coach station setup.
         </p>
       </section>
 
-      <form
-        onSubmit={handleSubmit}
-        className="space-y-6 rounded-xl bg-slate-900/70 border border-slate-700 p-4"
-      >
-        {/* Team selection */}
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-slate-100">
-            Team
-          </label>
-          {loadingTeams && (
-            <p className="text-xs text-slate-400">Loading your teams…</p>
-          )}
-          {teamsError && (
-            <p className="text-xs text-red-400">{teamsError}</p>
-          )}
-          <select
-            className="w-full rounded-md bg-slate-950/70 border border-slate-700 px-3 py-2 text-sm text-slate-100"
-            value={selectedTeamId}
-            onChange={(e) => setSelectedTeamId(e.target.value)}
-          >
-            <option value="">Select a team…</option>
-            {teams.map((team) => (
-              <option key={team.id} value={team.id}>
-                {team.name}{" "}
-                {team.age_group && team.level
-                  ? `(${team.age_group} · ${team.level})`
-                  : ""}
-              </option>
-            ))}
-          </select>
-          {selectedTeam && (
-            <p className="text-xs text-slate-400">
-              Age group:{" "}
-              <span className="font-mono">{selectedTeam.age_group}</span>{" "}
-              (
-              {isYouthAgeGroup
-                ? "5U–9U options"
-                : "10U–pro options"}
-              )
-            </p>
-          )}
-        </div>
+      <section className="rounded-xl bg-slate-900/70 border border-slate-700 p-4 space-y-4">
+        <p className="text-xs text-slate-400">
+          Running as:{" "}
+          <span className="font-semibold text-slate-200">
+            {profile?.display_name ||
+              [profile?.first_name, profile?.last_name]
+                .filter(Boolean)
+                .join(" ") ||
+              profile?.email ||
+              "Coach"}
+          </span>
+        </p>
 
-        {/* Assessment type */}
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-slate-100">
-            Assessment type
-          </label>
-          {availableEvalOptions.length === 0 && (
-            <p className="text-xs text-slate-400">
-              Select a team to see available assessment types.
-            </p>
-          )}
-          {availableEvalOptions.length > 0 && (
-            <select
-              className="w-full rounded-md bg-slate-950/70 border border-slate-700 px-3 py-2 text-sm text-slate-100"
-              value={assessmentType}
-              onChange={(e) =>
-                setAssessmentType(e.target.value as EvalTypeKey)
-              }
-            >
-              {availableEvalOptions.map((opt) => (
-                <option key={opt.key} value={opt.key}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
-
-        {/* Mode */}
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-slate-100">
-            Mode
-          </label>
-          <div className="flex flex-col gap-2 text-sm text-slate-200">
-            <label className="inline-flex items-start gap-2">
-              <input
-                type="radio"
-                className="mt-0.5"
-                name="mode"
-                value="official"
-                checked={mode === "official"}
-                onChange={() => setMode("official")}
-              />
-              <span>
-                <span className="font-semibold">Official</span>{" "}
-                <span className="text-slate-400">
-                  (awards count, medals / trophies can be earned)
-                </span>
-              </span>
+        <form className="space-y-4" onSubmit={handleSubmit}>
+          {/* Team selection */}
+          <div className="space-y-1">
+            <label className="block text-xs font-semibold text-slate-200">
+              Team
             </label>
-            <label className="inline-flex items-start gap-2">
-              <input
-                type="radio"
-                className="mt-0.5"
-                name="mode"
-                value="practice"
-                checked={mode === "practice"}
-                onChange={() => setMode("practice")}
-              />
-              <span>
-                <span className="font-semibold">Practice</span>{" "}
-                <span className="text-slate-400">
-                  (for training days, ghost medals only)
-                </span>
-              </span>
-            </label>
+            {loadingTeams && (
+              <p className="text-xs text-slate-400">Loading your teams…</p>
+            )}
+            {teamsError && (
+              <p className="text-xs text-red-400">{teamsError}</p>
+            )}
+            {!loadingTeams && !teamsError && (
+              <select
+                className="w-full rounded-md bg-slate-800 border border-slate-600 text-sm px-2 py-1.5"
+                value={selectedTeamId}
+                onChange={(e) => {
+                  setSelectedTeamId(e.target.value);
+                  setEvaluationType("");
+                }}
+              >
+                <option value="">Select a team…</option>
+                {teams.map((team) => (
+                  <option key={team.id} value={team.id}>
+                    {team.name}
+                    {team.age_group ? ` (${team.age_group}` : ""}
+                    {team.level ? ` · ${team.level}` : ""}
+                    {team.age_group ? ")" : ""}
+                  </option>
+                ))}
+              </select>
+            )}
+            {selectedTeam && (
+              <p className="text-[11px] text-slate-400 mt-1">
+                Age group:{" "}
+                <span className="font-mono">{selectedTeam.age_group}</span>{" "}
+                ({isYouth ? "5U–9U options" : "10U–pro options"})
+              </p>
+            )}
           </div>
-        </div>
 
-        {/* Session mode note (for later multi-coach) */}
-        <div className="space-y-1">
-          <p className="text-xs text-slate-400">
-            Multi-coach station mode (Athletic, Hitting, Pitching
-            stations, etc.) will be wired into this session later —
-            for now, starting an assessment creates a single session
-            you can run from this device.
-          </p>
-        </div>
+          {/* Assessment type */}
+          <div className="space-y-1">
+            <label className="block text-xs font-semibold text-slate-200">
+              Assessment type
+            </label>
+            {!selectedTeam && (
+              <p className="text-xs text-slate-500">
+                Select a team to see available assessment types.
+              </p>
+            )}
+            {selectedTeam && (
+              <select
+                className="w-full rounded-md bg-slate-800 border border-slate-600 text-sm px-2 py-1.5"
+                value={evaluationType}
+                onChange={(e) => setEvaluationType(e.target.value)}
+              >
+                <option value="">Select assessment type…</option>
+                {evalOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            )}
+            {selectedTeam && evaluationType && (
+              <p className="text-[11px] text-slate-400 mt-1">
+                {
+                  evalOptions.find((o) => o.value === evaluationType)
+                    ?.description
+                }
+              </p>
+            )}
+          </div>
 
-        {submitError && (
-          <p className="text-xs text-red-400">{submitError}</p>
-        )}
+          {/* Mode */}
+          <div className="space-y-1">
+            <label className="block text-xs font-semibold text-slate-200">
+              Mode
+            </label>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <button
+                type="button"
+                onClick={() => setMode("official")}
+                className={`rounded-md border px-2 py-1 text-left ${
+                  mode === "official"
+                    ? "border-emerald-400 bg-emerald-500/10 text-emerald-300"
+                    : "border-slate-600 bg-slate-900 text-slate-200"
+                }`}
+              >
+                <div className="font-semibold">Official</div>
+                <div className="text-[11px] text-slate-400">
+                  Awards count, medals / trophies can be earned.
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode("practice")}
+                className={`rounded-md border px-2 py-1 text-left ${
+                  mode === "practice"
+                    ? "border-emerald-400 bg-emerald-500/10 text-emerald-300"
+                    : "border-slate-600 bg-slate-900 text-slate-200"
+                }`}
+              >
+                <div className="font-semibold">Practice</div>
+                <div className="text-[11px] text-slate-400">
+                  For training days, ghost medals only.
+                </div>
+              </button>
+            </div>
+          </div>
 
-        <div>
-          <button
-            type="submit"
-            disabled={submitting || !selectedTeam || !assessmentType}
-            className="inline-flex items-center rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-emerald-400 disabled:opacity-40"
-          >
-            {submitting ? "Starting…" : "Start assessment"}
-          </button>
-        </div>
-      </form>
+          {/* Session mode */}
+          <div className="space-y-1">
+            <label className="block text-xs font-semibold text-slate-200">
+              Session mode
+            </label>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <button
+                type="button"
+                onClick={() => setSessionMode("single")}
+                className={`rounded-md border px-2 py-1 text-left ${
+                  sessionMode === "single"
+                    ? "border-emerald-400 bg-emerald-500/10 text-emerald-300"
+                    : "border-slate-600 bg-slate-900 text-slate-200"
+                }`}
+              >
+                <div className="font-semibold">Single coach</div>
+                <div className="text-[11px] text-slate-400">
+                  One coach runs all sections on this device.
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSessionMode("multi_station")}
+                className={`rounded-md border px-2 py-1 text-left ${
+                  sessionMode === "multi_station"
+                    ? "border-emerald-400 bg-emerald-500/10 text-emerald-300"
+                    : "border-slate-600 bg-slate-900 text-slate-200"
+                }`}
+              >
+                <div className="font-semibold">Multi-coach stations</div>
+                <div className="text-[11px] text-slate-400">
+                  Multiple coaches each run one section at separate stations.
+                </div>
+              </button>
+            </div>
+          </div>
+
+          {submitError && (
+            <p className="text-xs text-red-400 whitespace-pre-line">
+              {submitError}
+            </p>
+          )}
+
+          <div className="pt-2">
+            <button
+              type="submit"
+              disabled={
+                submitting || !selectedTeam || !evaluationType || loadingTeams
+              }
+              className="inline-flex items-center px-3 py-1.5 rounded-md bg-emerald-500 text-slate-900 text-sm font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {submitting ? "Starting…" : "Start assessment"}
+            </button>
+          </div>
+        </form>
+      </section>
     </div>
   );
 }
