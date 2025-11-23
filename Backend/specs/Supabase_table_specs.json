@@ -1,0 +1,815 @@
+// eval sessions structure
+
+[
+  {
+    "column_name": "id",
+    "data_type": "uuid",
+    "is_nullable": "NO",
+    "column_default": "gen_random_uuid()"
+  },
+  {
+    "column_name": "team_id",
+    "data_type": "uuid",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "template_id",
+    "data_type": "integer",
+    "is_nullable": "NO",
+    "column_default": null
+  },
+  {
+    "column_name": "created_by",
+    "data_type": "uuid",
+    "is_nullable": "NO",
+    "column_default": null
+  },
+  {
+    "column_name": "mode",
+    "data_type": "text",
+    "is_nullable": "NO",
+    "column_default": "'official'::text"
+  },
+  {
+    "column_name": "status",
+    "data_type": "text",
+    "is_nullable": "NO",
+    "column_default": "'in_progress'::text"
+  },
+  {
+    "column_name": "session_data",
+    "data_type": "jsonb",
+    "is_nullable": "NO",
+    "column_default": "'{}'::jsonb"
+  },
+  {
+    "column_name": "started_at",
+    "data_type": "timestamp with time zone",
+    "is_nullable": "NO",
+    "column_default": "now()"
+  },
+  {
+    "column_name": "updated_at",
+    "data_type": "timestamp with time zone",
+    "is_nullable": "NO",
+    "column_default": "now()"
+  },
+  {
+    "column_name": "finalized_at",
+    "data_type": "timestamp with time zone",
+    "is_nullable": "YES",
+    "column_default": null
+  }
+]
+
+//player_assessments & player_assessment_values
+
+[
+  {
+    "column_name": "id",
+    "data_type": "bigint",
+    "is_nullable": "NO",
+    "column_default": "nextval('player_assessment_values_id_seq'::regclass)"
+  },
+  {
+    "column_name": "player_assessment_id",
+    "data_type": "bigint",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "metric_id",
+    "data_type": "bigint",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "value_numeric",
+    "data_type": "double precision",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "value_text",
+    "data_type": "text",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "created_at",
+    "data_type": "timestamp with time zone",
+    "is_nullable": "YES",
+    "column_default": "now()"
+  },
+  {
+    "column_name": "id",
+    "data_type": "bigint",
+    "is_nullable": "NO",
+    "column_default": "nextval('player_assessments_id_seq'::regclass)"
+  },
+  {
+    "column_name": "player_id",
+    "data_type": "uuid",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "template_id",
+    "data_type": "bigint",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "kind",
+    "data_type": "USER-DEFINED",
+    "is_nullable": "NO",
+    "column_default": null
+  },
+  {
+    "column_name": "performed_by",
+    "data_type": "uuid",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "performed_at",
+    "data_type": "timestamp with time zone",
+    "is_nullable": "YES",
+    "column_default": "now()"
+  },
+  {
+    "column_name": "notes",
+    "data_type": "text",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "team_id",
+    "data_type": "uuid",
+    "is_nullable": "YES",
+    "column_default": null
+  }
+]
+
+// player_ratings table details
+
+[
+  {
+    "column_name": "id",
+    "data_type": "bigint",
+    "is_nullable": "NO",
+    "column_default": "nextval('player_ratings_id_seq'::regclass)"
+  },
+  {
+    "column_name": "player_assessment_id",
+    "data_type": "bigint",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "player_id",
+    "data_type": "uuid",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "age_group_id",
+    "data_type": "bigint",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "overall_score",
+    "data_type": "numeric",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "offense_score",
+    "data_type": "numeric",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "defense_score",
+    "data_type": "numeric",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "pitching_score",
+    "data_type": "numeric",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "breakdown",
+    "data_type": "jsonb",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "created_at",
+    "data_type": "timestamp with time zone",
+    "is_nullable": "YES",
+    "column_default": "now()"
+  },
+  {
+    "column_name": "assessment_id",
+    "data_type": "bigint",
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "team_id",
+    "data_type": "uuid",
+    "is_nullable": "YES",
+    "column_default": null
+  }
+]
+
+// Enums specifically used for assessments
+
+[
+  {
+    "enum_type": "assessment_kind",
+    "value": "official"
+  },
+  {
+    "enum_type": "assessment_kind",
+    "value": "practice"
+  }
+]
+
+// Template and metric overview (light)
+
+[
+  {
+    "id": 1,
+    "name": "5U Athletic Skills",
+    "age_group_id": 1,
+    "category": "athletic_skills",
+    "is_active": true
+  },
+  {
+    "id": 4,
+    "name": "5U Catching Skills",
+    "age_group_id": 1,
+    "category": "catching",
+    "is_active": true
+  },
+  {
+    "id": 5,
+    "name": "5U Fielding Skills",
+    "age_group_id": 1,
+    "category": "fielding",
+    "is_active": true
+  },
+  {
+    "id": 2,
+    "name": "5U Hitting Skills",
+    "age_group_id": 1,
+    "category": "hitting",
+    "is_active": true
+  },
+  {
+    "id": 3,
+    "name": "5U Throwing Skills",
+    "age_group_id": 1,
+    "category": "throwing",
+    "is_active": true
+  },
+  {
+    "id": 16,
+    "name": "6U Athletic Skills",
+    "age_group_id": 2,
+    "category": "athletic_skills",
+    "is_active": true
+  },
+  {
+    "id": 19,
+    "name": "6U Catching Skills",
+    "age_group_id": 2,
+    "category": "catching",
+    "is_active": true
+  },
+  {
+    "id": 20,
+    "name": "6U Fielding Skills",
+    "age_group_id": 2,
+    "category": "fielding",
+    "is_active": true
+  },
+  {
+    "id": 17,
+    "name": "6U Hitting Skills",
+    "age_group_id": 2,
+    "category": "hitting",
+    "is_active": true
+  },
+  {
+    "id": 18,
+    "name": "6U Throwing Skills",
+    "age_group_id": 2,
+    "category": "throwing",
+    "is_active": true
+  },
+  {
+    "id": 21,
+    "name": "7U Athletic Skills",
+    "age_group_id": 3,
+    "category": "athletic_skills",
+    "is_active": true
+  },
+  {
+    "id": 24,
+    "name": "7U Catching Skills",
+    "age_group_id": 3,
+    "category": "catching",
+    "is_active": true
+  },
+  {
+    "id": 25,
+    "name": "7U Fielding Skills",
+    "age_group_id": 3,
+    "category": "fielding",
+    "is_active": true
+  },
+  {
+    "id": 22,
+    "name": "7U Hitting Skills",
+    "age_group_id": 3,
+    "category": "hitting",
+    "is_active": true
+  },
+  {
+    "id": 23,
+    "name": "7U Throwing Skills",
+    "age_group_id": 3,
+    "category": "throwing",
+    "is_active": true
+  },
+  {
+    "id": 26,
+    "name": "8U Athletic Skills",
+    "age_group_id": 4,
+    "category": "athletic_skills",
+    "is_active": true
+  },
+  {
+    "id": 29,
+    "name": "8U Catching Skills",
+    "age_group_id": 4,
+    "category": "catching",
+    "is_active": true
+  },
+  {
+    "id": 30,
+    "name": "8U Fielding Skills",
+    "age_group_id": 4,
+    "category": "fielding",
+    "is_active": true
+  },
+  {
+    "id": 27,
+    "name": "8U Hitting Skills",
+    "age_group_id": 4,
+    "category": "hitting",
+    "is_active": true
+  },
+  {
+    "id": 28,
+    "name": "8U Throwing Skills",
+    "age_group_id": 4,
+    "category": "throwing",
+    "is_active": true
+  },
+  {
+    "id": 31,
+    "name": "9U Athletic Skills",
+    "age_group_id": 5,
+    "category": "athletic",
+    "is_active": true
+  },
+  {
+    "id": 34,
+    "name": "9U Catching Skills",
+    "age_group_id": 5,
+    "category": "catching",
+    "is_active": true
+  },
+  {
+    "id": 35,
+    "name": "9U Fielding Skills",
+    "age_group_id": 5,
+    "category": "fielding",
+    "is_active": true
+  },
+  {
+    "id": 32,
+    "name": "9U Hitting Skills",
+    "age_group_id": 5,
+    "category": "hitting",
+    "is_active": true
+  },
+  {
+    "id": 33,
+    "name": "9U Throwing & Pitching",
+    "age_group_id": 5,
+    "category": "throwing",
+    "is_active": true
+  },
+  {
+    "id": 36,
+    "name": "10U Athletic Skills",
+    "age_group_id": 6,
+    "category": "athletic",
+    "is_active": true
+  },
+  {
+    "id": 39,
+    "name": "10U Catcher Eval",
+    "age_group_id": 6,
+    "category": "catcher",
+    "is_active": true
+  },
+  {
+    "id": 40,
+    "name": "10U First Base Eval",
+    "age_group_id": 6,
+    "category": "first_base",
+    "is_active": true
+  },
+  {
+    "id": 37,
+    "name": "10U Hitting Skills",
+    "age_group_id": 6,
+    "category": "hitting",
+    "is_active": true
+  },
+  {
+    "id": 41,
+    "name": "10U Infield Eval",
+    "age_group_id": 6,
+    "category": "infield",
+    "is_active": true
+  },
+  {
+    "id": 42,
+    "name": "10U Outfield Eval",
+    "age_group_id": 6,
+    "category": "outfield",
+    "is_active": true
+  },
+  {
+    "id": 38,
+    "name": "10U Pitching Eval",
+    "age_group_id": 6,
+    "category": "pitching",
+    "is_active": true
+  },
+  {
+    "id": 43,
+    "name": "11U Athletic Skills",
+    "age_group_id": 7,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 46,
+    "name": "11U Catcher Eval",
+    "age_group_id": 7,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 47,
+    "name": "11U First Base Eval",
+    "age_group_id": 7,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 44,
+    "name": "11U Hitting Skills",
+    "age_group_id": 7,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 48,
+    "name": "11U Infield Eval",
+    "age_group_id": 7,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 49,
+    "name": "11U Outfield Eval",
+    "age_group_id": 7,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 45,
+    "name": "11U Pitching Eval",
+    "age_group_id": 7,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 50,
+    "name": "12U Athletic Skills",
+    "age_group_id": 8,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 53,
+    "name": "12U Catcher Eval",
+    "age_group_id": 8,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 54,
+    "name": "12U First Base Eval",
+    "age_group_id": 8,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 51,
+    "name": "12U Hitting Skills",
+    "age_group_id": 8,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 55,
+    "name": "12U Infield Eval",
+    "age_group_id": 8,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 56,
+    "name": "12U Outfield Eval",
+    "age_group_id": 8,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 52,
+    "name": "12U Pitching Eval",
+    "age_group_id": 8,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 57,
+    "name": "13U Athletic Skills",
+    "age_group_id": 9,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 60,
+    "name": "13U Catcher Eval",
+    "age_group_id": 9,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 61,
+    "name": "13U First Base Eval",
+    "age_group_id": 9,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 58,
+    "name": "13U Hitting Skills",
+    "age_group_id": 9,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 62,
+    "name": "13U Infield Eval",
+    "age_group_id": 9,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 63,
+    "name": "13U Outfield Eval",
+    "age_group_id": 9,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 59,
+    "name": "13U Pitching Eval",
+    "age_group_id": 9,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 64,
+    "name": "14U Athletic Skills",
+    "age_group_id": 10,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 67,
+    "name": "14U Catcher Eval",
+    "age_group_id": 10,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 68,
+    "name": "14U First Base Eval",
+    "age_group_id": 10,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 65,
+    "name": "14U Hitting Skills",
+    "age_group_id": 10,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 69,
+    "name": "14U Infield Eval",
+    "age_group_id": 10,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 70,
+    "name": "14U Outfield Eval",
+    "age_group_id": 10,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 66,
+    "name": "14U Pitching Eval",
+    "age_group_id": 10,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 71,
+    "name": "HS Athletic Skills",
+    "age_group_id": 11,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 74,
+    "name": "HS Catcher Eval",
+    "age_group_id": 11,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 75,
+    "name": "HS First Base Eval",
+    "age_group_id": 11,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 72,
+    "name": "HS Hitting Skills",
+    "age_group_id": 11,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 76,
+    "name": "HS Infield Eval",
+    "age_group_id": 11,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 77,
+    "name": "HS Outfield Eval",
+    "age_group_id": 11,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 73,
+    "name": "HS Pitching Eval",
+    "age_group_id": 11,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 78,
+    "name": "College Athletic Skills",
+    "age_group_id": 12,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 81,
+    "name": "College Catcher Eval",
+    "age_group_id": 12,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 82,
+    "name": "College First Base Eval",
+    "age_group_id": 12,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 79,
+    "name": "College Hitting Skills",
+    "age_group_id": 12,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 83,
+    "name": "College Infield Eval",
+    "age_group_id": 12,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 84,
+    "name": "College Outfield Eval",
+    "age_group_id": 12,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 80,
+    "name": "College Pitching Eval",
+    "age_group_id": 12,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 85,
+    "name": "Pro Athletic Skills",
+    "age_group_id": 13,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 88,
+    "name": "Pro Catcher Eval",
+    "age_group_id": 13,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 89,
+    "name": "Pro First Base Eval",
+    "age_group_id": 13,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 86,
+    "name": "Pro Hitting Skills",
+    "age_group_id": 13,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 90,
+    "name": "Pro Infield Eval",
+    "age_group_id": 13,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 91,
+    "name": "Pro Outfield Eval",
+    "age_group_id": 13,
+    "category": null,
+    "is_active": true
+  },
+  {
+    "id": 87,
+    "name": "Pro Pitching Eval",
+    "age_group_id": 13,
+    "category": null,
+    "is_active": true
+  }
+]

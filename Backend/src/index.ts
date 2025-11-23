@@ -550,6 +550,78 @@ app.get("/me", requireAuth, async (req: AuthedRequest, res) => {
 });
 
 /**
+ * Get current user's teams via user_team_roles (2-step query).
+ */
+app.get("/me/teams", requireAuth, async (req: AuthedRequest, res) => {
+  const userId = req.user!.id;
+
+  // 1) Get this user's team roles
+  const {
+    data: roleRows,
+    error: rolesError,
+  } = await supabase
+    .from("user_team_roles")
+    .select("team_id, role")
+    .eq("user_id", userId);
+
+  if (rolesError) {
+    console.error("Error fetching user_team_roles:", rolesError);
+    return res
+      .status(500)
+      .json({ error: "Failed to load team roles", detail: rolesError.message });
+  }
+
+  if (!roleRows || roleRows.length === 0) {
+    return res.json([]);
+  }
+
+  const teamIds = roleRows.map((r) => r.team_id);
+
+  // 2) Fetch team details for those team_ids
+  const {
+    data: teamRows,
+    error: teamsError,
+  } = await supabase
+    .from("teams")
+    .select("id, name, age_group, level, motto, logo_url")
+    .in("id", teamIds);
+
+  if (teamsError) {
+    console.error("Error fetching teams:", teamsError);
+    return res
+      .status(500)
+      .json({ error: "Failed to load teams", detail: teamsError.message });
+  }
+
+  // Build a map so we can merge role + team data
+  const teamMap = new Map<string, any>();
+  (teamRows ?? []).forEach((t: any) => {
+    teamMap.set(t.id, t);
+  });
+
+  const result = roleRows
+    .map((row: any) => {
+      const team = teamMap.get(row.team_id);
+      if (!team) return null;
+      return {
+        id: team.id,
+        name: team.name,
+        age_group: team.age_group,
+        level: team.level,
+        motto: team.motto,
+        logo_url: team.logo_url,
+        role: row.role,
+      };
+    })
+    .filter(Boolean);
+
+  return res.json(result);
+});
+
+
+
+
+/**
  * Get the current user's extended player profile.
  * - Requires: Authorization: Bearer <Supabase access token>
  * - Only works if profiles.role === 'player'
@@ -947,6 +1019,7 @@ app.post("/accounts/basic", requireAuth, async (req: AuthedRequest, res) => {
     return res.status(500).json({ error: "Failed to create/update basic account" });
   }
 });
+
 
 /**
  * Get the current user's extended coach profile.

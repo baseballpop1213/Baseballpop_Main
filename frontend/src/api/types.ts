@@ -14,6 +14,18 @@ export interface Profile {
   bio?: string | null;
 }
 
+export type TeamRole = "coach" | "assistant" | "player" | "parent";
+
+export interface TeamWithRole {
+  id: string;
+  name: string;
+  age_group: string | null;
+  level: string | null;
+  logo_url: string | null;
+  motto: string | null;
+  role: TeamRole;
+}
+
 export interface Team {
   id: string;               // uuid from teams.id
   name: string;
