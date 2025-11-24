@@ -1,5 +1,4 @@
 // src/pages/Assessments/AssessmentSessionPage.tsx
-import { getMetricMeta } from "../../config/metricMeta";
 import { useEffect, useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
@@ -13,6 +12,7 @@ import {
   type AssessmentMetric,
   type EvalMode,
 } from "../../api/assessments";
+import { getMetricMeta } from "../../config/metricMeta";
 import api from "../../api/client";
 
 interface TeamPlayerRow {
@@ -29,6 +29,21 @@ interface TeamPlayerRow {
     last_name?: string | null;
     email?: string | null;
   } | null;
+}
+
+interface TryoutPlayerSession {
+  id: string;
+  first_name?: string | null;
+  last_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+}
+
+interface GridColumn {
+  id: string;
+  kind: "roster" | "tryout";
+  name: string;
+  jerseyLabel?: string | null;
 }
 
 function formatPlayerName(profile?: TeamPlayerRow["profiles"] | null): string {
@@ -77,7 +92,7 @@ export default function AssessmentSessionPage() {
       return;
     }
 
-    const id = sessionId; // now narrowed to string
+    const id = sessionId;
 
     let cancelled = false;
 
@@ -89,15 +104,15 @@ export default function AssessmentSessionPage() {
         const data = await getAssessmentSession(id);
         if (!cancelled) {
           setSession(data);
-          setSessionData(
-            data.session_data ?? {
+          const sd: EvalSessionData =
+            (data as any).session_data ?? {
               player_ids: [],
               values: {},
               completed_metric_ids: [],
               evaluation_type: data.evaluation_type ?? null,
               session_mode: data.session_mode ?? "single",
-            }
-          );
+            };
+          setSessionData(sd);
         }
       } catch (err: any) {
         if (!cancelled) {
@@ -127,7 +142,6 @@ export default function AssessmentSessionPage() {
     if (!session?.team_id) return;
 
     const teamId = session.team_id;
-
     let cancelled = false;
 
     async function loadPlayers() {
@@ -167,7 +181,6 @@ export default function AssessmentSessionPage() {
     if (!session?.template_id) return;
 
     const templateId = session.template_id;
-
     let cancelled = false;
 
     async function loadTemplate() {
@@ -204,27 +217,210 @@ export default function AssessmentSessionPage() {
   }, [session?.template_id]);
 
   const isFinalized = session?.status === "finalized";
+  const isTryoutSession =
+    session?.mode === "tryout" || (sessionData as any)?.tryout_mode === true;
 
-  // Which player IDs are explicitly marked as part of this session
-  const participantIds = useMemo(() => {
-    const ids = sessionData?.player_ids;
-    if (Array.isArray(ids) && ids.length > 0) {
-      return new Set<string>(ids as string[]);
-    }
-    // If we don't have an explicit list yet, treat "everyone on roster" as in the session.
-    return null;
-  }, [sessionData?.player_ids]);
+  const [quickTryoutFirstName, setQuickTryoutFirstName] = useState("");
+  const [quickTryoutLastName, setQuickTryoutLastName] = useState("");
+  const [quickTryoutEmail, setQuickTryoutEmail] = useState("");
+  const [quickTryoutPhone, setQuickTryoutPhone] = useState("");
+  const [quickTryoutError, setQuickTryoutError] = useState<string | null>(null);
+  const [addingTryout, setAddingTryout] = useState(false);
 
-  // The player IDs we will show as columns in the grid
-  const gridPlayerIds = useMemo(() => {
-    if (participantIds) {
-      return Array.from(participantIds);
-    }
-    if (players.length > 0) {
-      return players.map((p) => p.player_id);
+  // Tryout players stored on the session_data
+  const tryoutPlayers: TryoutPlayerSession[] = useMemo(() => {
+    const raw = (sessionData as any)?.tryout_players;
+    if (Array.isArray(raw)) {
+      return raw as TryoutPlayerSession[];
     }
     return [];
-  }, [participantIds, players]);
+  }, [sessionData]);
+
+  // Which roster player IDs are explicitly marked as part of this session
+  const participantIds = useMemo(() => {
+    const ids = sessionData?.player_ids;
+
+    if (Array.isArray(ids)) {
+      if (isTryoutSession) {
+        // For tryout sessions, take the array literally (empty means no roster players)
+        return new Set<string>(ids as string[]);
+      }
+
+      if (ids.length > 0) {
+        return new Set<string>(ids as string[]);
+      }
+    }
+
+    // Non-tryout + no explicit player_ids → treat "everyone on roster" as in-session
+    return null;
+  }, [sessionData?.player_ids, isTryoutSession]);
+
+  // Columns for the metric grid: roster players (in session) + tryout players
+  const gridColumns = useMemo<GridColumn[]>(() => {
+    let rosterIds: string[] = [];
+
+    if (players.length) {
+      if (participantIds) {
+        rosterIds = players
+          .filter((p) => participantIds.has(p.player_id))
+          .map((p) => p.player_id);
+      } else if (!isTryoutSession) {
+        rosterIds = players.map((p) => p.player_id);
+      } else {
+        rosterIds = [];
+      }
+    }
+
+    const rosterColumns: GridColumn[] = rosterIds.map((id) => {
+      const row = players.find((p) => p.player_id === id);
+      const profile = row?.profiles;
+      const name = formatPlayerName(profile);
+      const jersey =
+        row?.jersey_number != null ? `#${row.jersey_number}` : "—";
+      return {
+        id,
+        kind: "roster",
+        name,
+        jerseyLabel: jersey,
+      };
+    });
+
+    const tryoutColumns: GridColumn[] = tryoutPlayers.map((tp) => {
+      const baseName = `${tp.first_name ?? ""} ${tp.last_name ?? ""}`.trim();
+      const name = baseName || tp.email || "Tryout player";
+      return {
+        id: tp.id,
+        kind: "tryout",
+        name,
+        jerseyLabel: "—",
+      };
+    });
+
+    return [...rosterColumns, ...tryoutColumns];
+  }, [players, participantIds, tryoutPlayers, isTryoutSession]);
+
+  const effectiveSessionMode =
+    (session?.session_mode as string | null) ??
+    (sessionData as any)?.session_mode ??
+    "single";
+
+  const effectiveEvalType =
+    session?.evaluation_type ?? (sessionData as any)?.evaluation_type ?? null;
+
+  function handleValueChange(
+    metricId: number,
+    playerId: string,
+    raw: string
+  ) {
+    if (!sessionData || isFinalized) return;
+
+    const numeric =
+      raw === "" || raw === null ? null : Number.parseFloat(raw);
+    const safeNumeric =
+      numeric !== null && Number.isNaN(numeric) ? null : numeric;
+
+    setSessionData((prev) => {
+      const base: EvalSessionData =
+        prev ?? {
+          player_ids: sessionData.player_ids ?? [],
+          values: {},
+          completed_metric_ids: sessionData.completed_metric_ids ?? [],
+          evaluation_type: effectiveEvalType,
+          session_mode: effectiveSessionMode as any,
+        };
+
+      const values = { ...(base.values || {}) } as EvalSessionData["values"];
+      const byPlayer = { ...(values?.[playerId] || {}) };
+
+      byPlayer[metricId] = {
+        value_numeric: safeNumeric,
+        value_text: null,
+      };
+
+      return {
+        ...base,
+        values: {
+          ...values,
+          [playerId]: byPlayer,
+        },
+      };
+    });
+
+    setDirty(true);
+  }
+
+  async function handleAddTryoutPlayerInSession() {
+    if (!session || !sessionData) return;
+    if (!isTryoutSession || isFinalized) return;
+
+    setQuickTryoutError(null);
+
+    const first = quickTryoutFirstName.trim();
+    const last = quickTryoutLastName.trim();
+    const email = quickTryoutEmail.trim();
+    const phone = quickTryoutPhone.trim();
+
+    if (!email) {
+      setQuickTryoutError("Email is required to add a tryout player.");
+      return;
+    }
+
+    if (!first && !last) {
+      setQuickTryoutError("Please enter at least a first or last name.");
+      return;
+    }
+
+    const newPlayer: TryoutPlayerSession = {
+      id:
+        (globalThis as any).crypto?.randomUUID?.() ??
+        `tryout_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      first_name: first || null,
+      last_name: last || null,
+      email,
+      phone: phone || null,
+    };
+
+    const existing =
+      Array.isArray((sessionData as any).tryout_players)
+        ? ((sessionData as any).tryout_players as TryoutPlayerSession[])
+        : [];
+
+    const nextTryoutPlayers = [...existing, newPlayer];
+
+    const nextSessionData: EvalSessionData = {
+      ...sessionData,
+      tryout_players: nextTryoutPlayers as any,
+    };
+
+    setAddingTryout(true);
+    try {
+      const updated = await updateAssessmentSession(session.id, {
+        session_data: nextSessionData,
+      });
+
+      const updatedData =
+        ((updated as any).session_data as EvalSessionData) ??
+        nextSessionData;
+
+      setSession(updated);
+      setSessionData(updatedData);
+
+      setQuickTryoutFirstName("");
+      setQuickTryoutLastName("");
+      setQuickTryoutEmail("");
+      setQuickTryoutPhone("");
+      setQuickTryoutError(null);
+    } catch (err: any) {
+      setQuickTryoutError(
+        err?.response?.data?.error ||
+          err?.response?.data?.message ||
+          err?.message ||
+          "Failed to add tryout player."
+      );
+    } finally {
+      setAddingTryout(false);
+    }
+  }
 
   async function handleSave() {
     if (!session || !sessionData) return;
@@ -237,11 +433,19 @@ export default function AssessmentSessionPage() {
     setFinalizeSuccess(null);
 
     try {
-      // If player_ids is empty, default to "everyone currently in the grid"
-      const playerIdsToSave =
-        sessionData.player_ids && sessionData.player_ids.length > 0
-          ? sessionData.player_ids
-          : gridPlayerIds;
+      let playerIdsToSave: string[] | undefined = sessionData.player_ids;
+
+      if (!Array.isArray(playerIdsToSave)) {
+        if (isTryoutSession) {
+          // Keep as empty array for pure external tryouts
+          playerIdsToSave = [];
+        } else {
+          const rosterIds = gridColumns
+            .filter((c) => c.kind === "roster")
+            .map((c) => c.id);
+          playerIdsToSave = rosterIds;
+        }
+      }
 
       const payload: { session_data: EvalSessionData } = {
         session_data: {
@@ -253,10 +457,8 @@ export default function AssessmentSessionPage() {
       const updated = await updateAssessmentSession(session.id, payload);
       setSession(updated);
       setSessionData(
-        updated.session_data ?? {
-          ...sessionData,
-          player_ids: playerIdsToSave,
-        }
+        ((updated as any).session_data as EvalSessionData) ??
+          payload.session_data
       );
       setDirty(false);
       setSaveSuccess("Progress saved");
@@ -283,12 +485,10 @@ export default function AssessmentSessionPage() {
     setSaveSuccess(null);
 
     try {
-      const playersInSession =
-        sessionData.player_ids && sessionData.player_ids.length > 0
-          ? sessionData.player_ids
-          : gridPlayerIds;
+      const rosterColumns = gridColumns.filter((c) => c.kind === "roster");
+      const rosterIds = rosterColumns.map((c) => c.id);
 
-      if (!playersInSession || playersInSession.length === 0) {
+      if (!rosterIds.length && !isTryoutSession) {
         setFinalizeError(
           "No players available for this session yet. Add players to the team roster before finalizing."
         );
@@ -306,9 +506,9 @@ export default function AssessmentSessionPage() {
       const assessmentsByPlayer: Record<string, number> = {};
       let createdCount = 0;
 
-      // For each player with at least one value, create a player_assessment
-      for (const playerId of playersInSession) {
-        const perMetricValues = valuesByPlayer[playerId] || {};
+      // Only create player_assessment records for roster players
+      for (const playerId of rosterIds) {
+        const perMetricValues = (valuesByPlayer as any)[playerId] || {};
         const valueArray = metrics
           .map((m) => {
             const v = perMetricValues[m.id];
@@ -335,7 +535,6 @@ export default function AssessmentSessionPage() {
         }[];
 
         if (!valueArray.length) {
-          // No values for this player; skip creating an assessment
           continue;
         }
 
@@ -347,23 +546,22 @@ export default function AssessmentSessionPage() {
           values: valueArray,
         });
 
-        if (result && typeof result.assessment_id === "number") {
-          assessmentsByPlayer[playerId] = result.assessment_id;
+        if (result && typeof (result as any).assessment_id === "number") {
+          assessmentsByPlayer[playerId] = (result as any).assessment_id;
           createdCount += 1;
         }
       }
 
-      if (!createdCount) {
+      if (!createdCount && !isTryoutSession) {
         setFinalizeError(
           "No assessment records were created. Make sure you've entered at least one score for at least one player."
         );
         return;
       }
 
-      // Now mark the session as finalized and store which metrics were completed
       const finalizedSessionData: EvalSessionData = {
         ...sessionData,
-        player_ids: playersInSession,
+        player_ids: rosterIds,
         completed_metric_ids: metrics.map((m) => m.id),
         assessments_by_player: {
           ...(sessionData as any).assessments_by_player,
@@ -377,7 +575,10 @@ export default function AssessmentSessionPage() {
       });
 
       setSession(updated);
-      setSessionData(updated.session_data ?? finalizedSessionData);
+      setSessionData(
+        ((updated as any).session_data as EvalSessionData) ??
+          finalizedSessionData
+      );
       setDirty(false);
       setFinalizeSuccess(
         `Finalized ${createdCount} player assessment${
@@ -428,12 +629,6 @@ export default function AssessmentSessionPage() {
     );
   }
 
-  const effectiveSessionMode =
-    session.session_mode ?? sessionData.session_mode ?? "single";
-
-  const effectiveEvalType =
-    session.evaluation_type ?? sessionData.evaluation_type ?? null;
-
   return (
     <div className="space-y-4">
       {/* Session header */}
@@ -474,7 +669,7 @@ export default function AssessmentSessionPage() {
         )}
       </section>
 
-      {/* Players in this session */}
+      {/* Players in this session (roster) */}
       <section className="rounded-xl bg-slate-900/70 border border-slate-700 p-3 space-y-2">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-slate-100">
@@ -506,7 +701,7 @@ export default function AssessmentSessionPage() {
             {players.map((row) => {
               const inSession = participantIds
                 ? participantIds.has(row.player_id)
-                : true;
+                : !isTryoutSession; // non-tryout default: everyone in; tryout default: nobody
 
               const name = formatPlayerName(row.profiles);
 
@@ -544,6 +739,126 @@ export default function AssessmentSessionPage() {
         )}
       </section>
 
+      {/* Tryout players section */}
+      {isTryoutSession && (
+        <section className="rounded-xl bg-slate-900/70 border border-slate-700 p-3 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-slate-100">
+              Tryout players for this session
+            </h3>
+            {tryoutPlayers.length > 0 && (
+              <span className="text-[11px] text-slate-400">
+                {tryoutPlayers.length} tryout player
+                {tryoutPlayers.length === 1 ? "" : "s"}
+              </span>
+            )}
+          </div>
+
+          {!isFinalized && (
+            <div className="mt-1 space-y-2">
+              <p className="text-[11px] text-slate-400">
+                Late arrival? Quickly add them to this tryout. Email is required
+                so we can share results and app access.
+              </p>
+              {quickTryoutError && (
+                <p className="text-[11px] text-red-400">{quickTryoutError}</p>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-2 items-end text-xs">
+                <div>
+                  <label className="block text-[11px] text-slate-300 mb-0.5">
+                    First name
+                  </label>
+                  <input
+                    type="text"
+                    className="w-full rounded-md bg-slate-950 border border-slate-700 px-2 py-1 text-[11px]"
+                    value={quickTryoutFirstName}
+                    onChange={(e) => setQuickTryoutFirstName(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-slate-300 mb-0.5">
+                    Last name
+                  </label>
+                  <input
+                    type="text"
+                    className="w-full rounded-md bg-slate-950 border border-slate-700 px-2 py-1 text-[11px]"
+                    value={quickTryoutLastName}
+                    onChange={(e) => setQuickTryoutLastName(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-slate-300 mb-0.5">
+                    Email<span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="email"
+                    className="w-full rounded-md bg-slate-950 border border-slate-700 px-2 py-1 text-[11px]"
+                    value={quickTryoutEmail}
+                    onChange={(e) => setQuickTryoutEmail(e.target.value)}
+                    placeholder="player@example.com"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-slate-300 mb-0.5">
+                    Phone
+                  </label>
+                  <input
+                    type="tel"
+                    className="w-full rounded-md bg-slate-950 border border-slate-700 px-2 py-1 text-[11px]"
+                    value={quickTryoutPhone}
+                    onChange={(e) => setQuickTryoutPhone(e.target.value)}
+                    placeholder="optional"
+                  />
+                </div>
+                <div className="flex md:justify-end">
+                  <button
+                    type="button"
+                    onClick={handleAddTryoutPlayerInSession}
+                    disabled={addingTryout}
+                    className="w-full md:w-auto inline-flex items-center justify-center px-3 py-1.5 rounded-md bg-emerald-500 text-slate-900 text-xs font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {addingTryout ? "Adding…" : "Add to tryout"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {tryoutPlayers.length === 0 ? (
+            <p className="text-xs text-slate-400">
+              No tryout players have been added to this session yet.
+            </p>
+          ) : (
+            <ul className="divide-y divide-slate-800 text-xs mt-2">
+              {tryoutPlayers.map((tp) => {
+                const name = `${tp.first_name ?? ""} ${
+                  tp.last_name ?? ""
+                }`.trim();
+                return (
+                  <li
+                    key={tp.id}
+                    className="flex items-center justify-between py-1.5"
+                  >
+                    <div className="flex flex-col">
+                      <span className="font-medium text-slate-100">
+                        {name || tp.email || "Tryout player"}
+                      </span>
+                      <span className="text-[11px] text-slate-400">
+                        {tp.email}
+                        {tp.phone && ` · ${tp.phone}`}
+                      </span>
+                    </div>
+                    <span className="text-[10px] uppercase tracking-wide text-amber-300">
+                      Tryout
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+      )}
+
       {/* Metrics × players grid */}
       <section className="rounded-xl bg-slate-900/70 border border-slate-700 p-3 space-y-3">
         <div className="flex items-center justify-between">
@@ -580,7 +895,7 @@ export default function AssessmentSessionPage() {
         {!loadingTemplate &&
           !templateError &&
           metrics.length > 0 &&
-          gridPlayerIds.length === 0 && (
+          gridColumns.length === 0 && (
             <p className="text-xs text-slate-400">
               No players available for this session yet.
             </p>
@@ -589,7 +904,7 @@ export default function AssessmentSessionPage() {
         {!loadingTemplate &&
           !templateError &&
           metrics.length > 0 &&
-          gridPlayerIds.length > 0 && (
+          gridColumns.length > 0 && (
             <div className="overflow-x-auto">
               <table className="min-w-full text-[11px] border border-slate-700 rounded-lg overflow-hidden">
                 <thead className="bg-slate-800/80">
@@ -597,32 +912,37 @@ export default function AssessmentSessionPage() {
                     <th className="text-left px-2 py-1 border-b border-slate-700">
                       Metric
                     </th>
-                    {gridPlayerIds.map((playerId) => {
-                      const p = players.find((row) => row.player_id === playerId);
-                      const name = formatPlayerName(p?.profiles);
-                      return (
-                        <th
-                          key={playerId}
-                          className="text-center px-2 py-1 border-b border-slate-700"
-                        >
-                          <div className="font-medium">{name}</div>
-                          <div className="text-[10px] text-slate-400">
-                            #{p?.jersey_number ?? "—"}
+                    {gridColumns.map((col) => (
+                      <th
+                        key={col.id}
+                        className="text-center px-2 py-1 border-b border-slate-700"
+                      >
+                        <div className="font-medium">{col.name}</div>
+                        <div className="text-[10px] text-slate-400">
+                          {col.jerseyLabel ?? "—"}
+                        </div>
+                        {col.kind === "tryout" && (
+                          <div className="text-[10px] text-amber-300">
+                            Tryout
                           </div>
-                        </th>
-                      );
-                    })}
+                        )}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
                   {metrics.map((m) => {
-                    // If AssessmentMetric type doesn't explicitly include metric_key,
-                    // we safely grab it via `as any` to avoid TS drama.
-                    const metricKey = (m as any).metric_key as string | undefined;
+                    const metricKey = (m as any).metric_key as
+                      | string
+                      | undefined;
                     const meta = metricKey ? getMetricMeta(metricKey) : undefined;
 
                     const displayName =
-                      meta?.shortLabel || meta?.displayName || m.label || metricKey || "Metric";
+                      meta?.shortLabel ||
+                      meta?.displayName ||
+                      (m as any).label ||
+                      metricKey ||
+                      "Metric";
 
                     const detailLineParts: string[] = [];
 
@@ -632,33 +952,57 @@ export default function AssessmentSessionPage() {
                     if (meta?.code) {
                       detailLineParts.push(`Code: ${meta.code}`);
                     }
-                    if (m.unit) {
-                      detailLineParts.push(`Unit: ${m.unit}`);
+                    if ((m as any).unit) {
+                      detailLineParts.push(`Unit: ${(m as any).unit}`);
                     }
 
                     return (
-                      <div key={m.id} className="border-b border-slate-800 py-2 text-xs">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex-1">
-                            <div className="font-medium text-slate-100">{displayName}</div>
-
-                            {detailLineParts.length > 0 && (
-                              <div className="text-[10px] text-slate-500 mt-0.5">
-                                {detailLineParts.join(" · ")}
-                              </div>
-                            )}
-
-                            {meta?.instructions && (
-                              <div className="text-[10px] text-slate-400 mt-0.5">
-                                {meta.instructions}
-                              </div>
-                            )}
+                      <tr key={m.id} className="border-b border-slate-800">
+                        <td className="align-top px-2 py-2">
+                          <div className="font-medium text-slate-100">
+                            {displayName}
                           </div>
+                          {detailLineParts.length > 0 && (
+                            <div className="text-[10px] text-slate-500 mt-0.5">
+                              {detailLineParts.join(" · ")}
+                            </div>
+                          )}
+                          {meta?.instructions && (
+                            <div className="text-[10px] text-slate-400 mt-0.5">
+                              {meta.instructions}
+                            </div>
+                          )}
+                        </td>
+                        {gridColumns.map((col) => {
+                          const playerId = col.id;
+                          const perPlayer =
+                            (sessionData.values as any)?.[playerId] || {};
+                          const v = perPlayer[m.id];
+                          const value =
+                            v?.value_numeric ?? (v?.value_text ?? "");
 
-                          {/* existing player input grid stays as-is on the right */}
-                          {/* ... */}
-                        </div>
-                      </div>
+                          return (
+                            <td
+                              key={playerId}
+                              className="px-2 py-1 align-top text-center"
+                            >
+                              <input
+                                type="number"
+                                className="w-full max-w-[5rem] rounded-md bg-slate-950 border border-slate-700 px-1 py-0.5 text-[11px] text-center"
+                                value={value === null ? "" : value}
+                                onChange={(e) =>
+                                  handleValueChange(
+                                    m.id,
+                                    playerId,
+                                    e.target.value
+                                  )
+                                }
+                                disabled={isFinalized}
+                              />
+                            </td>
+                          );
+                        })}
+                      </tr>
                     );
                   })}
                 </tbody>
@@ -694,7 +1038,7 @@ export default function AssessmentSessionPage() {
               loadingTemplate ||
               isFinalized ||
               metrics.length === 0 ||
-              gridPlayerIds.length === 0
+              gridColumns.length === 0
             }
             className="inline-flex items-center px-3 py-1.5 rounded-md bg-emerald-500 text-slate-900 text-xs font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
           >

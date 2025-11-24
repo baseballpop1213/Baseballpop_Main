@@ -3,7 +3,7 @@ import api from "./client";
 
 // Shared eval types
 
-export type EvalMode = "official" | "practice";
+export type EvalMode = "official" | "practice" | "tryout";
 export type EvalSessionMode = "single" | "multi_station";
 
 // Values for a single (player, metric) pair stored in session_data.values

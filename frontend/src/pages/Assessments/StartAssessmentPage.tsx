@@ -5,14 +5,26 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { getMyTeams, getTeamPlayers } from "../../api/coach";
 import type { TeamPlayer } from "../../api/coach";
-import { startAssessmentSession } from "../../api/assessments";
+import {
+  startAssessmentSession,
+  updateAssessmentSession,
+} from "../../api/assessments";
+import type { EvalMode } from "../../api/assessments";
 import type { TeamWithRole } from "../../api/types";
 
-type Mode = "official" | "practice";
 type SessionMode = "single" | "multi_station";
+type ModeUI = "official" | "practice" | "tryout";
+type PlayerSelectionMode = "all_roster" | "subset_roster";
+
+interface PreTryoutPlayer {
+  id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone?: string | null;
+}
 
 // Map team.age_group + evaluation_type → evaluation_templates.id
-// Based on the template list you pasted.
 const TEMPLATE_IDS: Record<string, Record<string, number>> = {
   // 5U–9U use: athletic, hitting, throwing, catching, fielding
   "5u": {
@@ -46,7 +58,6 @@ const TEMPLATE_IDS: Record<string, Record<string, number>> = {
   "9u": {
     athletic: 31,
     hitting: 32,
-    // "9U Throwing & Pitching"
     throwing: 33,
     catching: 34,
     fielding: 35,
@@ -139,8 +150,6 @@ function resolveTemplateId(team: TeamWithRole, evaluationType: string): number {
   }
 
   if (evaluationType === "full") {
-    // We don't have explicit "Full Assessment" templates in the list you sent,
-    // so for now we treat this as "not wired yet".
     throw new Error(
       'Full Assessment templates are not wired yet. Please pick a specific section (Athletic, Hitting, etc.).'
     );
@@ -166,20 +175,33 @@ export default function StartAssessmentPage() {
 
   const [selectedTeamId, setSelectedTeamId] = useState<string>("");
   const [evaluationType, setEvaluationType] = useState<string>("");
-  const [mode, setMode] = useState<Mode>("official");
+  const [modeUI, setModeUI] = useState<ModeUI>("official");
   const [sessionMode, setSessionMode] = useState<SessionMode>("single");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  // Roster / player selection for this session
-  const [teamPlayers, setTeamPlayers] = useState<TeamPlayer[]>([]);
-  const [loadingPlayers, setLoadingPlayers] = useState(false);
-  const [playersError, setPlayersError] = useState<string | null>(null);
+  // Roster selection
+  const [roster, setRoster] = useState<TeamPlayer[]>([]);
+  const [rosterLoading, setRosterLoading] = useState(false);
+  const [rosterError, setRosterError] = useState<string | null>(null);
   const [playerSelectionMode, setPlayerSelectionMode] =
-    useState<"all" | "some">("all");
+    useState<PlayerSelectionMode>("all_roster");
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
 
-  // Load teams on mount (same as Dashboard)
+  // Pre-session tryout players (for Tryout mode)
+  const [preTryoutPlayers, setPreTryoutPlayers] = useState<PreTryoutPlayer[]>(
+    []
+  );
+  const [selectedPreTryoutIds, setSelectedPreTryoutIds] = useState<string[]>(
+    []
+  );
+  const [preTryoutFirstName, setPreTryoutFirstName] = useState("");
+  const [preTryoutLastName, setPreTryoutLastName] = useState("");
+  const [preTryoutEmail, setPreTryoutEmail] = useState("");
+  const [preTryoutPhone, setPreTryoutPhone] = useState("");
+  const [preTryoutError, setPreTryoutError] = useState<string | null>(null);
+
+  // Load teams on mount
   useEffect(() => {
     let cancelled = false;
 
@@ -213,48 +235,50 @@ export default function StartAssessmentPage() {
     };
   }, []);
 
-  // Load players when team selection changes
+  // Load roster whenever selectedTeamId changes
   useEffect(() => {
     if (!selectedTeamId) {
-      setTeamPlayers([]);
+      setRoster([]);
       setSelectedPlayerIds([]);
       return;
     }
 
-    let cancelled = false;
+    let isCancelled = false;
 
-    async function loadPlayers() {
-      setLoadingPlayers(true);
-      setPlayersError(null);
+    async function loadRoster() {
+      setRosterLoading(true);
+      setRosterError(null);
+
       try {
-        const data = await getTeamPlayers(selectedTeamId);
-        if (!cancelled) {
-          setTeamPlayers(data);
-          // By default, include all players on the roster in the session.
-          setSelectedPlayerIds(data.map((p) => p.player_id));
-        }
-      } catch (err: any) {
-        if (!cancelled) {
-          setPlayersError(
-            err?.response?.data?.message ||
-              err?.response?.data?.error ||
-              err?.message ||
-              "Failed to load team players"
-          );
-          setTeamPlayers([]);
-          setSelectedPlayerIds([]);
-        }
+        const players = await getTeamPlayers(selectedTeamId);
+        if (isCancelled) return;
+
+        setRoster(players || []);
+
+        const activeIds = (players || [])
+          .filter((p) => p.status === "active")
+          .map((p) => p.player_id);
+
+        setSelectedPlayerIds(activeIds);
+        setPlayerSelectionMode("all_roster");
+      } catch (err) {
+        console.error("Error loading team roster:", err);
+        if (isCancelled) return;
+
+        setRoster([]);
+        setSelectedPlayerIds([]);
+        setRosterError("Failed to load team roster.");
       } finally {
-        if (!cancelled) {
-          setLoadingPlayers(false);
+        if (!isCancelled) {
+          setRosterLoading(false);
         }
       }
     }
 
-    loadPlayers();
+    loadRoster();
 
     return () => {
-      cancelled = true;
+      isCancelled = true;
     };
   }, [selectedTeamId]);
 
@@ -274,7 +298,6 @@ export default function StartAssessmentPage() {
     if (!selectedTeam) return [];
 
     if (isYouth) {
-      // 5u–9u
       return [
         {
           value: "full",
@@ -309,7 +332,6 @@ export default function StartAssessmentPage() {
       ];
     }
 
-    // 10u – pro
     return [
       {
         value: "full",
@@ -354,6 +376,48 @@ export default function StartAssessmentPage() {
     ];
   }, [selectedTeam, isYouth]);
 
+  const playerSelectionDisabled =
+    !selectedTeam || rosterLoading || !!rosterError;
+
+  function handleAddPreTryoutPlayer() {
+    if (!preTryoutFirstName.trim() || !preTryoutLastName.trim()) {
+      setPreTryoutError("First and last name are required.");
+      return;
+    }
+
+    if (!preTryoutEmail.trim()) {
+      setPreTryoutError(
+        "Email is required so we can send tryout results and app access."
+      );
+      return;
+    }
+
+    setPreTryoutError(null);
+
+    const newPlayer: PreTryoutPlayer = {
+      id:
+        (globalThis as any).crypto?.randomUUID?.() ??
+        `pretryout_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      first_name: preTryoutFirstName.trim(),
+      last_name: preTryoutLastName.trim(),
+      email: preTryoutEmail.trim(),
+      phone: preTryoutPhone.trim() || null,
+    };
+
+    setPreTryoutPlayers((prev) => [...prev, newPlayer]);
+    setSelectedPreTryoutIds((prev) => [...prev, newPlayer.id]);
+
+    setPreTryoutFirstName("");
+    setPreTryoutLastName("");
+    setPreTryoutEmail("");
+    setPreTryoutPhone("");
+  }
+
+  function handleRemovePreTryoutPlayer(id: string) {
+    setPreTryoutPlayers((prev) => prev.filter((p) => p.id !== id));
+    setSelectedPreTryoutIds((prev) => prev.filter((pid) => pid !== id));
+  }
+
   function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
@@ -373,40 +437,78 @@ export default function StartAssessmentPage() {
       try {
         const templateId = resolveTemplateId(selectedTeam, evaluationType);
 
-        // Determine which players should be included in this session
-        const allPlayerIds = teamPlayers.map((p) => p.player_id);
-        let playerIdsToUse: string[] = [];
+        // Decide which team players are included in this session.
+        let playerIds: string[] = [];
 
-        if (allPlayerIds.length > 0) {
-          if (playerSelectionMode === "all") {
-            playerIdsToUse = allPlayerIds;
-          } else {
-            playerIdsToUse = selectedPlayerIds;
-            if (!playerIdsToUse || playerIdsToUse.length === 0) {
+        const activeRosterIds = roster
+          .filter((p) => p.status === "active")
+          .map((p) => p.player_id);
+
+        if (playerSelectionMode === "subset_roster") {
+          if (modeUI !== "tryout") {
+            if (!selectedPlayerIds.length && activeRosterIds.length > 0) {
               setSubmitError(
-                'Please select at least one player or choose "All players".'
+                "Select at least one player or switch to 'All active players'."
               );
               setSubmitting(false);
               return;
             }
           }
+          playerIds = selectedPlayerIds;
         } else {
-          // No players on the roster yet – start a session with an empty list
-          playerIdsToUse = [];
+          playerIds = activeRosterIds;
         }
+
+        if (modeUI === "tryout" && playerIds.length === 0) {
+          // pure external tryout is OK
+        }
+
+        const apiMode: EvalMode =
+          modeUI === "practice"
+            ? "practice"
+            : modeUI === "tryout"
+            ? "tryout"
+            : "official";
 
         const res = await startAssessmentSession({
           team_id: selectedTeam.id,
           template_id: templateId,
           evaluation_type: evaluationType,
-          mode,
+          mode: apiMode,
           session_mode: sessionMode,
-          player_ids: playerIdsToUse,
+          player_ids: playerIds,
         });
 
-        // Navigate to /assessments/:sessionId
+        if (modeUI === "tryout") {
+          const existingData = (res as any).session_data || {};
+          const existingTryouts: PreTryoutPlayer[] = Array.isArray(
+            (existingData as any).tryout_players
+          )
+            ? (existingData as any).tryout_players
+            : [];
+
+          const selectedTryoutPlayers = preTryoutPlayers.filter((p) =>
+            selectedPreTryoutIds.includes(p.id)
+          );
+
+          const nextSessionData = {
+            ...existingData,
+            tryout_mode: true,
+            tryout_players: [...existingTryouts, ...selectedTryoutPlayers],
+          };
+
+          try {
+            await updateAssessmentSession(res.id, {
+              session_data: nextSessionData,
+            });
+          } catch (err) {
+            console.error("Failed to mark session as tryout:", err);
+          }
+        }
+
         navigate(`/assessments/${res.id}`);
       } catch (err: any) {
+        console.error("Failed to start assessment:", err);
         const msg =
           err?.message ||
           err?.response?.data?.message ||
@@ -510,133 +612,283 @@ export default function StartAssessmentPage() {
             )}
             {selectedTeam && evaluationType && (
               <p className="text-[11px] text-slate-400 mt-1">
-                {evalOptions.find((o) => o.value === evaluationType)?.description}
+                {evalOptions.find((o) => o.value === evaluationType)
+                  ?.description}
               </p>
             )}
           </div>
 
-          {/* Player selection */}
+          {/* Players / Tryout section */}
           {selectedTeam && (
-            <div className="space-y-2">
-              <label className="block text-xs font-semibold text-slate-200">
-                Players in this assessment
-              </label>
-
-              {loadingPlayers && (
-                <p className="text-xs text-slate-400">
-                  Loading team players…
-                </p>
-              )}
-              {playersError && (
-                <p className="text-xs text-red-400">{playersError}</p>
-              )}
-
-              {!loadingPlayers &&
-                !playersError &&
-                teamPlayers.length === 0 && (
-                  <p className="text-xs text-slate-500">
-                    This team doesn’t have any players on the roster yet. You
-                    can still start a session now and link players later.
+            <div className="rounded-lg border border-slate-700 bg-slate-900/80 p-3 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-xs font-semibold text-slate-100">
+                    {modeUI === "tryout"
+                      ? "Players in this tryout"
+                      : "Players in this assessment"}
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    {modeUI === "tryout"
+                      ? "Select any team players who will participate and add new tryout players. You can add more later from the session page."
+                      : "Choose whether to evaluate the full roster or just a subset of players."}
                   </p>
+                </div>
+                {rosterLoading && (
+                  <span className="text-[11px] text-slate-400">Loading…</span>
                 )}
+              </div>
 
-              {teamPlayers.length > 0 && (
-                <div className="space-y-2">
-                  <div className="flex gap-2 text-xs">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPlayerSelectionMode("all");
-                        setSelectedPlayerIds(
-                          teamPlayers.map((p) => p.player_id)
-                        );
-                      }}
-                      className={`flex-1 rounded-md border px-2 py-1 text-left ${
-                        playerSelectionMode === "all"
-                          ? "border-emerald-400 bg-emerald-500/10 text-emerald-300"
-                          : "border-slate-600 bg-slate-900 text-slate-200"
-                      }`}
-                    >
-                      <div className="font-semibold">All players</div>
-                      <div className="text-[11px] text-slate-400">
-                        Include every player on this roster in the session.
-                      </div>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPlayerSelectionMode("some")}
-                      className={`flex-1 rounded-md border px-2 py-1 text-left ${
-                        playerSelectionMode === "some"
-                          ? "border-emerald-400 bg-emerald-500/10 text-emerald-300"
-                          : "border-slate-600 bg-slate-900 text-slate-200"
-                      }`}
-                    >
-                      <div className="font-semibold">Select players</div>
-                      <div className="text-[11px] text-slate-400">
-                        Choose a subset (e.g. only players at today’s eval).
-                      </div>
-                    </button>
-                  </div>
+              {rosterError && (
+                <p className="text-[11px] text-red-300">{rosterError}</p>
+              )}
 
-                  {playerSelectionMode === "some" && (
-                    <div className="max-h-40 overflow-y-auto rounded-md border border-slate-700 bg-slate-900/70 p-2 space-y-1">
-                      {teamPlayers.map((p) => {
-                        const profile = (p as any).profiles || {};
+              {/* Team roster selection */}
+              <div className="flex flex-col sm:flex-row gap-3 text-xs">
+                <label className="flex-1 flex items-start gap-2">
+                  <input
+                    type="radio"
+                    className="mt-0.5"
+                    name="playerSelectionMode"
+                    value="all_roster"
+                    disabled={playerSelectionDisabled}
+                    checked={playerSelectionMode === "all_roster"}
+                    onChange={() => setPlayerSelectionMode("all_roster")}
+                  />
+                  <span>
+                    <span className="font-medium text-slate-100">
+                      All active players on this team
+                      {modeUI === "tryout" && " (optional)"}
+                    </span>
+                    <span className="block text-[11px] text-slate-400">
+                      Everyone currently on the roster will be included in this
+                      session.
+                    </span>
+                  </span>
+                </label>
+
+                <label className="flex-1 flex items-start gap-2">
+                  <input
+                    type="radio"
+                    className="mt-0.5"
+                    name="playerSelectionMode"
+                    value="subset_roster"
+                    disabled={playerSelectionDisabled || roster.length === 0}
+                    checked={playerSelectionMode === "subset_roster"}
+                    onChange={() => setPlayerSelectionMode("subset_roster")}
+                  />
+                  <span>
+                    <span className="font-medium text-slate-100">
+                      Select specific team players
+                      {modeUI === "tryout" && " (optional)"}
+                    </span>
+                    <span className="block text-[11px] text-slate-400">
+                      Use when only part of the roster is present (illness,
+                      travel, etc.).
+                    </span>
+                  </span>
+                </label>
+              </div>
+
+              {playerSelectionMode === "subset_roster" && (
+                <div className="mt-2 rounded-md border border-slate-700 bg-slate-950/50 max-h-48 overflow-y-auto">
+                  {roster.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-slate-500">
+                      No players on this team yet.
+                    </p>
+                  ) : (
+                    <ul className="divide-y divide-slate-800 text-xs">
+                      {roster.map((tp) => {
+                        const profile: any = (tp as any).profiles || {};
                         const name =
                           profile.display_name ||
                           [profile.first_name, profile.last_name]
                             .filter(Boolean)
                             .join(" ") ||
-                          profile.email ||
-                          "Player";
-
-                        const checked = selectedPlayerIds.includes(p.player_id);
+                          "Unnamed player";
+                        const jersey =
+                          tp.jersey_number != null
+                            ? `#${tp.jersey_number}`
+                            : "";
+                        const id = tp.player_id;
+                        const checked = selectedPlayerIds.includes(id);
 
                         return (
-                          <label
-                            key={p.player_id}
-                            className="flex items-center gap-2 text-xs text-slate-200"
+                          <li
+                            key={id}
+                            className="flex items-center justify-between px-3 py-1.5"
                           >
-                            <input
-                              type="checkbox"
-                              className="h-3 w-3 rounded border-slate-500 bg-slate-900"
-                              checked={checked}
-                              onChange={(e) => {
-                                const { checked } = e.target;
-                                setSelectedPlayerIds((prev) => {
-                                  if (checked) {
-                                    return Array.from(
-                                      new Set([...prev, p.player_id])
-                                    );
-                                  }
-                                  return prev.filter(
-                                    (id) => id !== p.player_id
-                                  );
-                                });
-                              }}
-                            />
-                            <span className="flex-1 truncate">
-                              {name}
-                              {p.jersey_number != null && (
-                                <span className="text-[10px] text-slate-400 ml-1">
-                                  #{p.jersey_number}
-                                </span>
-                              )}
+                            <label className="flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                className="h-3 w-3"
+                                checked={checked}
+                                onChange={(ev) => {
+                                  const isChecked = ev.target.checked;
+                                  setSelectedPlayerIds((prev) => {
+                                    const next = new Set(prev);
+                                    if (isChecked) {
+                                      next.add(id);
+                                    } else {
+                                      next.delete(id);
+                                    }
+                                    return Array.from(next);
+                                  });
+                                }}
+                              />
+                              <span className="text-slate-100">
+                                {jersey && (
+                                  <span className="text-slate-400 mr-1">
+                                    {jersey}
+                                  </span>
+                                )}
+                                {name}
+                              </span>
+                            </label>
+                            <span className="text-[10px] uppercase tracking-wide text-slate-500">
+                              {tp.status}
                             </span>
-                          </label>
+                          </li>
                         );
                       })}
-                    </div>
+                    </ul>
+                  )}
+                </div>
+              )}
+
+              {/* Pre-session tryout players (only when tryout mode) */}
+              {modeUI === "tryout" && (
+                <div className="mt-3 space-y-2 border-t border-slate-700 pt-2">
+                  <h4 className="text-[11px] font-semibold text-slate-100">
+                    New tryout players (not yet on your roster)
+                  </h4>
+                  <p className="text-[11px] text-slate-400">
+                    Add players who have RSVP&apos;d or signed up for this
+                    tryout. You can add more later from the session page.
+                  </p>
+
+                  {preTryoutError && (
+                    <p className="text-[11px] text-red-300">
+                      {preTryoutError}
+                    </p>
                   )}
 
-                  {playerSelectionMode === "some" &&
-                    !loadingPlayers &&
-                    selectedPlayerIds.length === 0 && (
-                      <p className="text-[11px] text-amber-300">
-                        No players selected. Either check at least one player or
-                        switch back to "All players".
-                      </p>
-                    )}
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-2 items-end">
+                    <div className="space-y-1">
+                      <label className="block text-[11px] text-slate-200">
+                        First name
+                      </label>
+                      <input
+                        className="w-full rounded-md bg-slate-950 border border-slate-700 px-2 py-1 text-xs"
+                        value={preTryoutFirstName}
+                        onChange={(e) =>
+                          setPreTryoutFirstName(e.target.value)
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-[11px] text-slate-200">
+                        Last name
+                      </label>
+                      <input
+                        className="w-full rounded-md bg-slate-950 border border-slate-700 px-2 py-1 text-xs"
+                        value={preTryoutLastName}
+                        onChange={(e) =>
+                          setPreTryoutLastName(e.target.value)
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-[11px] text-slate-200">
+                        Email (required)
+                      </label>
+                      <input
+                        className="w-full rounded-md bg-slate-950 border border-slate-700 px-2 py-1 text-xs"
+                        value={preTryoutEmail}
+                        onChange={(e) => setPreTryoutEmail(e.target.value)}
+                        type="email"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-[11px] text-slate-200">
+                        Phone (optional)
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          className="w-full rounded-md bg-slate-950 border border-slate-700 px-2 py-1 text-xs"
+                          value={preTryoutPhone}
+                          onChange={(e) => setPreTryoutPhone(e.target.value)}
+                          type="tel"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleAddPreTryoutPlayer}
+                          className="shrink-0 inline-flex items-center px-3 py-1.5 rounded-md bg-amber-400 text-slate-900 font-semibold text-[11px]"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {preTryoutPlayers.length > 0 && (
+                    <div className="border-t border-slate-700 pt-2">
+                      <h5 className="text-[11px] font-semibold text-slate-200 mb-1">
+                        Added tryout players
+                      </h5>
+                      <ul className="space-y-1 text-[11px]">
+                        {preTryoutPlayers.map((p) => {
+                          const checked = selectedPreTryoutIds.includes(p.id);
+                          return (
+                            <li
+                              key={p.id}
+                              className="flex items-center justify-between"
+                            >
+                              <label className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  className="h-3 w-3"
+                                  checked={checked}
+                                  onChange={(e) => {
+                                    const isChecked = e.target.checked;
+                                    setSelectedPreTryoutIds((prev) => {
+                                      const next = new Set(prev);
+                                      if (isChecked) {
+                                        next.add(p.id);
+                                      } else {
+                                        next.delete(p.id);
+                                      }
+                                      return Array.from(next);
+                                    });
+                                  }}
+                                />
+                                <span className="text-slate-100">
+                                  {p.first_name} {p.last_name}
+                                  <span className="text-slate-400 ml-1">
+                                    · {p.email}
+                                  </span>
+                                  {p.phone && (
+                                    <span className="text-slate-400 ml-1">
+                                      · {p.phone}
+                                    </span>
+                                  )}
+                                </span>
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleRemovePreTryoutPlayer(p.id)
+                                }
+                                className="text-[10px] text-slate-400 hover:text-red-300"
+                              >
+                                Remove
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -647,26 +899,26 @@ export default function StartAssessmentPage() {
             <label className="block text-xs font-semibold text-slate-200">
               Mode
             </label>
-            <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="grid grid-cols-3 gap-2 text-xs">
               <button
                 type="button"
-                onClick={() => setMode("official")}
+                onClick={() => setModeUI("official")}
                 className={`rounded-md border px-2 py-1 text-left ${
-                  mode === "official"
+                  modeUI === "official"
                     ? "border-emerald-400 bg-emerald-500/10 text-emerald-300"
                     : "border-slate-600 bg-slate-900 text-slate-200"
                 }`}
               >
                 <div className="font-semibold">Official</div>
                 <div className="text-[11px] text-slate-400">
-                  Awards count, medals / trophies can be earned.
+                  Team-based eval. Medals / trophies can be earned.
                 </div>
               </button>
               <button
                 type="button"
-                onClick={() => setMode("practice")}
+                onClick={() => setModeUI("practice")}
                 className={`rounded-md border px-2 py-1 text-left ${
-                  mode === "practice"
+                  modeUI === "practice"
                     ? "border-emerald-400 bg-emerald-500/10 text-emerald-300"
                     : "border-slate-600 bg-slate-900 text-slate-200"
                 }`}
@@ -674,6 +926,20 @@ export default function StartAssessmentPage() {
                 <div className="font-semibold">Practice</div>
                 <div className="text-[11px] text-slate-400">
                   For training days, ghost medals only.
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setModeUI("tryout")}
+                className={`rounded-md border px-2 py-1 text-left ${
+                  modeUI === "tryout"
+                    ? "border-amber-400 bg-amber-500/10 text-amber-300"
+                    : "border-slate-600 bg-slate-900 text-slate-200"
+                }`}
+              >
+                <div className="font-semibold">Tryout</div>
+                <div className="text-[11px] text-slate-400">
+                  Official tryout eval. You can add non-roster players.
                 </div>
               </button>
             </div>
