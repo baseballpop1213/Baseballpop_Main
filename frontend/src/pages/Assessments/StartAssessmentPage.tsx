@@ -3,7 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
-import { getMyTeams } from "../../api/coach";
+import { getMyTeams, getTeamPlayers } from "../../api/coach";
+import type { TeamPlayer } from "../../api/coach";
 import { startAssessmentSession } from "../../api/assessments";
 import type { TeamWithRole } from "../../api/types";
 
@@ -170,6 +171,14 @@ export default function StartAssessmentPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  // Roster / player selection for this session
+  const [teamPlayers, setTeamPlayers] = useState<TeamPlayer[]>([]);
+  const [loadingPlayers, setLoadingPlayers] = useState(false);
+  const [playersError, setPlayersError] = useState<string | null>(null);
+  const [playerSelectionMode, setPlayerSelectionMode] =
+    useState<"all" | "some">("all");
+  const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
+
   // Load teams on mount (same as Dashboard)
   useEffect(() => {
     let cancelled = false;
@@ -203,6 +212,51 @@ export default function StartAssessmentPage() {
       cancelled = true;
     };
   }, []);
+
+  // Load players when team selection changes
+  useEffect(() => {
+    if (!selectedTeamId) {
+      setTeamPlayers([]);
+      setSelectedPlayerIds([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadPlayers() {
+      setLoadingPlayers(true);
+      setPlayersError(null);
+      try {
+        const data = await getTeamPlayers(selectedTeamId);
+        if (!cancelled) {
+          setTeamPlayers(data);
+          // By default, include all players on the roster in the session.
+          setSelectedPlayerIds(data.map((p) => p.player_id));
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          setPlayersError(
+            err?.response?.data?.message ||
+              err?.response?.data?.error ||
+              err?.message ||
+              "Failed to load team players"
+          );
+          setTeamPlayers([]);
+          setSelectedPlayerIds([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingPlayers(false);
+        }
+      }
+    }
+
+    loadPlayers();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedTeamId]);
 
   const selectedTeam = useMemo(
     () => teams.find((t) => t.id === selectedTeamId) || null,
@@ -264,7 +318,7 @@ export default function StartAssessmentPage() {
       },
       {
         value: "athletic",
-          label: "Athletic Skills Assessment",
+        label: "Athletic Skills Assessment",
         description: "Speed, agility, strength, balance, mobility.",
       },
       {
@@ -319,14 +373,35 @@ export default function StartAssessmentPage() {
       try {
         const templateId = resolveTemplateId(selectedTeam, evaluationType);
 
+        // Determine which players should be included in this session
+        const allPlayerIds = teamPlayers.map((p) => p.player_id);
+        let playerIdsToUse: string[] = [];
+
+        if (allPlayerIds.length > 0) {
+          if (playerSelectionMode === "all") {
+            playerIdsToUse = allPlayerIds;
+          } else {
+            playerIdsToUse = selectedPlayerIds;
+            if (!playerIdsToUse || playerIdsToUse.length === 0) {
+              setSubmitError(
+                'Please select at least one player or choose "All players".'
+              );
+              setSubmitting(false);
+              return;
+            }
+          }
+        } else {
+          // No players on the roster yet – start a session with an empty list
+          playerIdsToUse = [];
+        }
+
         const res = await startAssessmentSession({
           team_id: selectedTeam.id,
           template_id: templateId,
           evaluation_type: evaluationType,
           mode,
           session_mode: sessionMode,
-          // For now we let the backend treat player_ids as optional / empty.
-          player_ids: [],
+          player_ids: playerIdsToUse,
         });
 
         // Navigate to /assessments/:sessionId
@@ -435,13 +510,137 @@ export default function StartAssessmentPage() {
             )}
             {selectedTeam && evaluationType && (
               <p className="text-[11px] text-slate-400 mt-1">
-                {
-                  evalOptions.find((o) => o.value === evaluationType)
-                    ?.description
-                }
+                {evalOptions.find((o) => o.value === evaluationType)?.description}
               </p>
             )}
           </div>
+
+          {/* Player selection */}
+          {selectedTeam && (
+            <div className="space-y-2">
+              <label className="block text-xs font-semibold text-slate-200">
+                Players in this assessment
+              </label>
+
+              {loadingPlayers && (
+                <p className="text-xs text-slate-400">
+                  Loading team players…
+                </p>
+              )}
+              {playersError && (
+                <p className="text-xs text-red-400">{playersError}</p>
+              )}
+
+              {!loadingPlayers &&
+                !playersError &&
+                teamPlayers.length === 0 && (
+                  <p className="text-xs text-slate-500">
+                    This team doesn’t have any players on the roster yet. You
+                    can still start a session now and link players later.
+                  </p>
+                )}
+
+              {teamPlayers.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex gap-2 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPlayerSelectionMode("all");
+                        setSelectedPlayerIds(
+                          teamPlayers.map((p) => p.player_id)
+                        );
+                      }}
+                      className={`flex-1 rounded-md border px-2 py-1 text-left ${
+                        playerSelectionMode === "all"
+                          ? "border-emerald-400 bg-emerald-500/10 text-emerald-300"
+                          : "border-slate-600 bg-slate-900 text-slate-200"
+                      }`}
+                    >
+                      <div className="font-semibold">All players</div>
+                      <div className="text-[11px] text-slate-400">
+                        Include every player on this roster in the session.
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPlayerSelectionMode("some")}
+                      className={`flex-1 rounded-md border px-2 py-1 text-left ${
+                        playerSelectionMode === "some"
+                          ? "border-emerald-400 bg-emerald-500/10 text-emerald-300"
+                          : "border-slate-600 bg-slate-900 text-slate-200"
+                      }`}
+                    >
+                      <div className="font-semibold">Select players</div>
+                      <div className="text-[11px] text-slate-400">
+                        Choose a subset (e.g. only players at today’s eval).
+                      </div>
+                    </button>
+                  </div>
+
+                  {playerSelectionMode === "some" && (
+                    <div className="max-h-40 overflow-y-auto rounded-md border border-slate-700 bg-slate-900/70 p-2 space-y-1">
+                      {teamPlayers.map((p) => {
+                        const profile = (p as any).profiles || {};
+                        const name =
+                          profile.display_name ||
+                          [profile.first_name, profile.last_name]
+                            .filter(Boolean)
+                            .join(" ") ||
+                          profile.email ||
+                          "Player";
+
+                        const checked = selectedPlayerIds.includes(p.player_id);
+
+                        return (
+                          <label
+                            key={p.player_id}
+                            className="flex items-center gap-2 text-xs text-slate-200"
+                          >
+                            <input
+                              type="checkbox"
+                              className="h-3 w-3 rounded border-slate-500 bg-slate-900"
+                              checked={checked}
+                              onChange={(e) => {
+                                const { checked } = e.target;
+                                setSelectedPlayerIds((prev) => {
+                                  if (checked) {
+                                    return Array.from(
+                                      new Set([...prev, p.player_id])
+                                    );
+                                  }
+                                  return prev.filter(
+                                    (id) => id !== p.player_id
+                                  );
+                                });
+                              }}
+                            />
+                            <span className="flex-1 truncate">
+                              {name}
+                              {p.jersey_number != null && (
+                                <span className="text-[10px] text-slate-400 ml-1">
+                                  #{p.jersey_number}
+                                </span>
+                              )}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {playerSelectionMode === "some" &&
+                    !loadingPlayers &&
+                    selectedPlayerIds.length === 0 && (
+                      <p className="text-[11px] text-amber-300">
+                        No players selected. Either check at least one player or
+                        switch back to "All players".
+                      </p>
+                    )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Mode */}
           <div className="space-y-1">

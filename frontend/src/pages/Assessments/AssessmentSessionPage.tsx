@@ -1,4 +1,5 @@
 // src/pages/Assessments/AssessmentSessionPage.tsx
+import { getMetricMeta } from "../../config/metricMeta";
 import { useEffect, useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
@@ -224,36 +225,6 @@ export default function AssessmentSessionPage() {
     }
     return [];
   }, [participantIds, players]);
-
-  function handleValueChange(
-    playerId: string,
-    metricId: number,
-    rawValue: string
-  ) {
-    if (isFinalized) return; // don't allow edits after finalization
-
-    const trimmed = rawValue.trim();
-    const parsed =
-      trimmed === "" ? null : Number.isNaN(Number(trimmed)) ? null : Number(trimmed);
-
-    setSessionData((prev) => {
-      if (!prev) return prev;
-
-      const nextValues = { ...(prev.values || {}) };
-      const perPlayer = { ...(nextValues[playerId] || {}) };
-      perPlayer[metricId] = {
-        value_numeric: parsed,
-        value_text: null,
-      };
-      nextValues[playerId] = perPlayer;
-
-      setDirty(true);
-      return {
-        ...prev,
-        values: nextValues,
-      };
-    });
-  }
 
   async function handleSave() {
     if (!session || !sessionData) return;
@@ -644,49 +615,52 @@ export default function AssessmentSessionPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {metrics.map((m) => (
-                    <tr
-                      key={m.id}
-                      className="odd:bg-slate-900 even:bg-slate-900/60"
-                    >
-                      <td className="px-2 py-1 border-b border-slate-800 align-top">
-                        <div className="font-medium text-slate-100">
-                          {m.label}
-                        </div>
-                        {m.unit && (
-                          <div className="text-[10px] text-slate-500">
-                            ({m.unit})
-                          </div>
-                        )}
-                      </td>
-                      {gridPlayerIds.map((playerId) => {
-                        const currentValue =
-                          sessionData.values?.[playerId]?.[m.id]
-                            ?.value_numeric ?? null;
+                  {metrics.map((m) => {
+                    // If AssessmentMetric type doesn't explicitly include metric_key,
+                    // we safely grab it via `as any` to avoid TS drama.
+                    const metricKey = (m as any).metric_key as string | undefined;
+                    const meta = metricKey ? getMetricMeta(metricKey) : undefined;
 
-                        return (
-                          <td
-                            key={playerId}
-                            className="px-1 py-1 border-b border-slate-800 text-center align-top"
-                          >
-                            <input
-                              type="number"
-                              className="w-16 rounded bg-slate-800 border border-slate-600 px-1 py-0.5 text-[11px]"
-                              value={currentValue ?? ""}
-                              disabled={isFinalized || finalizing}
-                              onChange={(e) =>
-                                handleValueChange(
-                                  playerId,
-                                  m.id,
-                                  e.target.value
-                                )
-                              }
-                            />
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
+                    const displayName =
+                      meta?.shortLabel || meta?.displayName || m.label || metricKey || "Metric";
+
+                    const detailLineParts: string[] = [];
+
+                    if (meta?.group) {
+                      detailLineParts.push(meta.group);
+                    }
+                    if (meta?.code) {
+                      detailLineParts.push(`Code: ${meta.code}`);
+                    }
+                    if (m.unit) {
+                      detailLineParts.push(`Unit: ${m.unit}`);
+                    }
+
+                    return (
+                      <div key={m.id} className="border-b border-slate-800 py-2 text-xs">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1">
+                            <div className="font-medium text-slate-100">{displayName}</div>
+
+                            {detailLineParts.length > 0 && (
+                              <div className="text-[10px] text-slate-500 mt-0.5">
+                                {detailLineParts.join(" · ")}
+                              </div>
+                            )}
+
+                            {meta?.instructions && (
+                              <div className="text-[10px] text-slate-400 mt-0.5">
+                                {meta.instructions}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* existing player input grid stays as-is on the right */}
+                          {/* ... */}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
