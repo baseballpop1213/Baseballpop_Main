@@ -932,9 +932,7 @@ export default function AssessmentSessionPage() {
                 </thead>
                 <tbody>
                   {metrics.map((m) => {
-                    const metricKey = (m as any).metric_key as
-                      | string
-                      | undefined;
+                    const metricKey = (m as any).metric_key as string | undefined;
                     const meta = metricKey ? getMetricMeta(metricKey) : undefined;
 
                     const displayName =
@@ -954,6 +952,10 @@ export default function AssessmentSessionPage() {
                     }
                     if ((m as any).unit) {
                       detailLineParts.push(`Unit: ${(m as any).unit}`);
+                    }
+                    if (meta?.unitHint && !detailLineParts.some((p) => p.includes("Unit"))) {
+                      // Nice little extra: show unit hint if we haven’t already shown unit from DB
+                      detailLineParts.push(meta.unitHint);
                     }
 
                     return (
@@ -991,13 +993,13 @@ export default function AssessmentSessionPage() {
                                 className="w-full max-w-[5rem] rounded-md bg-slate-950 border border-slate-700 px-1 py-0.5 text-[11px] text-center"
                                 value={value === null ? "" : value}
                                 onChange={(e) =>
-                                  handleValueChange(
-                                    m.id,
-                                    playerId,
-                                    e.target.value
-                                  )
+                                  handleValueChange(m.id, playerId, e.target.value)
                                 }
                                 disabled={isFinalized}
+                                step={meta?.step ?? undefined}
+                                min={meta?.min ?? undefined}
+                                max={meta?.max ?? undefined}
+                                placeholder={meta?.placeholder}
                               />
                             </td>
                           );
