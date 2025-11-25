@@ -142,8 +142,70 @@ const METRIC_META: Record<string, MetricMeta> = {
     placeholder: "e.g. 18",
   },
 
-  // TODO (when those templates are wired): APUSH60, ASIT60, PULL60, etc.
-  // apush_60, asit_60, pull_60 can be added here once we confirm metric_key names.
+  // Strength: 60-second push-ups / sit-ups / pull-ups (older ages / Pro)
+  apush_60: {
+    code: "APUSH60",
+    group: "Strength",
+    shortLabel: "Push-ups (60s)",
+    displayName: "Push-ups in 60 seconds",
+    instructions:
+      "Record the total number of good push-ups completed in 60 seconds.",
+    notes: "Higher count = higher strength score.",
+    inputType: "number",
+    min: 0,
+    max: 100,
+    step: 1,
+    unitHint: "reps",
+    placeholder: "e.g. 30",
+  },
+  asit_60: {
+    code: "ASIT60",
+    group: "Strength",
+    shortLabel: "Sit-ups (60s)",
+    displayName: "Sit-ups in 60 seconds",
+    instructions:
+      "Record the total number of good sit-ups completed in 60 seconds.",
+    notes: "Higher count = higher core strength score.",
+    inputType: "number",
+    min: 0,
+    max: 100,
+    step: 1,
+    unitHint: "reps",
+    placeholder: "e.g. 30",
+  },
+  // Strength: 60-second pull-ups (older ages / Pro)
+  apull_60: {
+    code: "APULL60",
+    group: "Strength",
+    shortLabel: "Pull-ups (60s)",
+    displayName: "Pull-ups in 60 seconds",
+    instructions:
+      "Have the player do as many pull-ups as they can in 60 seconds and record the total number of good reps.",
+    notes: "Higher count = higher upper-body pulling strength score.",
+    inputType: "number",
+    min: 0,
+    max: 100,
+    step: 1,
+    unitHint: "reps",
+    placeholder: "e.g. 10",
+  },
+  // Optional alias in case your metric_key is just "pull_60"
+  pull_60: {
+    code: "APULL60",
+    group: "Strength",
+    shortLabel: "Pull-ups (60s)",
+    displayName: "Pull-ups in 60 seconds",
+    instructions:
+      "Have the player do as many pull-ups as they can in 60 seconds and record the total number of good reps.",
+    notes: "Higher count = higher upper-body pulling strength score.",
+    inputType: "number",
+    min: 0,
+    max: 100,
+    step: 1,
+    unitHint: "reps",
+    placeholder: "e.g. 10",
+  },
+
 
   // Power: vertical jump
   asp_jump_inches: {
@@ -162,6 +224,44 @@ const METRIC_META: Record<string, MetricMeta> = {
     placeholder: "e.g. 19.5",
   },
 
+  // Power: Seated chest pass (medicine ball) – distance in feet
+  aspscp_distance_ft: {
+    code: "SCP",
+    group: "Power",
+    shortLabel: "Seated Chest Pass",
+    displayName: "Seated Chest Pass (med ball)",
+    instructions:
+      "Sitting in a chair with the back touching the chair, have the player throw a medicine ball as far as possible. Measure the distance in feet.",
+    notes:
+      "Use a medicine ball of ~1 lb per 20 lbs of body weight, rounding down. If unknown, default to 8 lb. Record the ball weight used with your measurement.",
+    inputType: "number",
+    min: 0,
+    max: 100,
+    step: 0.1,
+    unitHint: "feet",
+    placeholder: "e.g. 18.5",
+  },
+
+  // Power: Sit-up and throw (medicine ball) – distance in feet
+  aspsup_distance_ft: {
+    code: "SUT",
+    group: "Power",
+    shortLabel: "Sit-up & Throw",
+    displayName: "Sit-up and Throw (med ball)",
+    instructions:
+      "From a hook-lying position with a medicine ball above the head, have the player sit up and throw the ball as far as possible. Measure the distance in feet.",
+    notes:
+      "Use ~1 lb per 20 lbs of body weight, rounding down. If unknown, default to 8 lb. Record the ball weight used with your measurement.",
+    inputType: "number",
+    min: 0,
+    max: 100,
+    step: 0.1,
+    unitHint: "feet",
+    placeholder: "e.g. 20.0",
+  },
+
+
+  
   // Balance: single-leg stance, eyes open
   sls_eyes_open_right: {
     code: "BSLEO",
@@ -228,70 +328,84 @@ const METRIC_META: Record<string, MetricMeta> = {
     placeholder: "e.g. 7.3",
   },
 
-  // Mobility: multi-segment rotation
+  // Mobility: multi-segment rotation (MSR) – Right
   msr_right: {
     code: "MSR",
     group: "Mobility",
     shortLabel: "MSR – Right",
     displayName: "Multi-segment Rotation – Right",
     instructions:
-      "Player stands tall and rotates like a backswing to the right. " +
-      "Enter their MSR score or angle based on your BPOP rubric (higher is better; typical total range up to 6 points).",
-    inputType: "number",
-    min: 0,
-    max: 6,
-    step: 1,
-    unitHint: "score (0–6)",
-    placeholder: "0–6",
+      "Have the player stand tall with a bat across the shoulders and rotate as far as possible to the right. Select the option that best matches how far they turn.",
+    notes:
+      "Selection is converted to a 0–3 point score; right + left together give up to 6 total points.",
+    inputType: "select",
+    options: [
+      { value: 3, label: "Turns more than 180° (3 points)" },
+      { value: 1, label: "Turns equal to 180° (1 point)" },
+      { value: 0, label: "Turns less than 180° (0 points)" },
+    ],
+    unitHint: "points (0–3)",
   },
+
+  // Mobility: multi-segment rotation (MSR) – Left
   msr_left: {
     code: "MSR",
     group: "Mobility",
     shortLabel: "MSR – Left",
     displayName: "Multi-segment Rotation – Left",
     instructions:
-      "Player rotates through to the left side. Enter the MSR score/angle using the same rubric as the right side.",
-    inputType: "number",
-    min: 0,
-    max: 6,
-    step: 1,
-    unitHint: "score (0–6)",
-    placeholder: "0–6",
+      "Repeat MSR to the left side and select the option that best matches how far they turn.",
+    notes:
+      "Selection is converted to a 0–3 point score; right + left together give up to 6 total points.",
+    inputType: "select",
+    options: [
+      { value: 3, label: "Turns more than 180° (3 points)" },
+      { value: 1, label: "Turns equal to 180° (1 point)" },
+      { value: 0, label: "Turns less than 180° (0 points)" },
+    ],
+    unitHint: "points (0–3)",
   },
 
-  // Mobility: toe touch
+  // Mobility: Toe Touch (selection → 0/3/6 points)
   toe_touch: {
     code: "MTT",
     group: "Mobility",
     shortLabel: "Toe Touch",
     displayName: "Toe Touch Mobility",
     instructions:
-      "Use the BPOP Toe Touch scoring key (e.g. poor/average/good/excellent) and enter the numeric score (0–6).",
-    notes: "Higher score = better hamstring/hip mobility.",
-    inputType: "number",
-    min: 0,
-    max: 6,
-    step: 1,
-    unitHint: "score (0–6)",
-    placeholder: "0–6",
+      "Have the player reach toward their toes with knees straight and select the best description of how far they can reach.",
+    notes:
+      "Selection is converted to a 0–6 point score for BPOP mobility.",
+    inputType: "select",
+    options: [
+      { value: 0, label: "Cannot touch toes (0 points)" },
+      { value: 3, label: "Touches toes (3 points)" },
+      { value: 6, label: "Touches ground (6 points)" },
+    ],
+    unitHint: "points (0–6)",
   },
 
-  // Mobility: deep squat
+  // Mobility: Full Overhead Deep Squat (selection → points)
   deep_squat: {
-    code: "MDS",
+    code: "FODS",
     group: "Mobility",
-    shortLabel: "Deep Squat",
-    displayName: "Deep Squat Quality",
+    shortLabel: "Overhead Deep Squat",
+    displayName: "Full Overhead Deep Squat",
     instructions:
-      "Assess deep squat pattern quality using the BPOP deep squat rubric and enter the numeric score (0–9).",
-    notes: "Higher score = better movement quality and mobility.",
-    inputType: "number",
-    min: 0,
-    max: 9,
-    step: 1,
-    unitHint: "score (0–9)",
-    placeholder: "0–9",
+      "Have the player stand with feet shoulder-width apart and arms straight overhead. Have them perform a deep squat, trying to get the pelvis below the knees without the arms moving forward or the ankles flaring.",
+    notes:
+      "Selection is converted to a 0–9 point score. Full overhead deep squat = 9 points. If not full, select one or more of the compensation patterns.",
+    // We'll render this with custom UI in AssessmentSessionPage
+    inputType: "select",
+    options: [
+      { value: "full", label: "Full overhead deep squat" },
+      { value: "arms", label: "Arms move forward" },
+      { value: "pelvis", label: "Pelvis not below the knees" },
+      { value: "ankles", label: "Ankles flare" },
+    ],
+    unitHint: "points (0–9)",
   },
+
 
   /* ---------------------------------------------------------------------- */
   /*                        HITTING (10U+ core tests)                       */

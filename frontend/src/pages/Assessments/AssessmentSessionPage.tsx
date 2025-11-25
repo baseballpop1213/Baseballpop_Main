@@ -1,5 +1,5 @@
 // src/pages/Assessments/AssessmentSessionPage.tsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, Fragment } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
   getAssessmentSession,
@@ -307,6 +307,409 @@ export default function AssessmentSessionPage() {
   const effectiveEvalType =
     session?.evaluation_type ?? (sessionData as any)?.evaluation_type ?? null;
 
+  // Athletic Skills: which section is active in the grid tabs
+  const [activeAthleticBlock, setActiveAthleticBlock] = useState<
+    "speed" | "strength" | "power" | "balance" | "mobility"
+  >("speed");
+
+  // Group metrics by logical group (Speed, Strength, Power, Balance, Mobility, etc.)
+  const groupedMetrics = useMemo(() => {
+    if (!metrics.length) return [];
+
+    type Group = {
+      key: string;
+      label: string;
+      metrics: AssessmentMetric[];
+    };
+
+    const map = new Map<string, Group>();
+
+    for (const m of metrics) {
+      const metricKey = (m as any).metric_key as string | undefined;
+      const meta = metricKey ? getMetricMeta(metricKey) : undefined;
+      const rawGroup = (meta?.group || "Other").trim();
+      const key = rawGroup || "Other";
+      const label = rawGroup || "Other";
+
+      let group = map.get(key);
+      if (!group) {
+        group = { key, label, metrics: [] };
+        map.set(key, group);
+      }
+      group.metrics.push(m);
+    }
+
+    const groups = Array.from(map.values()).sort((a, b) =>
+      a.label.localeCompare(b.label)
+    );
+    return groups;
+  }, [metrics]);
+
+  // For Athletic Skills, show only the metrics for the active block
+  const visibleGroupedMetrics = useMemo(() => {
+    let groups = groupedMetrics.map((g) => ({
+      ...g,
+      metrics: [...g.metrics],
+    }));
+
+    if (effectiveEvalType === "athletic") {
+      // Hide the raw base-path distance rows; we drive those via the base-length field UI
+      const hiddenKeys = new Set<string>([
+        "timed_run_1b_distance_ft",
+        "timed_run_4b_distance_ft",
+      ]);
+
+      groups = groups
+        .map((g) => ({
+          ...g,
+          metrics: g.metrics.filter((m) => {
+            const metricKey = (m as any).metric_key as string | undefined;
+            return !metricKey || !hiddenKeys.has(metricKey);
+          }),
+        }))
+        .filter((g) => g.metrics.length > 0);
+
+      const blockToGroups: Record<
+        "speed" | "strength" | "power" | "balance" | "mobility",
+        string[]
+      > = {
+        speed: ["Speed", "Agility"],
+        strength: ["Strength"],
+        power: ["Power"],
+        balance: ["Balance"],
+        mobility: ["Mobility"],
+      };
+
+      const allowedLabels = blockToGroups[activeAthleticBlock].map((s) =>
+        s.toLowerCase()
+      );
+
+      groups = groups.filter((g) =>
+        allowedLabels.includes(g.label.toLowerCase())
+      );
+    }
+
+    return groups;
+  }, [groupedMetrics, effectiveEvalType, activeAthleticBlock]);
+
+  // Overall progress: how many metrics have at least one value for any player
+  const metricsCompletion = useMemo(() => {
+    if (!metrics.length || !gridColumns.length || !sessionData) {
+      return { metricsWithAnyValue: 0, totalMetrics: metrics.length };
+    }
+
+    const values = sessionData.values || {};
+    let metricsWithAnyValue = 0;
+
+    for (const m of metrics) {
+      const metricId = m.id;
+      let hasValue = false;
+
+      for (const col of gridColumns) {
+        const perPlayer = (values as any)[col.id] || {};
+        const v = perPlayer[metricId];
+        const numeric = v?.value_numeric;
+        const text = v?.value_text;
+
+        if (
+          (numeric !== null &&
+            numeric !== undefined &&
+            !Number.isNaN(numeric)) ||
+          (text !== null &&
+            text !== undefined &&
+            String(text).trim() !== "")
+        ) {
+          hasValue = true;
+          break;
+        }
+      }
+
+      if (hasValue) {
+        metricsWithAnyValue += 1;
+      }
+    }
+
+    return { metricsWithAnyValue, totalMetrics: metrics.length };
+  }, [metrics, gridColumns, sessionData]);
+
+  // Speed block helpers: base path length + stopwatch for 1B / 4B speed
+  const speedMetricKeys = {
+    run1b: "timed_run_1b",
+    run4b: "timed_run_4b",
+    run1bDist: "timed_run_1b_distance_ft",
+    run4bDist: "timed_run_4b_distance_ft",
+  } as const;
+
+  const speedMetricsByKey = useMemo(() => {
+    const map: Record<string, AssessmentMetric | undefined> = {};
+    const allowedKeys = Object.values(speedMetricKeys) as string[];
+
+    for (const m of metrics) {
+      const metricKey = (m as any).metric_key as string | undefined;
+      if (metricKey && allowedKeys.includes(metricKey)) {
+        map[metricKey] = m;
+      }
+    }
+    return map;
+  }, [metrics]);
+
+  // Balance & Mobility metric keys (adjust to match your DB metric_key values if needed)
+  const BALANCE_KEYS = {
+    slsEyesOpenRight: "sls_eyes_open_right",
+    slsEyesOpenLeft: "sls_eyes_open_left",
+    slsEyesClosedRight: "sls_eyes_closed_right",
+    slsEyesClosedLeft: "sls_eyes_closed_left",
+  } as const;
+
+  const MOBILITY_KEYS = {
+    msrRight: "msr_right",
+    msrLeft: "msr_left",
+  } as const;
+
+
+  const basePathFeet: number | null =
+    (sessionData as any)?.base_path_distance_ft ?? null;
+
+  function handleBasePathChange(raw: string) {
+    if (!sessionData) return;
+
+    const trimmed = raw.trim();
+    const numeric =
+      trimmed === "" ? null : Number.parseFloat(trimmed.replace(",", "."));
+    const safe =
+      numeric === null || Number.isNaN(numeric) || numeric <= 0 ? null : numeric;
+
+    setSessionData((prev) => {
+      const base: EvalSessionData =
+        (prev ?? sessionData) as EvalSessionData;
+      const next: EvalSessionData = {
+        ...base,
+        values: { ...(base.values || {}) },
+      };
+
+      (next as any).base_path_distance_ft = safe ?? undefined;
+
+      // Also populate the hidden distance metrics so the backend has them
+      if (safe && speedMetricsByKey[speedMetricKeys.run1bDist]) {
+        const m1 = speedMetricsByKey[speedMetricKeys.run1bDist]!;
+        const m4 = speedMetricsByKey[speedMetricKeys.run4bDist];
+
+        for (const col of gridColumns) {
+          const pid = col.id;
+          const perPlayer = { ...((next.values as any)[pid] || {}) };
+          perPlayer[m1.id] = {
+            value_numeric: safe,
+            value_text: null,
+          };
+          if (m4) {
+            perPlayer[m4.id] = {
+              value_numeric: safe * 4,
+              value_text: null,
+            };
+          }
+          (next.values as any)[pid] = perPlayer;
+        }
+      }
+
+      return next;
+    });
+
+    setDirty(true);
+  }
+
+  const [speedTimerMetricKey, setSpeedTimerMetricKey] = useState<
+    (typeof speedMetricKeys)["run1b"] | (typeof speedMetricKeys)["run4b"]
+  >(speedMetricKeys.run1b);
+  const [speedTimerRunning, setSpeedTimerRunning] = useState(false);
+  const [speedTimerMs, setSpeedTimerMs] = useState(0);
+  const [strengthTimerRunning, setStrengthTimerRunning] = useState(false);
+  const [strengthTimerMs, setStrengthTimerMs] = useState(0);
+
+  const [balanceTimerRunning, setBalanceTimerRunning] = useState(false);
+  const [balanceTimerMs, setBalanceTimerMs] = useState(0);
+
+  
+  useEffect(() => {
+    if (!speedTimerRunning) return;
+
+    const start = performance.now() - speedTimerMs;
+    const id = window.setInterval(() => {
+      setSpeedTimerMs(performance.now() - start);
+    }, 30);
+
+    return () => {
+      window.clearInterval(id);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [speedTimerRunning]);
+
+  const strengthDurationMs = useMemo(() => {
+    // If this athletic template uses 30-second strength tests (11U and below),
+    // we look for the 30s metric keys. Otherwise default to 60 seconds.
+    const keys = metrics.map(
+      (m) => (m as any).metric_key as string | undefined
+    );
+
+    const has30SecondStrength = keys.some(
+      (k) => k === "apush_30" || k === "asit_30"
+    );
+
+    return has30SecondStrength ? 30000 : 60000;
+  }, [metrics]);
+
+  const strengthSecondsRemaining = Math.max(
+    0,
+    Math.round((strengthDurationMs - strengthTimerMs) / 1000)
+  );
+
+  const balanceSecondsRemaining = Math.max(
+    0,
+    Math.round((30000 - balanceTimerMs) / 1000)
+  );
+  
+  
+  // Countdown for Strength block (60s for Pro–12U, 30s for 11U and below)
+  useEffect(() => {
+    if (!strengthTimerRunning) return;
+
+    const duration = strengthDurationMs;
+    const start = performance.now() - strengthTimerMs;
+    const id = window.setInterval(() => {
+      const elapsed = performance.now() - start;
+
+      if (elapsed >= duration) {
+        setStrengthTimerMs(duration);
+        setStrengthTimerRunning(false);
+        window.clearInterval(id);
+        try {
+          (window as any).navigator?.vibrate?.(200);
+        } catch {
+          // ignore if vibration isn't supported
+        }
+        return;
+      }
+
+      setStrengthTimerMs(elapsed);
+    }, 50);
+
+    return () => {
+      window.clearInterval(id);
+    };
+  }, [strengthTimerRunning, strengthTimerMs, strengthDurationMs]);
+
+  // 30-second countdown for Balance (SLS) block
+  useEffect(() => {
+    if (!balanceTimerRunning) return;
+
+    const start = performance.now() - balanceTimerMs;
+    const id = window.setInterval(() => {
+      const elapsed = performance.now() - start;
+
+      if (elapsed >= 30000) {
+        setBalanceTimerMs(30000);
+        setBalanceTimerRunning(false);
+        window.clearInterval(id);
+        try {
+          (window as any).navigator?.vibrate?.(200);
+        } catch {
+          // ignore if vibration isn't supported
+        }
+        return;
+      }
+
+      setBalanceTimerMs(elapsed);
+    }, 50);
+
+    return () => {
+      window.clearInterval(id);
+    };
+  }, [balanceTimerRunning, balanceTimerMs]);
+
+  
+  const speedTimerSeconds =
+    Math.round((speedTimerMs / 1000) * 100) / 100 || 0;
+  
+  function handleSpeedTimerStart() {
+    setSpeedTimerMs(0);
+    setSpeedTimerRunning(true);
+  }
+
+  function handleSpeedTimerReset() {
+    setSpeedTimerRunning(false);
+    setSpeedTimerMs(0);
+  }
+
+  function handleSpeedTimerStopAndFill() {
+    setSpeedTimerRunning(false);
+    const seconds =
+      Math.round((speedTimerMs / 1000) * 100) / 100 || speedTimerSeconds;
+
+    if (!sessionData || !metrics.length || !gridColumns.length) return;
+
+    const targetKey = speedTimerMetricKey;
+    const metric = metrics.find(
+      (m) => (m as any).metric_key === targetKey
+    );
+    if (!metric) return;
+
+    const metricId = metric.id;
+    const values = (sessionData.values || {}) as any;
+
+    let targetPlayerId: string | null = null;
+    for (const col of gridColumns) {
+      const pid = col.id;
+      const perPlayer = values[pid] || {};
+      const v = perPlayer[metricId];
+      const numeric = v?.value_numeric;
+      const text = v?.value_text;
+
+      if (
+        (numeric === null ||
+          numeric === undefined ||
+          Number.isNaN(numeric)) &&
+        (!text || String(text).trim() === "")
+      ) {
+        targetPlayerId = pid;
+        break;
+      }
+    }
+
+    if (!targetPlayerId && gridColumns.length > 0) {
+      targetPlayerId = gridColumns[0].id;
+    }
+
+    if (targetPlayerId) {
+      // Reuse the same helper that all inputs use
+      handleValueChange(metricId, targetPlayerId, seconds.toFixed(2));
+    }
+  }
+
+
+  function handleStrengthTimerStart() {
+    setStrengthTimerMs(0);
+    setStrengthTimerRunning(true);
+  }
+
+  function handleStrengthTimerReset() {
+    setStrengthTimerRunning(false);
+    setStrengthTimerMs(0);
+  }
+
+  function handleBalanceTimerStart() {
+    setBalanceTimerMs(0);
+    setBalanceTimerRunning(true);
+  }
+
+  function handleBalanceTimerReset() {
+    setBalanceTimerRunning(false);
+    setBalanceTimerMs(0);
+  }
+
+
+  
+  // keep your existing handleValueChange(...) function below this
+
+  
   function handleValueChange(
     metricId: number,
     playerId: string,
@@ -314,6 +717,105 @@ export default function AssessmentSessionPage() {
   ) {
     if (!sessionData || isFinalized) return;
 
+    // Look up the metric so we can special-case deep squat
+    const metric = metrics.find((m) => m.id === metricId);
+    const metricKey = metric?.metric_key;
+
+    // Special-case: Full Overhead Deep Squat (multi-select → score)
+    if (metricKey === "deep_squat") {
+      const code = raw as "full" | "arms" | "pelvis" | "ankles";
+
+      setSessionData((prev) => {
+        const base: EvalSessionData =
+          prev ?? {
+            player_ids: sessionData.player_ids ?? [],
+            values: {},
+            completed_metric_ids: sessionData.completed_metric_ids ?? [],
+            evaluation_type: effectiveEvalType,
+            session_mode: effectiveSessionMode as any,
+          };
+
+        const values = { ...(base.values || {}) } as {
+          [playerId: string]: {
+            [metricId: number]: { value_numeric: number | null; value_text: string | null };
+          };
+        };
+
+        const byPlayer = { ...(values[playerId] || {}) };
+        const existing = byPlayer[metricId];
+        let selected: string[] = [];
+
+        // Restore existing selections from value_text (JSON string)
+        if (existing?.value_text && typeof existing.value_text === "string") {
+          try {
+            const parsed = JSON.parse(existing.value_text);
+            if (Array.isArray(parsed)) {
+              selected = parsed.filter((c: any) =>
+                ["full", "arms", "pelvis", "ankles"].includes(String(c))
+              );
+            }
+          } catch {
+            // ignore parse errors
+          }
+        }
+
+        // Toggle logic
+        if (code === "full") {
+          if (selected.includes("full")) {
+            // unselect full
+            selected = [];
+          } else {
+            // selecting full clears others
+            selected = ["full"];
+          }
+        } else {
+          // toggling one of the compensations
+          selected = selected.filter((c) => c !== "full");
+          if (selected.includes(code)) {
+            selected = selected.filter((c) => c !== code);
+          } else {
+            selected = [...selected, code];
+          }
+        }
+
+        // Compute score based on selection
+        let score: number | null = null;
+        if (selected.includes("full")) {
+          selected = ["full"];
+          score = 9;
+        } else {
+          const count = selected.length;
+          if (count === 0) {
+            score = null;
+          } else if (count === 1) {
+            score = 6;
+          } else if (count === 2) {
+            score = 3;
+          } else {
+            score = 0;
+          }
+        }
+
+        byPlayer[metricId] = {
+          value_numeric: score,
+          value_text:
+            selected.length > 0 ? JSON.stringify(selected) : null,
+        };
+
+        return {
+          ...base,
+          values: {
+            ...values,
+            [playerId]: byPlayer,
+          },
+        };
+      });
+
+      setDirty(true);
+      return;
+    }
+
+    // Default path: numeric / simple text values
     const numeric =
       raw === "" || raw === null ? null : Number.parseFloat(raw);
     const safeNumeric =
@@ -348,6 +850,7 @@ export default function AssessmentSessionPage() {
 
     setDirty(true);
   }
+
 
   async function handleAddTryoutPlayerInSession() {
     if (!session || !sessionData) return;
@@ -643,9 +1146,10 @@ export default function AssessmentSessionPage() {
         <p className="text-xs text-slate-400 mt-1">
           Mode: {session.mode} · Session mode: {effectiveSessionMode}
         </p>
-        {effectiveEvalType && (
+        {effectiveEvalType === "athletic" && (
           <p className="text-xs text-slate-400 mt-1">
-            Evaluation type: {effectiveEvalType}
+            Athletic skills battery: speed, agility, strength, power, balance,
+            and mobility.
           </p>
         )}
         {template && (
@@ -859,6 +1363,7 @@ export default function AssessmentSessionPage() {
         </section>
       )}
 
+ 
       {/* Metrics × players grid */}
       <section className="rounded-xl bg-slate-900/70 border border-slate-700 p-3 space-y-3">
         <div className="flex items-center justify-between">
@@ -866,6 +1371,12 @@ export default function AssessmentSessionPage() {
             Enter assessment results
           </h3>
           <div className="flex items-center gap-3 text-[11px]">
+            {metricsCompletion.totalMetrics > 0 && (
+              <span className="text-slate-400">
+                {metricsCompletion.metricsWithAnyValue}/
+                {metricsCompletion.totalMetrics} metrics started
+              </span>
+            )}
             {dirty && !isFinalized && (
               <span className="text-amber-300">Unsaved changes</span>
             )}
@@ -878,62 +1389,317 @@ export default function AssessmentSessionPage() {
           </div>
         </div>
 
-        {loadingTemplate && (
-          <p className="text-xs text-slate-400">Loading metrics…</p>
+        {effectiveEvalType === "athletic" && (
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
+            <span className="text-slate-400">Section:</span>
+            {(
+              ["speed", "strength", "power", "balance", "mobility"] as const
+            ).map((block) => {
+              const labelMap: Record<
+                (typeof block),
+                string
+              > = {
+                speed: "Speed",
+                strength: "Strength",
+                power: "Power",
+                balance: "Balance",
+                mobility: "Mobility",
+              };
+              const isActive = activeAthleticBlock === block;
+              return (
+                <button
+                  key={block}
+                  type="button"
+                  onClick={() => setActiveAthleticBlock(block)}
+                  className={[
+                    "px-2 py-0.5 rounded-full border text-[11px]",
+                    isActive
+                      ? "border-emerald-400/80 bg-emerald-500/10 text-emerald-200"
+                      : "border-slate-600 bg-slate-800/60 text-slate-200 hover:bg-slate-700",
+                  ].join(" ")}
+                >
+                  {labelMap[block]}
+                </button>
+              );
+            })}
+          </div>
         )}
 
-        {templateError && (
-          <p className="text-xs text-red-400">{templateError}</p>
-        )}
+        {effectiveEvalType === "athletic" &&
+          activeAthleticBlock === "speed" && (
+           
+            <div className="mt-2 space-y-3 text-[11px]">
+              <div className="space-y-1">
+                <div className="font-semibold text-slate-200">
+                  Base length
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={40}
+                    max={90}
+                    step={1}
+                    className="w-24 rounded-md bg-slate-950 border border-slate-700 px-2 py-1 text-[11px] text-slate-100"
+                    value={basePathFeet ?? ""}
+                    onChange={(e) => handleBasePathChange(e.target.value)}
+                    disabled={isFinalized}
+                    placeholder="ft"
+                  />
+                  <span className="text-slate-400">
+                    feet (home → 1B)
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-500">
+                  This drives the 1B and 4B base-path distance metrics
+                  behind the scenes. 4B distance is always 4× this value.
+                </p>
+              </div>
 
-        {!loadingTemplate && !templateError && metrics.length === 0 && (
-          <p className="text-xs text-slate-400">
-            No metrics defined for this template yet.
-          </p>
-        )}
-
-        {!loadingTemplate &&
-          !templateError &&
-          metrics.length > 0 &&
-          gridColumns.length === 0 && (
-            <p className="text-xs text-slate-400">
-              No players available for this session yet.
-            </p>
+              <div className="space-y-1">
+                <div className="font-semibold text-slate-200">
+                  Stopwatch
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] text-slate-400 mr-1">
+                    Target:
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSpeedTimerMetricKey(speedMetricKeys.run1b)
+                    }
+                    className={[
+                      "px-2 py-0.5 rounded-full border text-[10px]",
+                      speedTimerMetricKey === speedMetricKeys.run1b
+                        ? "border-emerald-400/80 bg-emerald-500/10 text-emerald-200"
+                        : "border-slate-600 bg-slate-800/60 text-slate-200 hover:bg-slate-700",
+                    ].join(" ")}
+                  >
+                    1B Speed
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSpeedTimerMetricKey(speedMetricKeys.run4b)
+                    }
+                    className={[
+                      "px-2 py-0.5 rounded-full border text-[10px]",
+                      speedTimerMetricKey === speedMetricKeys.run4b
+                        ? "border-emerald-400/80 bg-emerald-500/10 text-emerald-200"
+                        : "border-slate-600 bg-slate-800/60 text-slate-200 hover:bg-slate-700",
+                    ].join(" ")}
+                  >
+                    4B Speed
+                  </button>
+                </div>
+                <div className="mt-1 flex items-center gap-3">
+                  <div className="text-lg font-mono tabular-nums text-slate-50">
+                    {speedTimerSeconds.toFixed(2)}s
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {!speedTimerRunning ? (
+                      <button
+                        type="button"
+                        onClick={handleSpeedTimerStart}
+                        className="px-2 py-0.5 rounded-md border border-emerald-500/70 bg-emerald-500/10 text-[11px] text-emerald-200"
+                        disabled={isFinalized}
+                      >
+                        Start
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleSpeedTimerStopAndFill}
+                        className="px-2 py-0.5 rounded-md border border-amber-400/70 bg-amber-500/10 text-[11px] text-amber-200"
+                        disabled={isFinalized}
+                      >
+                        Stop &amp; fill next
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleSpeedTimerReset}
+                      className="px-2 py-0.5 rounded-md border border-slate-600 bg-slate-800/70 text-[11px] text-slate-200"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                </div>
+                <p className="text-[10px] text-slate-500">
+                  When you stop, the time is written into the next empty
+                  cell for the selected sprint metric.
+                </p>
+              </div>
+            </div>
           )}
 
-        {!loadingTemplate &&
-          !templateError &&
-          metrics.length > 0 &&
-          gridColumns.length > 0 && (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-[11px] border border-slate-700 rounded-lg overflow-hidden">
-                <thead className="bg-slate-800/80">
-                  <tr>
-                    <th className="text-left px-2 py-1 border-b border-slate-700">
-                      Metric
-                    </th>
-                    {gridColumns.map((col) => (
-                      <th
-                        key={col.id}
-                        className="text-center px-2 py-1 border-b border-slate-700"
-                      >
-                        <div className="font-medium">{col.name}</div>
-                        <div className="text-[10px] text-slate-400">
-                          {col.jerseyLabel ?? "—"}
+        {effectiveEvalType === "athletic" &&
+          activeAthleticBlock === "strength" && (
+            <div className="mt-2 space-y-1 text-[11px]">
+              <div className="font-semibold text-slate-200">
+                {strengthDurationMs / 1000}-second strength timer
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="text-lg font-mono tabular-nums text-slate-50">
+                  {strengthSecondsRemaining}s
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {!strengthTimerRunning ? (
+                    <button
+                      type="button"
+                      onClick={handleStrengthTimerStart}
+                      className="px-2 py-0.5 rounded-md border border-emerald-500/70 bg-emerald-500/10 text-[11px] text-emerald-200"
+                      disabled={isFinalized}
+                    >
+                      Start {strengthDurationMs / 1000}s
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setStrengthTimerRunning(false)}
+                      className="px-2 py-0.5 rounded-md border border-amber-400/70 bg-amber-500/10 text-[11px] text-amber-200"
+                    >
+                      Stop
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleStrengthTimerReset}
+                    className="px-2 py-0.5 rounded-md border border-slate-600 bg-slate-800/70 text-[11px] text-slate-200"
+                  >
+                    Reset
+                  </button>
+                </div>
+              </div>
+              <p className="text-[10px] text-slate-500">
+                Use this when running timed push-up, sit-up, or pull-up tests.
+                The duration matches the current age-group template
+                (30 seconds for 11U and younger, 60 seconds for older players).
+              </p>
+            </div>
+          )}
+
+
+        {effectiveEvalType === "athletic" &&
+          activeAthleticBlock === "balance" && (
+            <div className="mt-2 space-y-1 text-[11px]">
+              <div className="font-semibold text-slate-200">
+                30-second SLS timer
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="text-lg font-mono tabular-nums text-slate-50">
+                  {balanceSecondsRemaining}s
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {!balanceTimerRunning ? (
+                    <button
+                      type="button"
+                      onClick={handleBalanceTimerStart}
+                      className="px-2 py-0.5 rounded-md border border-emerald-500/70 bg-emerald-500/10 text-[11px] text-emerald-200"
+                      disabled={isFinalized}
+                    >
+                      Start 30s
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setBalanceTimerRunning(false)}
+                      className="px-2 py-0.5 rounded-md border border-amber-400/70 bg-amber-500/10 text-[11px] text-amber-200"
+                    >
+                      Stop
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleBalanceTimerReset}
+                    className="px-2 py-0.5 rounded-md border border-slate-600 bg-slate-800/70 text-[11px] text-slate-200"
+                  >
+                    Reset
+                  </button>
+                </div>
+              </div>
+              <p className="text-[10px] text-slate-500">
+                Use this when timing single-leg stance (SLS) eyes open or closed.
+                Start when the player is stable, stop when they lose balance, and
+                enter the seconds held into the R/L fields in the Balance grid.
+              </p>
+            </div>
+          )}
+
+        
+        <div className="overflow-x-auto rounded-lg border border-slate-800 bg-slate-950/40">
+          {loadingTemplate && (
+            <div className="p-4 text-xs text-slate-400">
+              Loading assessment template…
+            </div>
+          )}
+
+          {!loadingTemplate && templateError && (
+            <div className="p-4 text-xs text-red-400 whitespace-pre-line">
+              {templateError}
+            </div>
+          )}
+          
+          {!loadingTemplate && visibleGroupedMetrics.length === 0 && (
+            <div className="p-4 text-xs text-slate-400">
+              No metrics found for this session.
+            </div>
+          )}
+          {!loadingTemplate && visibleGroupedMetrics.length > 0 && (
+            <table className="min-w-full text-[11px]">
+              <thead className="bg-slate-900/80">
+                <tr>
+                  <th className="text-left px-2 py-1 border-b border-slate-700 w-[32%]">
+                    Metric
+                  </th>
+                  {gridColumns.map((col) => (
+                    <th
+                      key={col.id}
+                      className="text-center px-2 py-1 border-b border-slate-700"
+                    >
+                      <div className="font-medium">{col.name}</div>
+                      <div className="text-[10px] text-slate-400">
+                        {col.jerseyLabel ?? "—"}
+                      </div>
+                      {col.kind === "tryout" && (
+                        <div className="text-[10px] text-amber-300">
+                          Tryout
                         </div>
-                        {col.kind === "tryout" && (
-                          <div className="text-[10px] text-amber-300">
-                            Tryout
-                          </div>
-                        )}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {metrics.map((m) => {
-                    const metricKey = (m as any).metric_key as string | undefined;
-                    const meta = metricKey ? getMetricMeta(metricKey) : undefined;
+                      )}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {visibleGroupedMetrics.map((group) => {
+                  const isBalance =
+                    group.label.toLowerCase() === "balance";
+                  const isMobility =
+                    group.label.toLowerCase() === "mobility";
+
+                  const rows: React.ReactNode[] = [];
+
+                  // Group header row (Speed / Strength / Balance / Mobility / etc.)
+                  if (group.label !== "Other") {
+                    rows.push(
+                      <tr className="bg-slate-800/60" key={`${group.key}-header`}>
+                        <td
+                          colSpan={1 + gridColumns.length}
+                          className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-300 border-b border-slate-700"
+                        >
+                          {group.label}
+                        </td>
+                      </tr>
+                    );
+                  }
+
+                  // Helper for a generic metric row (used for non-special metrics)
+                  const pushDefaultRow = (m: AssessmentMetric) => {
+                    const metricKey = (m as any)
+                      .metric_key as string | undefined;
+                    const meta = metricKey
+                      ? getMetricMeta(metricKey)
+                      : undefined;
 
                     const displayName =
                       meta?.shortLabel ||
@@ -953,13 +1719,18 @@ export default function AssessmentSessionPage() {
                     if ((m as any).unit) {
                       detailLineParts.push(`Unit: ${(m as any).unit}`);
                     }
-                    if (meta?.unitHint && !detailLineParts.some((p) => p.includes("Unit"))) {
-                      // Nice little extra: show unit hint if we haven’t already shown unit from DB
+                    if (
+                      meta?.unitHint &&
+                      !detailLineParts.some((p) => p.includes("Unit"))
+                    ) {
                       detailLineParts.push(meta.unitHint);
                     }
 
-                    return (
-                      <tr key={m.id} className="border-b border-slate-800">
+                    rows.push(
+                      <tr
+                        key={`metric-${m.id}`}
+                        className="border-b border-slate-800"
+                      >
                         <td className="align-top px-2 py-2">
                           <div className="font-medium text-slate-100">
                             {displayName}
@@ -980,12 +1751,63 @@ export default function AssessmentSessionPage() {
                           const perPlayer =
                             (sessionData.values as any)?.[playerId] || {};
                           const v = perPlayer[m.id];
+
+                          const numericValue = v?.value_numeric;
+                          const textValue = v?.value_text;
+                          const commonKey = `${m.id}-${playerId}`;
+
+                          // Select-style metrics (e.g. MSR, Toe Touch) – generic path
+                          if (
+                            meta?.inputType === "select" &&
+                            meta.options &&
+                            meta.options.length > 0
+                          ) {
+                            const selectValue =
+                              numericValue !== null &&
+                              numericValue !== undefined &&
+                              !Number.isNaN(numericValue)
+                                ? String(numericValue)
+                                : textValue != null
+                                ? String(textValue)
+                                : "";
+
+                            return (
+                              <td
+                                key={commonKey}
+                                className="px-2 py-1 align-top text-center"
+                              >
+                                <select
+                                  className="w-full max-w-[7rem] rounded-md bg-slate-950 border border-slate-700 px-1 py-0.5 text-[11px]"
+                                  value={selectValue}
+                                  onChange={(e) =>
+                                    handleValueChange(
+                                      m.id,
+                                      playerId,
+                                      e.target.value
+                                    )
+                                  }
+                                  disabled={isFinalized}
+                                >
+                                  <option value="">Select…</option>
+                                  {meta.options.map((opt) => (
+                                    <option
+                                      key={String(opt.value)}
+                                      value={String(opt.value)}
+                                    >
+                                      {opt.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </td>
+                            );
+                          }
+
                           const value =
-                            v?.value_numeric ?? (v?.value_text ?? "");
+                            numericValue ?? (textValue ?? "");
 
                           return (
                             <td
-                              key={playerId}
+                              key={commonKey}
                               className="px-2 py-1 align-top text-center"
                             >
                               <input
@@ -993,7 +1815,11 @@ export default function AssessmentSessionPage() {
                                 className="w-full max-w-[5rem] rounded-md bg-slate-950 border border-slate-700 px-1 py-0.5 text-[11px] text-center"
                                 value={value === null ? "" : value}
                                 onChange={(e) =>
-                                  handleValueChange(m.id, playerId, e.target.value)
+                                  handleValueChange(
+                                    m.id,
+                                    playerId,
+                                    e.target.value
+                                  )
                                 }
                                 disabled={isFinalized}
                                 step={meta?.step ?? undefined}
@@ -1006,11 +1832,441 @@ export default function AssessmentSessionPage() {
                         })}
                       </tr>
                     );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                  };
+
+                  // Special layout: Balance → SLS Eyes Open/Closed (R/L)
+                  if (isBalance) {
+                    const byKey = new Map<string, AssessmentMetric>();
+                    group.metrics.forEach((m) => {
+                      const metricKey = (m as any)
+                        .metric_key as string | undefined;
+                      if (metricKey) {
+                        byKey.set(metricKey, m);
+                      }
+                    });
+
+                    const openRight = byKey.get(
+                      BALANCE_KEYS.slsEyesOpenRight
+                    );
+                    const openLeft = byKey.get(
+                      BALANCE_KEYS.slsEyesOpenLeft
+                    );
+                    const closedRight = byKey.get(
+                      BALANCE_KEYS.slsEyesClosedRight
+                    );
+                    const closedLeft = byKey.get(
+                      BALANCE_KEYS.slsEyesClosedLeft
+                    );
+
+                    const usedIds = new Set<number>();
+                    if (openRight) usedIds.add(openRight.id);
+                    if (openLeft) usedIds.add(openLeft.id);
+                    if (closedRight) usedIds.add(closedRight.id);
+                    if (closedLeft) usedIds.add(closedLeft.id);
+
+                    const renderBalanceCell = (
+                      playerId: string,
+                      mRight?: AssessmentMetric,
+                      mLeft?: AssessmentMetric
+                    ) => {
+                      const renderSide = (
+                        mSide: AssessmentMetric | undefined,
+                        label: "R" | "L"
+                      ) => {
+                        if (!mSide) {
+                          return (
+                            <div className="flex-1 text-[10px] text-slate-500 mt-1 text-center">
+                              —
+                            </div>
+                          );
+                        }
+
+                        const perPlayer =
+                          (sessionData.values as any)?.[playerId] ||
+                          {};
+                        const v = perPlayer[mSide.id];
+                        const numericValue = v?.value_numeric;
+                        const textValue = v?.value_text;
+                        const value =
+                          numericValue ?? (textValue ?? "");
+
+                        return (
+                          <div className="flex-1">
+                            <div className="text-[10px] text-slate-400 mb-0.5">
+                              {label}
+                            </div>
+                            <input
+                              type="number"
+                              className="w-full max-w-[5rem] rounded-md bg-slate-950 border border-slate-700 px-1 py-0.5 text-[11px] text-center"
+                              value={value === null ? "" : value}
+                              onChange={(e) =>
+                                handleValueChange(
+                                  mSide.id,
+                                  playerId,
+                                  e.target.value
+                                )
+                              }
+                              disabled={isFinalized}
+                              step={0.1}
+                              min={0}
+                              max={30}
+                              placeholder="sec"
+                            />
+                          </div>
+                        );
+                      };
+
+                      return (
+                        <div className="flex gap-2 justify-center">
+                          {renderSide(mRight, "R")}
+                          {renderSide(mLeft, "L")}
+                        </div>
+                      );
+                    };
+
+                    if (openRight || openLeft) {
+                      rows.push(
+                        <tr
+                          key={`${group.key}-sls-open`}
+                          className="border-b border-slate-800"
+                        >
+                          <td className="align-top px-2 py-2">
+                            <div className="font-medium text-slate-100">
+                              SLS Eyes Open
+                            </div>
+                            <div className="text-[10px] text-slate-500 mt-0.5">
+                              Single-leg stance, eyes open. Record max
+                              seconds up to 30s for each leg (right and
+                              left).
+                            </div>
+                          </td>
+                          {gridColumns.map((col) => (
+                            <td
+                              key={`${group.key}-sls-open-${col.id}`}
+                              className="px-2 py-1 align-top text-center"
+                            >
+                              {renderBalanceCell(
+                                col.id,
+                                openRight,
+                                openLeft
+                              )}
+                            </td>
+                          ))}
+                        </tr>
+                      );
+                    }
+
+                    if (closedRight || closedLeft) {
+                      rows.push(
+                        <tr
+                          key={`${group.key}-sls-closed`}
+                          className="border-b border-slate-800"
+                        >
+                          <td className="align-top px-2 py-2">
+                            <div className="font-medium text-slate-100">
+                              SLS Eyes Closed
+                            </div>
+                            <div className="text-[10px] text-slate-500 mt-0.5">
+                              Single-leg stance, eyes closed. Record max
+                              seconds up to 30s for each leg (right and
+                              left).
+                            </div>
+                          </td>
+                          {gridColumns.map((col) => (
+                            <td
+                              key={`${group.key}-sls-closed-${col.id}`}
+                              className="px-2 py-1 align-top text-center"
+                            >
+                              {renderBalanceCell(
+                                col.id,
+                                closedRight,
+                                closedLeft
+                              )}
+                            </td>
+                          ))}
+                        </tr>
+                      );
+                    }
+
+                    // Any other Balance metrics (if present) fall back to generic rows
+                    const remainingBalanceMetrics = group.metrics.filter(
+                      (m) => !usedIds.has(m.id)
+                    );
+                    remainingBalanceMetrics.forEach((m) =>
+                      pushDefaultRow(m)
+                    );
+
+                    return <Fragment key={group.key}>{rows}</Fragment>;
+                  }
+
+                  // Special layout: Mobility → MSR (R/L) + generic for others (e.g. Toe Touch)
+              // Special layout: Mobility → MSR (R/L) + Deep Squat + generic for others (e.g. Toe Touch)
+              if (isMobility) {
+                const byKey = new Map<string, AssessmentMetric>();
+                group.metrics.forEach((m) => {
+                  const metricKey = (m as any)
+                    .metric_key as string | undefined;
+                  if (metricKey) {
+                    byKey.set(metricKey, m);
+                  }
+                });
+
+                const msrRight = byKey.get(MOBILITY_KEYS.msrRight);
+                const msrLeft = byKey.get(MOBILITY_KEYS.msrLeft);
+
+                // Deep squat metric keyed as "deep_squat"
+                const deepSquatMetric = byKey.get(
+                  "deep_squat"
+                );
+
+                const usedIds = new Set<number>();
+                if (msrRight) usedIds.add(msrRight.id);
+                if (msrLeft) usedIds.add(msrLeft.id);
+                if (deepSquatMetric) usedIds.add(deepSquatMetric.id);
+
+                const renderMobilitySelectCell = (
+                  playerId: string,
+                  mSide?: AssessmentMetric,
+                  label?: "R" | "L"
+                ) => {
+                  if (!mSide) {
+                    return (
+                      <div className="flex-1 text-[10px] text-slate-500 mt-1 text-center">
+                        —
+                      </div>
+                    );
+                  }
+
+                  const metricKey = (mSide as any)
+                    .metric_key as string | undefined;
+                  const meta = metricKey
+                    ? getMetricMeta(metricKey)
+                    : undefined;
+
+                  const perPlayer =
+                    (sessionData.values as any)?.[playerId] || {};
+                  const v = perPlayer[mSide.id];
+
+                  const numericValue = v?.value_numeric;
+                  const textValue = v?.value_text;
+
+                  const selectValue =
+                    numericValue !== null &&
+                    numericValue !== undefined &&
+                    !Number.isNaN(numericValue)
+                      ? String(numericValue)
+                      : textValue != null
+                      ? String(textValue)
+                      : "";
+
+                  return (
+                    <div className="flex-1">
+                      {label && (
+                        <div className="text-[10px] text-slate-400 mb-0.5">
+                          {label}
+                        </div>
+                      )}
+                      <select
+                        className="w-full max-w-[7rem] rounded-md bg-slate-950 border border-slate-700 px-1 py-0.5 text-[11px]"
+                        value={selectValue}
+                        onChange={(e) =>
+                          handleValueChange(
+                            mSide.id,
+                            playerId,
+                            e.target.value
+                          )
+                        }
+                        disabled={isFinalized}
+                      >
+                        <option value="">Select…</option>
+                        {meta?.options?.map((opt: any) => (
+                          <option
+                            key={String(opt.value)}
+                            value={String(opt.value)}
+                          >
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                };
+
+                // MSR combined row (Right + Left)
+                if (msrRight || msrLeft) {
+                  rows.push(
+                    <tr
+                      key={`${group.key}-msr`}
+                      className="border-b border-slate-800"
+                    >
+                      <td className="align-top px-2 py-2">
+                        <div className="font-medium text-slate-100">
+                          MSR (rotation)
+                        </div>
+                        <div className="text-[10px] text-slate-500 mt-0.5">
+                          Multi-segment rotation with bat across
+                          shoulders. Score right and left based on
+                          how far the player can rotate.
+                        </div>
+                      </td>
+                      {gridColumns.map((col) => (
+                        <td
+                          key={`${group.key}-msr-${col.id}`}
+                          className="px-2 py-1 align-top text-center"
+                        >
+                          <div className="flex gap-2 justify-center">
+                            {renderMobilitySelectCell(
+                              col.id,
+                              msrRight,
+                              "R"
+                            )}
+                            {renderMobilitySelectCell(
+                              col.id,
+                              msrLeft,
+                              "L"
+                            )}
+                          </div>
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                }
+
+                // Full Overhead Deep Squat row (multi-selection → score)
+                if (deepSquatMetric) {
+                  const deepSquatKey = (deepSquatMetric as any)
+                    .metric_key as string;
+                  const deepSquatMeta = deepSquatKey
+                    ? getMetricMeta(deepSquatKey)
+                    : undefined;
+
+                  const optionDefs = [
+                    { code: "full", label: "Full overhead deep squat" },
+                    { code: "arms", label: "Arms move forward" },
+                    { code: "pelvis", label: "Pelvis not below knees" },
+                    { code: "ankles", label: "Ankles flare" },
+                  ] as const;
+
+                  rows.push(
+                    <tr
+                      key={`${group.key}-deep-squat`}
+                      className="border-b border-slate-800"
+                    >
+                      <td className="align-top px-2 py-2">
+                        <div className="font-medium text-slate-100">
+                          {deepSquatMeta?.displayName ||
+                            "Full Overhead Deep Squat"}
+                        </div>
+                        <div className="text-[10px] text-slate-500 mt-0.5">
+                          Select either a full overhead deep squat or
+                          one or more compensations. Full = 9 points;
+                          1 issue = 6; 2 issues = 3; 3 issues = 0.
+                        </div>
+                      </td>
+                      {gridColumns.map((col) => {
+                        const playerId = col.id;
+                        const perPlayer =
+                          (sessionData.values as any)?.[playerId] ||
+                          {};
+                        const v = perPlayer[deepSquatMetric.id];
+                        const storedText = v?.value_text;
+                        const numericValue = v?.value_numeric;
+
+                        let selected: string[] = [];
+                        if (
+                          typeof storedText === "string" &&
+                          storedText.trim() !== ""
+                        ) {
+                          try {
+                            const parsed = JSON.parse(storedText);
+                            if (Array.isArray(parsed)) {
+                              selected = parsed.filter((c: any) =>
+                                ["full", "arms", "pelvis", "ankles"].includes(
+                                  String(c)
+                                )
+                              );
+                            }
+                          } catch {
+                            // ignore parse errors
+                          }
+                        } else if (typeof numericValue === "number") {
+                          // Best-effort fallback if only score was saved
+                          if (numericValue === 9) {
+                            selected = ["full"];
+                          }
+                        }
+
+                        return (
+                          <td
+                            key={`${group.key}-deep-squat-${col.id}`}
+                            className="px-2 py-1 align-top text-center"
+                          >
+                            <div className="flex flex-col gap-1 items-center">
+                              <div className="flex flex-wrap gap-1 justify-center">
+                                {optionDefs.map((opt) => {
+                                  const isSelected = selected.includes(
+                                    opt.code
+                                  );
+                                  return (
+                                    <button
+                                      key={opt.code}
+                                      type="button"
+                                      onClick={() =>
+                                        handleValueChange(
+                                          deepSquatMetric.id,
+                                          playerId,
+                                          opt.code
+                                        )
+                                      }
+                                      disabled={isFinalized}
+                                      className={[
+                                        "px-2 py-0.5 rounded-full border text-[10px]",
+                                        isSelected
+                                          ? "border-emerald-400 bg-emerald-500/10 text-emerald-200"
+                                          : "border-slate-600 bg-slate-900 text-slate-200",
+                                      ].join(" ")}
+                                    >
+                                      {opt.label}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              <div className="text-[10px] text-slate-400">
+                                Score:{" "}
+                                <span className="font-mono">
+                                  {numericValue ?? "—"}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                }
+
+                // Any other Mobility metrics (e.g. Toe Touch) use default rendering
+                const remainingMobilityMetrics = group.metrics.filter(
+                  (m) => !usedIds.has(m.id)
+                );
+                remainingMobilityMetrics.forEach((m) =>
+                  pushDefaultRow(m)
+                );
+
+                return <Fragment key={group.key}>{rows}</Fragment>;
+              }
+
+
+                  // All other groups (Speed, Strength, Power, etc.) use generic rows
+                  group.metrics.forEach((m) => pushDefaultRow(m));
+
+                  return <Fragment key={group.key}>{rows}</Fragment>;
+                })}
+              </tbody>
+
+            </table>
           )}
+        </div>
 
         {saveError && (
           <p className="text-xs text-red-400 whitespace-pre-line">
@@ -1028,7 +2284,7 @@ export default function AssessmentSessionPage() {
             type="button"
             onClick={handleSave}
             disabled={saving || !dirty || isFinalized}
-            className="inline-flex items-center px-3 py-1.5 rounded-md bg-slate-700 text-slate-100 text-xs font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
+            className="inline-flex items-center px-3 py-1.5 rounded-md border border-slate-600 bg-slate-800 text-slate-100 text-xs font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {saving ? "Saving…" : "Save progress"}
           </button>
@@ -1037,12 +2293,11 @@ export default function AssessmentSessionPage() {
             onClick={handleFinalize}
             disabled={
               finalizing ||
-              loadingTemplate ||
               isFinalized ||
               metrics.length === 0 ||
               gridColumns.length === 0
             }
-            className="inline-flex items-center px-3 py-1.5 rounded-md bg-emerald-500 text-slate-900 text-xs font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
+            className="inline-flex items-center px-3 py-1.5 rounded-md border border-emerald-500/80 bg-emerald-500/10 text-emerald-200 text-xs font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {finalizing
               ? "Finalizing…"
@@ -1052,6 +2307,7 @@ export default function AssessmentSessionPage() {
           </button>
         </div>
       </section>
+
 
       {/* Debug: raw session JSON */}
       <section className="rounded-xl bg-slate-900/70 border border-slate-700 p-3 text-xs text-slate-300">
