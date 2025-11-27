@@ -46,6 +46,159 @@ interface GridColumn {
   jerseyLabel?: string | null;
 }
 
+// --- Hitting matrix helpers -------------------------------------------------
+
+type HittingSwingOption = {
+  code: string;
+  label: string;
+  points: number;
+};
+
+// Metric keys that use the per-swing matrix UI
+const HITTING_MATRIX_METRIC_KEYS = {
+  fastball: "m_10_fastball_quality",       // H10FAST – 10 swings
+  youthPitch: "m_10_swing_pitch_matrix",   // H10PITCH – 10 swings (youth)
+  youthTee: "m_10_swing_tee_contact_test", // H10TEE – 10 swings (youth tee)
+  varSpeed: "m_5_varied_speed_quality",    // H5VAR – 5 swings
+  curveball: "m_5_curveball_quality",      // H5CB – 5 swings
+} as const;
+
+type HittingMatrixKey = keyof typeof HITTING_MATRIX_METRIC_KEYS;
+
+// How many swings each matrix test should show
+const HITTING_SWING_COUNTS: Record<HittingMatrixKey, number> = {
+  fastball: 10,
+  youthPitch: 10,
+  youthTee: 10,
+  varSpeed: 5,
+  curveball: 5,
+};
+
+const HITTING_MATRIX_OPTIONS: Record<HittingMatrixKey, HittingSwingOption[]> = {
+  // Older ages – full 0–5 matrix (fastballs, varied speed, curveball)
+  fastball: [
+    { code: "miss", label: "Miss (0)", points: 0 },
+    { code: "foul", label: "Foul / foul tip (1)", points: 1 },
+    { code: "weak", label: "Weak infield contact (1)", points: 1 },
+    { code: "gb", label: "GB past infielders (2)", points: 2 },
+    { code: "hgb", label: "Hard ground ball (3)", points: 3 },
+    { code: "fly", label: "Fly ball (3)", points: 3 },
+    { code: "gap", label: "Hard gap / line drive (4)", points: 4 },
+    { code: "hr", label: "No-doubt home run (5)", points: 5 },
+  ],
+
+  // Youth pitch matrix – simple 0/1/2 scoring
+  youthPitch: [
+    { code: "miss", label: "Miss (0)", points: 0 },
+    { code: "foul", label: "Foul tip (1)", points: 1 },
+    { code: "contact", label: "Contact / ball in play (2)", points: 2 },
+  ],
+
+  // Youth tee matrix – simple 0/1/2 scoring
+  youthTee: [
+    { code: "miss", label: "Miss (0)", points: 0 },
+    { code: "foul", label: "Foul / mishit (1)", points: 1 },
+    { code: "contact", label: "Good contact (2)", points: 2 },
+  ],
+
+  // 5-pitch varied speed – same rubric as fastball matrix
+  varSpeed: [
+    { code: "miss", label: "Miss (0)", points: 0 },
+    { code: "foul", label: "Foul / foul tip (1)", points: 1 },
+    { code: "weak", label: "Weak infield contact (1)", points: 1 },
+    { code: "gb", label: "GB past infielders (2)", points: 2 },
+    { code: "hgb", label: "Hard ground ball (3)", points: 3 },
+    { code: "fly", label: "Fly ball (3)", points: 3 },
+    { code: "gap", label: "Hard gap / line drive (4)", points: 4 },
+    { code: "hr", label: "No-doubt home run (5)", points: 5 },
+  ],
+
+  // 5-pitch curveball – same rubric as fastball matrix
+  curveball: [
+    { code: "miss", label: "Miss (0)", points: 0 },
+    { code: "foul", label: "Foul / foul tip (1)", points: 1 },
+    { code: "weak", label: "Weak infield contact (1)", points: 1 },
+    { code: "gb", label: "GB past infielders (2)", points: 2 },
+    { code: "hgb", label: "Hard ground ball (3)", points: 3 },
+    { code: "fly", label: "Fly ball (3)", points: 3 },
+    { code: "gap", label: "Hard gap / line drive (4)", points: 4 },
+    { code: "hr", label: "No-doubt home run (5)", points: 5 },
+  ],
+};
+
+// --- Pitching command matrix helpers ---------------------------------------
+
+// Pitch count per pitching command metric
+const PITCH_MATRIX_CONFIG: Record<string, { pitchCount: number }> = {
+  // 10U–11U: 10 pitches @ 50 ft
+  m_10_throw_test_50ft: { pitchCount: 10 },
+
+  // 12U+: 20 pitches @ 60'6"
+  m_20_throw_test_60ft: { pitchCount: 20 },
+
+  // Additional 5‑pitch matrices (HS / College / Pro)
+  tpitch5ap1: { pitchCount: 5 },
+  tpitch5ap2: { pitchCount: 5 },
+  tpitch5ap3: { pitchCount: 5 },
+  tpitch5ap4: { pitchCount: 5 },
+  tpitch5ap5: { pitchCount: 5 },
+};
+
+
+// Options for each pitch: same 0/1/3 rubric across command tests
+const PITCH_COMMAND_OPTIONS: HittingSwingOption[] = [
+  { code: "miss", label: "Miss (0)", points: 0 },
+  { code: "target", label: "Hit target (1)", points: 1 },
+  { code: "section", label: "Hit called section (3)", points: 3 },
+];
+
+// --- Catcher matrix helpers ----------------------------------------------
+
+// Options per pitch for catcher screen tests (C10PCS / C20PCS)
+const CATCHER_SCREEN_OPTIONS: HittingSwingOption[] = [
+  { code: "miss", label: "Miss / passed ball (0)", points: 0 },
+  { code: "block", label: "Block in front (1)", points: 1 },
+  { code: "catch", label: "Clean catch / scoop (2)", points: 2 },
+];
+
+// Options per throw for Target Throws to 2B (CTTT2B)
+const CATCHER_TTT2B_OPTIONS: HittingSwingOption[] = [
+  { code: "nocatch", label: "No catch (0)", points: 0 },
+  { code: "miss", label: "Missed target (1)", points: 1 },
+  { code: "hit", label: "Hit target (3)", points: 3 },
+];
+
+// How many pitches/throws each catcher matrix test should show
+const CATCHER_MATRIX_CONFIG: Record<
+  string,
+  { pitchCount: number; kind: "screens" | "ttt2b" }
+> = {
+  // Catcher screens – 10 or 20 pitches depending on age group
+  c10pcs_points: { pitchCount: 10, kind: "screens" },
+  c20pcs_points: { pitchCount: 20, kind: "screens" },
+
+  // Target throws to 2B – 5 throws
+  cttt2b_points: { pitchCount: 5, kind: "ttt2b" },
+};
+
+
+// Hitting tab grouping: which metrics belong to "tee" vs "live"
+const HITTING_TEE_METRIC_KEYS = new Set<string>([
+  "max_bat_speed",
+  "max_exit_velo_tee",
+  "tee_line_drive_test_10",
+  "m_10_swing_tee_contact_test",
+]);
+
+const HITTING_LIVE_METRIC_KEYS = new Set<string>([
+  "m_10_swing_pitch_matrix",
+  "m_10_fastball_quality",
+  "m_5_varied_speed_quality",
+  "m_5_curveball_quality",
+]);
+
+
+
 function formatPlayerName(profile?: TeamPlayerRow["profiles"] | null): string {
   if (!profile) return "Unknown player";
 
@@ -312,6 +465,20 @@ export default function AssessmentSessionPage() {
     "speed" | "strength" | "power" | "balance" | "mobility"
   >("speed");
 
+  // Hitting: Tee vs Live section in the grid tabs
+  const [activeHittingSection, setActiveHittingSection] = useState<
+    "tee" | "live"
+  >("tee");
+
+
+  // Pitching: which “additional pitch” matrices are visible in the grid
+  // (we always show any that already have data; this just controls which
+  // empty slots are revealed by the "Add another pitch type" button)
+  const [visibleExtraPitchMatrices, setVisibleExtraPitchMatrices] = useState<
+    string[]
+  >([]);
+
+
   // Group metrics by logical group (Speed, Strength, Power, Balance, Mobility, etc.)
   const groupedMetrics = useMemo(() => {
     if (!metrics.length) return [];
@@ -345,7 +512,7 @@ export default function AssessmentSessionPage() {
     return groups;
   }, [metrics]);
 
-  // For Athletic Skills, show only the metrics for the active block
+  // For Athletic Skills and Hitting, show only the metrics for the active block
   const visibleGroupedMetrics = useMemo(() => {
     let groups = groupedMetrics.map((g) => ({
       ...g,
@@ -387,10 +554,39 @@ export default function AssessmentSessionPage() {
       groups = groups.filter((g) =>
         allowedLabels.includes(g.label.toLowerCase())
       );
+    } else if (effectiveEvalType === "hitting") {
+      // For Hitting, split metrics into Tee Work vs Live Pitching
+      groups = groups
+        .map((g) => {
+          const isHitting = g.label.toLowerCase().startsWith("hitting");
+          if (!isHitting) return g;
+
+          const filteredMetrics = g.metrics.filter((m) => {
+            const metricKey = (m as any).metric_key as string | undefined;
+            if (!metricKey) return true;
+
+            const inTee = HITTING_TEE_METRIC_KEYS.has(metricKey);
+            const inLive = HITTING_LIVE_METRIC_KEYS.has(metricKey);
+
+            // If we haven't explicitly categorized the metric, show it on both tabs
+            if (!inTee && !inLive) {
+              return true;
+            }
+
+            return activeHittingSection === "tee" ? inTee : inLive;
+          });
+
+          return {
+            ...g,
+            metrics: filteredMetrics,
+          };
+        })
+        .filter((g) => g.metrics.length > 0);
     }
 
     return groups;
-  }, [groupedMetrics, effectiveEvalType, activeAthleticBlock]);
+  }, [groupedMetrics, effectiveEvalType, activeAthleticBlock, activeHittingSection]);
+
 
   // Overall progress: how many metrics have at least one value for any player
   const metricsCompletion = useMemo(() => {
@@ -454,6 +650,7 @@ export default function AssessmentSessionPage() {
   }, [metrics]);
 
   // Balance & Mobility metric keys (adjust to match your DB metric_key values if needed)
+  // Balance & Mobility metric keys (adjust to match your DB metric_key values if needed)
   const BALANCE_KEYS = {
     slsEyesOpenRight: "sls_eyes_open_right",
     slsEyesOpenLeft: "sls_eyes_open_left",
@@ -465,6 +662,8 @@ export default function AssessmentSessionPage() {
     msrRight: "msr_right",
     msrLeft: "msr_left",
   } as const;
+
+
 
 
   const basePathFeet: number | null =
@@ -528,6 +727,10 @@ export default function AssessmentSessionPage() {
   const [balanceTimerRunning, setBalanceTimerRunning] = useState(false);
   const [balanceTimerMs, setBalanceTimerMs] = useState(0);
 
+  const [ct2btTimerRunning, setCt2btTimerRunning] = useState(false);
+  const [ct2btTimerMs, setCt2btTimerMs] = useState(0);
+
+  
   
   useEffect(() => {
     if (!speedTimerRunning) return;
@@ -542,6 +745,22 @@ export default function AssessmentSessionPage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [speedTimerRunning]);
+
+  // Simple stopwatch for Catcher Throw to 2B (CT2BT)
+  useEffect(() => {
+    if (!ct2btTimerRunning) return;
+
+    const start = performance.now() - ct2btTimerMs;
+    const id = window.setInterval(() => {
+      setCt2btTimerMs(performance.now() - start);
+    }, 30);
+
+    return () => {
+      window.clearInterval(id);
+    };
+  }, [ct2btTimerRunning, ct2btTimerMs]);
+
+  
 
   const strengthDurationMs = useMemo(() => {
     // If this athletic template uses 30-second strength tests (11U and below),
@@ -628,6 +847,9 @@ export default function AssessmentSessionPage() {
   
   const speedTimerSeconds =
     Math.round((speedTimerMs / 1000) * 100) / 100 || 0;
+  const ct2btTimerSeconds =
+    Math.round((ct2btTimerMs / 1000) * 100) / 100 || 0;
+
   
   function handleSpeedTimerStart() {
     setSpeedTimerMs(0);
@@ -705,6 +927,58 @@ export default function AssessmentSessionPage() {
     setBalanceTimerMs(0);
   }
 
+  function handleCt2btTimerStart() {
+    setCt2btTimerMs(0);
+    setCt2btTimerRunning(true);
+  }
+
+  function handleCt2btTimerReset() {
+    setCt2btTimerRunning(false);
+    setCt2btTimerMs(0);
+  }
+
+  function handleCt2btTimerStopAndFill() {
+    setCt2btTimerRunning(false);
+    const seconds =
+      Math.round((ct2btTimerMs / 1000) * 100) / 100 || ct2btTimerSeconds;
+
+    if (!sessionData || !metrics.length || !gridColumns.length) return;
+
+    const metric = metrics.find(
+      (m) => (m as any).metric_key === "ct2bt_seconds"
+    );
+    if (!metric) return;
+
+    const metricId = metric.id;
+    const values = (sessionData.values || {}) as any;
+
+    let targetPlayerId: string | null = null;
+    for (const col of gridColumns) {
+      const pid = col.id;
+      const perPlayer = values[pid] || {};
+      const v = perPlayer[metricId];
+      const numeric = v?.value_numeric;
+      const text = v?.value_text;
+
+      if (
+        (numeric === null ||
+          numeric === undefined ||
+          Number.isNaN(numeric)) &&
+        (!text || String(text).trim() === "")
+      ) {
+        targetPlayerId = pid;
+        break;
+      }
+    }
+
+    if (!targetPlayerId && gridColumns.length > 0) {
+      targetPlayerId = gridColumns[0].id;
+    }
+
+    if (targetPlayerId) {
+      handleValueChange(metricId, targetPlayerId, seconds.toFixed(2));
+    }
+  }
 
   
   // keep your existing handleValueChange(...) function below this
@@ -851,6 +1125,103 @@ export default function AssessmentSessionPage() {
     setDirty(true);
   }
 
+
+  // Hitting matrix: per-swing quality tests (H10FAST, H10PITCH, H10TEE, H5VAR, H5CB)
+  // Hitting matrix: per-swing quality tests (H10FAST, H10PITCH, H10TEE, H5VAR, H5CB)
+  function handleHittingMatrixSwingChange(
+    metricId: number,
+    playerId: string,
+    swingIndex: number,
+    swingCode: string,
+    options: HittingSwingOption[],
+    swingCount: number
+  ) {
+    if (!sessionData || isFinalized) return;
+
+    const maxSwings = swingCount > 0 ? swingCount : 10;
+
+    const idx =
+      swingIndex < 0
+        ? 0
+        : swingIndex >= maxSwings
+        ? maxSwings - 1
+        : swingIndex;
+
+    const pointsMap = new Map<string, number>();
+    for (const opt of options) {
+      pointsMap.set(opt.code, opt.points);
+    }
+
+    setSessionData((prev) => {
+      const base: EvalSessionData =
+        prev ?? {
+          player_ids: sessionData.player_ids ?? [],
+          values: {},
+          completed_metric_ids: sessionData.completed_metric_ids ?? [],
+          evaluation_type: effectiveEvalType,
+          session_mode: effectiveSessionMode as any,
+        };
+
+      const values = { ...(base.values || {}) } as any;
+      const byPlayer = { ...(values[playerId] || {}) };
+      const existing = byPlayer[metricId];
+
+      // Start with an empty swing array for this test
+      let swings: string[] = new Array(maxSwings).fill("");
+
+      if (
+        existing?.value_text &&
+        typeof existing.value_text === "string" &&
+        existing.value_text.trim() !== ""
+      ) {
+        try {
+          const parsed = JSON.parse(existing.value_text);
+          if (Array.isArray(parsed)) {
+            for (let i = 0; i < Math.min(parsed.length, maxSwings); i++) {
+              swings[i] = String(parsed[i] ?? "");
+            }
+          }
+        } catch {
+          // ignore parse errors; treat as fresh
+        }
+      }
+
+      // Update the selected swing
+      swings[idx] = swingCode;
+
+      // Compute total score and check if we have any non-empty swings
+      let total = 0;
+      let hasAny = false;
+      for (const code of swings) {
+        if (!code) continue;
+        hasAny = true;
+        total += pointsMap.get(code) ?? 0;
+      }
+
+      if (!hasAny) {
+        // Clear the metric if all swings are blank
+        byPlayer[metricId] = {
+          value_numeric: null,
+          value_text: null,
+        };
+      } else {
+        byPlayer[metricId] = {
+          value_numeric: total,
+          value_text: JSON.stringify(swings),
+        };
+      }
+
+      values[playerId] = byPlayer;
+      base.values = values;
+
+      return base;
+    });
+
+    setDirty(true);
+  }
+
+
+  
 
   async function handleAddTryoutPlayerInSession() {
     if (!session || !sessionData) return;
@@ -1425,6 +1796,32 @@ export default function AssessmentSessionPage() {
           </div>
         )}
 
+        {effectiveEvalType === "hitting" && (
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
+            <span className="text-slate-400">Section:</span>
+            {(["tee", "live"] as const).map((section) => {
+              const isActive = activeHittingSection === section;
+              const label = section === "tee" ? "Tee Work" : "Live Pitching";
+              return (
+                <button
+                  key={section}
+                  type="button"
+                  onClick={() => setActiveHittingSection(section)}
+                  className={[
+                    "px-2 py-0.5 rounded-full border text-[11px]",
+                    isActive
+                      ? "border-emerald-400 bg-emerald-500/10 text-emerald-200"
+                      : "border-slate-600 bg-slate-900 text-slate-200 hover:bg-slate-800",
+                  ].join(" ")}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        
         {effectiveEvalType === "athletic" &&
           activeAthleticBlock === "speed" && (
            
@@ -1626,6 +2023,52 @@ export default function AssessmentSessionPage() {
             </div>
           )}
 
+        {effectiveEvalType === "catcher" && (
+          <div className="mt-2 space-y-1 text-[11px]">
+            <div className="font-semibold text-slate-200">
+              Catcher Throw to 2B timer (CT2BT)
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="text-lg font-mono tabular-nums text-slate-50">
+                {ct2btTimerSeconds.toFixed(2)}s
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {!ct2btTimerRunning ? (
+                  <button
+                    type="button"
+                    onClick={handleCt2btTimerStart}
+                    className="px-2 py-0.5 rounded-md border border-emerald-500/70 bg-emerald-500/10 text-[11px] text-emerald-200"
+                    disabled={isFinalized}
+                  >
+                    Start
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleCt2btTimerStopAndFill}
+                    className="px-2 py-0.5 rounded-md border border-amber-400/70 bg-amber-500/10 text-[11px] text-amber-200"
+                    disabled={isFinalized}
+                  >
+                    Stop &amp; fill next
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleCt2btTimerReset}
+                  className="px-2 py-0.5 rounded-md border border-slate-600 bg-slate-800/70 text-[11px] text-slate-200"
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+            <p className="text-[10px] text-slate-500">
+              Time from when the pitch crosses the plate until the ball reaches
+              2B. When you stop, the time is written into the next empty CT2BT
+              cell in the grid.
+            </p>
+          </div>
+        )}
+
         
         <div className="overflow-x-auto rounded-lg border border-slate-800 bg-slate-950/40">
           {loadingTemplate && (
@@ -1672,14 +2115,18 @@ export default function AssessmentSessionPage() {
               </thead>
               <tbody>
                 {visibleGroupedMetrics.map((group) => {
-                  const isBalance =
-                    group.label.toLowerCase() === "balance";
-                  const isMobility =
-                    group.label.toLowerCase() === "mobility";
-
+                  const labelLower = group.label.toLowerCase();
+                  const isBalance = labelLower === "balance";
+                  const isMobility = labelLower === "mobility";
+                  const isHittingGroup = labelLower.startsWith("hitting");
+                  const isPitchCommandGroup =
+                    labelLower.includes("pitching") && labelLower.includes("command");
+                  const isCatcherGroup = labelLower.startsWith("catcher");
+              
                   const rows: React.ReactNode[] = [];
 
-                  // Group header row (Speed / Strength / Balance / Mobility / etc.)
+
+                  // Group header row (Speed / Strength / Balance / Mobility / Hitting / etc.)
                   if (group.label !== "Other") {
                     rows.push(
                       <tr className="bg-slate-800/60" key={`${group.key}-header`}>
@@ -1694,318 +2141,247 @@ export default function AssessmentSessionPage() {
                   }
 
                   // Helper for a generic metric row (used for non-special metrics)
-                  const pushDefaultRow = (m: AssessmentMetric) => {
-                    const metricKey = (m as any)
-                      .metric_key as string | undefined;
-                    const meta = metricKey
-                      ? getMetricMeta(metricKey)
-                      : undefined;
+              const pushDefaultRow = (m: AssessmentMetric) => {
+                const metricKey = (m as any).metric_key as string | undefined;
+                const meta = metricKey ? getMetricMeta(metricKey) : undefined;
 
-                    const displayName =
-                      meta?.shortLabel ||
-                      meta?.displayName ||
-                      (m as any).label ||
-                      metricKey ||
-                      "Metric";
+                rows.push(
+                  <tr key={`${group.key}-${m.id}`} className="border-b border-slate-800">
+                    <td className="align-top px-2 py-1">
+                      <div className="font-medium text-slate-100">
+                        {meta?.displayName || (m as any).label || `Metric ${m.id}`}
+                      </div>
+                      {meta?.instructions && (
+                        <div className="text-[10px] text-slate-500 mt-0.5">
+                          {meta.instructions}
+                        </div>
+                      )}
+                    </td>
+                    {gridColumns.map((col) => {
+                      const playerId = col.id;
+                      const perPlayer =
+                        (sessionData?.values as any)?.[playerId] || {};
+                      const v = perPlayer[m.id];
 
-                    const detailLineParts: string[] = [];
+                      const numericValue = v?.value_numeric;
+                      const textValue = v?.value_text;
+                      const commonKey = `${m.id}-${playerId}`;
 
-                    if (meta?.group) {
-                      detailLineParts.push(meta.group);
-                    }
-                    if (meta?.code) {
-                      detailLineParts.push(`Code: ${meta.code}`);
-                    }
-                    if ((m as any).unit) {
-                      detailLineParts.push(`Unit: ${(m as any).unit}`);
-                    }
-                    if (
-                      meta?.unitHint &&
-                      !detailLineParts.some((p) => p.includes("Unit"))
-                    ) {
-                      detailLineParts.push(meta.unitHint);
-                    }
+                      // Select-style metrics (e.g. MSR, Toe Touch) – generic path
+                      if (
+                        meta?.inputType === "select" &&
+                        meta.options &&
+                        meta.options.length > 0
+                      ) {
+                        const selectValue =
+                          numericValue !== null &&
+                          numericValue !== undefined &&
+                          !Number.isNaN(numericValue)
+                            ? String(numericValue)
+                            : textValue != null
+                            ? String(textValue)
+                            : "";
 
-                    rows.push(
-                      <tr
-                        key={`metric-${m.id}`}
-                        className="border-b border-slate-800"
-                      >
-                        <td className="align-top px-2 py-2">
-                          <div className="font-medium text-slate-100">
-                            {displayName}
-                          </div>
-                          {detailLineParts.length > 0 && (
-                            <div className="text-[10px] text-slate-500 mt-0.5">
-                              {detailLineParts.join(" · ")}
-                            </div>
-                          )}
-                          {meta?.instructions && (
-                            <div className="text-[10px] text-slate-400 mt-0.5">
-                              {meta.instructions}
-                            </div>
-                          )}
-                        </td>
-                        {gridColumns.map((col) => {
-                          const playerId = col.id;
-                          const perPlayer =
-                            (sessionData.values as any)?.[playerId] || {};
-                          const v = perPlayer[m.id];
-
-                          const numericValue = v?.value_numeric;
-                          const textValue = v?.value_text;
-                          const commonKey = `${m.id}-${playerId}`;
-
-                          // Select-style metrics (e.g. MSR, Toe Touch) – generic path
-                          if (
-                            meta?.inputType === "select" &&
-                            meta.options &&
-                            meta.options.length > 0
-                          ) {
-                            const selectValue =
-                              numericValue !== null &&
-                              numericValue !== undefined &&
-                              !Number.isNaN(numericValue)
-                                ? String(numericValue)
-                                : textValue != null
-                                ? String(textValue)
-                                : "";
-
-                            return (
-                              <td
-                                key={commonKey}
-                                className="px-2 py-1 align-top text-center"
-                              >
-                                <select
-                                  className="w-full max-w-[7rem] rounded-md bg-slate-950 border border-slate-700 px-1 py-0.5 text-[11px]"
-                                  value={selectValue}
-                                  onChange={(e) =>
-                                    handleValueChange(
-                                      m.id,
-                                      playerId,
-                                      e.target.value
-                                    )
-                                  }
-                                  disabled={isFinalized}
-                                >
-                                  <option value="">Select…</option>
-                                  {meta.options.map((opt) => (
-                                    <option
-                                      key={String(opt.value)}
-                                      value={String(opt.value)}
-                                    >
-                                      {opt.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              </td>
-                            );
-                          }
-
-                          const value =
-                            numericValue ?? (textValue ?? "");
-
-                          return (
-                            <td
-                              key={commonKey}
-                              className="px-2 py-1 align-top text-center"
+                        return (
+                          <td
+                            key={commonKey}
+                            className="px-2 py-1 align-top text-center"
+                          >
+                            <select
+                              className="w-full max-w-[7rem] rounded-md bg-slate-950 border border-slate-700 px-1 py-0.5 text-[11px]"
+                              value={selectValue}
+                              onChange={(e) =>
+                                handleValueChange(m.id, playerId, e.target.value)
+                              }
+                              disabled={isFinalized}
                             >
-                              <input
-                                type="number"
-                                className="w-full max-w-[5rem] rounded-md bg-slate-950 border border-slate-700 px-1 py-0.5 text-[11px] text-center"
-                                value={value === null ? "" : value}
-                                onChange={(e) =>
-                                  handleValueChange(
-                                    m.id,
-                                    playerId,
-                                    e.target.value
-                                  )
-                                }
-                                disabled={isFinalized}
-                                step={meta?.step ?? undefined}
-                                min={meta?.min ?? undefined}
-                                max={meta?.max ?? undefined}
-                                placeholder={meta?.placeholder}
-                              />
-                            </td>
-                          );
-                        })}
-                      </tr>
+                              <option value="">Select…</option>
+                              {meta.options.map((opt) => (
+                                <option
+                                  key={String(opt.value)}
+                                  value={String(opt.value)}
+                                >
+                                  {opt.label}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                        );
+                      }
+
+                      const value = numericValue ?? (textValue ?? "");
+
+                      return (
+                        <td
+                          key={commonKey}
+                          className="px-2 py-1 align-top text-center"
+                        >
+                          <input
+                            type="number"
+                            className="w-full max-w-[5rem] rounded-md bg-slate-950 border border-slate-700 px-1 py-0.5 text-[11px] text-center"
+                            value={value === null ? "" : value}
+                            onChange={(e) =>
+                              handleValueChange(m.id, playerId, e.target.value)
+                            }
+                            disabled={isFinalized}
+                            step={meta?.step ?? undefined}
+                            min={meta?.min ?? undefined}
+                            max={meta?.max ?? undefined}
+                            placeholder={meta?.placeholder}
+                          />
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              };
+
+              // Special layout: Balance → SLS Eyes Open/Closed (R/L)
+              // Special layout: Balance → SLS Eyes Open/Closed (R/L)
+              if (isBalance) {
+                const byKey = new Map<string, AssessmentMetric>();
+                group.metrics.forEach((m) => {
+                  const metricKey = (m as any).metric_key as string | undefined;
+                  if (metricKey) {
+                    byKey.set(metricKey, m);
+                  }
+                });
+
+                const openRight = byKey.get(BALANCE_KEYS.slsEyesOpenRight);
+                const openLeft = byKey.get(BALANCE_KEYS.slsEyesOpenLeft);
+                const closedRight = byKey.get(BALANCE_KEYS.slsEyesClosedRight);
+                const closedLeft = byKey.get(BALANCE_KEYS.slsEyesClosedLeft);
+
+                const usedIds = new Set<number>();
+                if (openRight) usedIds.add(openRight.id);
+                if (openLeft) usedIds.add(openLeft.id);
+                if (closedRight) usedIds.add(closedRight.id);
+                if (closedLeft) usedIds.add(closedLeft.id);
+
+                const renderBalanceCell = (
+                  playerId: string,
+                  mRight?: AssessmentMetric,
+                  mLeft?: AssessmentMetric
+                ) => {
+                  const renderSide = (
+                    mSide: AssessmentMetric | undefined,
+                    label: "R" | "L"
+                  ) => {
+                    if (!mSide) {
+                      return (
+                        <div className="flex-1 text-[10px] text-slate-500 mt-1 text-center">
+                          —
+                        </div>
+                      );
+                    }
+
+                    const perPlayer =
+                      (sessionData?.values as any)?.[playerId] || {};
+                    const v = perPlayer[mSide.id];
+                    const numericValue = v?.value_numeric;
+                    const textValue = v?.value_text;
+                    const value = numericValue ?? (textValue ?? "");
+
+                    return (
+                      <div className="flex-1">
+                        <div className="text-[10px] text-slate-400 mb-0.5">
+                          {label}
+                        </div>
+                        <input
+                          type="number"
+                          className="w-full max-w-[5rem] rounded-md bg-slate-950 border border-slate-700 px-1 py-0.5 text-[11px] text-center"
+                          value={value === null ? "" : value}
+                          onChange={(e) =>
+                            handleValueChange(mSide.id, playerId, e.target.value)
+                          }
+                          disabled={isFinalized}
+                          min={0}
+                          max={30}
+                          step={0.1}
+                        />
+                      </div>
                     );
                   };
 
-                  // Special layout: Balance → SLS Eyes Open/Closed (R/L)
-                  if (isBalance) {
-                    const byKey = new Map<string, AssessmentMetric>();
-                    group.metrics.forEach((m) => {
-                      const metricKey = (m as any)
-                        .metric_key as string | undefined;
-                      if (metricKey) {
-                        byKey.set(metricKey, m);
-                      }
-                    });
+                  return (
+                    <div className="flex gap-2 justify-center">
+                      {renderSide(mRight, "R")}
+                      {renderSide(mLeft, "L")}
+                    </div>
+                  );
+                };
 
-                    const openRight = byKey.get(
-                      BALANCE_KEYS.slsEyesOpenRight
-                    );
-                    const openLeft = byKey.get(
-                      BALANCE_KEYS.slsEyesOpenLeft
-                    );
-                    const closedRight = byKey.get(
-                      BALANCE_KEYS.slsEyesClosedRight
-                    );
-                    const closedLeft = byKey.get(
-                      BALANCE_KEYS.slsEyesClosedLeft
-                    );
-
-                    const usedIds = new Set<number>();
-                    if (openRight) usedIds.add(openRight.id);
-                    if (openLeft) usedIds.add(openLeft.id);
-                    if (closedRight) usedIds.add(closedRight.id);
-                    if (closedLeft) usedIds.add(closedLeft.id);
-
-                    const renderBalanceCell = (
-                      playerId: string,
-                      mRight?: AssessmentMetric,
-                      mLeft?: AssessmentMetric
-                    ) => {
-                      const renderSide = (
-                        mSide: AssessmentMetric | undefined,
-                        label: "R" | "L"
-                      ) => {
-                        if (!mSide) {
-                          return (
-                            <div className="flex-1 text-[10px] text-slate-500 mt-1 text-center">
-                              —
-                            </div>
-                          );
-                        }
-
-                        const perPlayer =
-                          (sessionData.values as any)?.[playerId] ||
-                          {};
-                        const v = perPlayer[mSide.id];
-                        const numericValue = v?.value_numeric;
-                        const textValue = v?.value_text;
-                        const value =
-                          numericValue ?? (textValue ?? "");
-
-                        return (
-                          <div className="flex-1">
-                            <div className="text-[10px] text-slate-400 mb-0.5">
-                              {label}
-                            </div>
-                            <input
-                              type="number"
-                              className="w-full max-w-[5rem] rounded-md bg-slate-950 border border-slate-700 px-1 py-0.5 text-[11px] text-center"
-                              value={value === null ? "" : value}
-                              onChange={(e) =>
-                                handleValueChange(
-                                  mSide.id,
-                                  playerId,
-                                  e.target.value
-                                )
-                              }
-                              disabled={isFinalized}
-                              step={0.1}
-                              min={0}
-                              max={30}
-                              placeholder="sec"
-                            />
-                          </div>
-                        );
-                      };
-
-                      return (
-                        <div className="flex gap-2 justify-center">
-                          {renderSide(mRight, "R")}
-                          {renderSide(mLeft, "L")}
+                if (openRight || openLeft) {
+                  rows.push(
+                    <tr
+                      key={`${group.key}-sls-open`}
+                      className="border-b border-slate-800"
+                    >
+                      <td className="align-top px-2 py-2">
+                        <div className="font-medium text-slate-100">
+                          SLS Eyes Open
                         </div>
-                      );
-                    };
-
-                    if (openRight || openLeft) {
-                      rows.push(
-                        <tr
-                          key={`${group.key}-sls-open`}
-                          className="border-b border-slate-800"
+                        <div className="text-[10px] text-slate-500 mt-0.5">
+                          Single-leg stance, eyes open. Record max seconds up to
+                          30s for each leg (right and left).
+                        </div>
+                      </td>
+                      {gridColumns.map((col) => (
+                        <td
+                          key={`${group.key}-sls-open-${col.id}`}
+                          className="px-2 py-1 align-top text-center"
                         >
-                          <td className="align-top px-2 py-2">
-                            <div className="font-medium text-slate-100">
-                              SLS Eyes Open
-                            </div>
-                            <div className="text-[10px] text-slate-500 mt-0.5">
-                              Single-leg stance, eyes open. Record max
-                              seconds up to 30s for each leg (right and
-                              left).
-                            </div>
-                          </td>
-                          {gridColumns.map((col) => (
-                            <td
-                              key={`${group.key}-sls-open-${col.id}`}
-                              className="px-2 py-1 align-top text-center"
-                            >
-                              {renderBalanceCell(
-                                col.id,
-                                openRight,
-                                openLeft
-                              )}
-                            </td>
-                          ))}
-                        </tr>
-                      );
-                    }
+                          {renderBalanceCell(col.id, openRight, openLeft)}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                }
 
-                    if (closedRight || closedLeft) {
-                      rows.push(
-                        <tr
-                          key={`${group.key}-sls-closed`}
-                          className="border-b border-slate-800"
+                if (closedRight || closedLeft) {
+                  rows.push(
+                    <tr
+                      key={`${group.key}-sls-closed`}
+                      className="border-b border-slate-800"
+                    >
+                      <td className="align-top px-2 py-2">
+                        <div className="font-medium text-slate-100">
+                          SLS Eyes Closed
+                        </div>
+                        <div className="text-[10px] text-slate-500 mt-0.5">
+                          Single-leg stance, eyes closed. Record max seconds up
+                          to 30s for each leg (right and left).
+                        </div>
+                      </td>
+                      {gridColumns.map((col) => (
+                        <td
+                          key={`${group.key}-sls-closed-${col.id}`}
+                          className="px-2 py-1 align-top text-center"
                         >
-                          <td className="align-top px-2 py-2">
-                            <div className="font-medium text-slate-100">
-                              SLS Eyes Closed
-                            </div>
-                            <div className="text-[10px] text-slate-500 mt-0.5">
-                              Single-leg stance, eyes closed. Record max
-                              seconds up to 30s for each leg (right and
-                              left).
-                            </div>
-                          </td>
-                          {gridColumns.map((col) => (
-                            <td
-                              key={`${group.key}-sls-closed-${col.id}`}
-                              className="px-2 py-1 align-top text-center"
-                            >
-                              {renderBalanceCell(
-                                col.id,
-                                closedRight,
-                                closedLeft
-                              )}
-                            </td>
-                          ))}
-                        </tr>
-                      );
-                    }
+                          {renderBalanceCell(col.id, closedRight, closedLeft)}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                }
 
-                    // Any other Balance metrics (if present) fall back to generic rows
-                    const remainingBalanceMetrics = group.metrics.filter(
-                      (m) => !usedIds.has(m.id)
-                    );
-                    remainingBalanceMetrics.forEach((m) =>
-                      pushDefaultRow(m)
-                    );
+                // Any other Balance metrics (if present) fall back to generic rows
+                const remainingBalanceMetrics = group.metrics.filter(
+                  (m) => !usedIds.has(m.id)
+                );
+                remainingBalanceMetrics.forEach((m) => pushDefaultRow(m));
 
-                    return <Fragment key={group.key}>{rows}</Fragment>;
-                  }
+                return <Fragment key={group.key}>{rows}</Fragment>;
+              }
 
-                  // Special layout: Mobility → MSR (R/L) + generic for others (e.g. Toe Touch)
-              // Special layout: Mobility → MSR (R/L) + Deep Squat + generic for others (e.g. Toe Touch)
+
+              // Special layout: Mobility → MSR R/L + Toe Touch
+              // Special layout: Mobility → MSR R/L + Toe Touch
+              // Special layout: Mobility → MSR (R/L) + Deep Squat + generic for others
               if (isMobility) {
                 const byKey = new Map<string, AssessmentMetric>();
                 group.metrics.forEach((m) => {
-                  const metricKey = (m as any)
-                    .metric_key as string | undefined;
+                  const metricKey = (m as any).metric_key as string | undefined;
                   if (metricKey) {
                     byKey.set(metricKey, m);
                   }
@@ -2013,11 +2389,7 @@ export default function AssessmentSessionPage() {
 
                 const msrRight = byKey.get(MOBILITY_KEYS.msrRight);
                 const msrLeft = byKey.get(MOBILITY_KEYS.msrLeft);
-
-                // Deep squat metric keyed as "deep_squat"
-                const deepSquatMetric = byKey.get(
-                  "deep_squat"
-                );
+                const deepSquatMetric = byKey.get("deep_squat");
 
                 const usedIds = new Set<number>();
                 if (msrRight) usedIds.add(msrRight.id);
@@ -2037,14 +2409,11 @@ export default function AssessmentSessionPage() {
                     );
                   }
 
-                  const metricKey = (mSide as any)
-                    .metric_key as string | undefined;
-                  const meta = metricKey
-                    ? getMetricMeta(metricKey)
-                    : undefined;
+                  const metricKey = (mSide as any).metric_key as string | undefined;
+                  const meta = metricKey ? getMetricMeta(metricKey) : undefined;
 
                   const perPlayer =
-                    (sessionData.values as any)?.[playerId] || {};
+                    (sessionData?.values as any)?.[playerId] || {};
                   const v = perPlayer[mSide.id];
 
                   const numericValue = v?.value_numeric;
@@ -2070,16 +2439,12 @@ export default function AssessmentSessionPage() {
                         className="w-full max-w-[7rem] rounded-md bg-slate-950 border border-slate-700 px-1 py-0.5 text-[11px]"
                         value={selectValue}
                         onChange={(e) =>
-                          handleValueChange(
-                            mSide.id,
-                            playerId,
-                            e.target.value
-                          )
+                          handleValueChange(mSide.id, playerId, e.target.value)
                         }
                         disabled={isFinalized}
                       >
                         <option value="">Select…</option>
-                        {meta?.options?.map((opt: any) => (
+                        {meta?.options?.map((opt) => (
                           <option
                             key={String(opt.value)}
                             value={String(opt.value)}
@@ -2092,7 +2457,8 @@ export default function AssessmentSessionPage() {
                   );
                 };
 
-                // MSR combined row (Right + Left)
+         
+                
                 if (msrRight || msrLeft) {
                   rows.push(
                     <tr
@@ -2101,12 +2467,12 @@ export default function AssessmentSessionPage() {
                     >
                       <td className="align-top px-2 py-2">
                         <div className="font-medium text-slate-100">
-                          MSR (rotation)
+                          Rotation (MSR)
                         </div>
                         <div className="text-[10px] text-slate-500 mt-0.5">
-                          Multi-segment rotation with bat across
-                          shoulders. Score right and left based on
-                          how far the player can rotate.
+                          Multi-segment rotation with bat across shoulders.
+                          Select the option that best matches how far the player
+                          turns for each side.
                         </div>
                       </td>
                       {gridColumns.map((col) => (
@@ -2115,16 +2481,8 @@ export default function AssessmentSessionPage() {
                           className="px-2 py-1 align-top text-center"
                         >
                           <div className="flex gap-2 justify-center">
-                            {renderMobilitySelectCell(
-                              col.id,
-                              msrRight,
-                              "R"
-                            )}
-                            {renderMobilitySelectCell(
-                              col.id,
-                              msrLeft,
-                              "L"
-                            )}
+                            {renderMobilitySelectCell(col.id, msrRight, "R")}
+                            {renderMobilitySelectCell(col.id, msrLeft, "L")}
                           </div>
                         </td>
                       ))}
@@ -2132,20 +2490,33 @@ export default function AssessmentSessionPage() {
                   );
                 }
 
-                // Full Overhead Deep Squat row (multi-selection → score)
+                // Deep squat pill-button multi-select row if present
                 if (deepSquatMetric) {
-                  const deepSquatKey = (deepSquatMetric as any)
-                    .metric_key as string;
-                  const deepSquatMeta = deepSquatKey
-                    ? getMetricMeta(deepSquatKey)
-                    : undefined;
+                  const meta = getMetricMeta("deep_squat");
+                  const displayName =
+                    meta?.displayName ??
+                    meta?.shortLabel ??
+                    "Full Overhead Deep Squat";
+                  const instructions = meta?.instructions;
 
                   const optionDefs = [
-                    { code: "full", label: "Full overhead deep squat" },
-                    { code: "arms", label: "Arms move forward" },
-                    { code: "pelvis", label: "Pelvis not below knees" },
-                    { code: "ankles", label: "Ankles flare" },
-                  ] as const;
+                    {
+                      code: "full" as const,
+                      label: "Full Overhead Deep Squat",
+                    },
+                    {
+                      code: "arms" as const,
+                      label: "Arms move forward",
+                    },
+                    {
+                      code: "pelvis" as const,
+                      label: "Pelvis not below knees",
+                    },
+                    {
+                      code: "ankles" as const,
+                      label: "Ankles flare",
+                    },
+                  ];
 
                   rows.push(
                     <tr
@@ -2154,31 +2525,31 @@ export default function AssessmentSessionPage() {
                     >
                       <td className="align-top px-2 py-2">
                         <div className="font-medium text-slate-100">
-                          {deepSquatMeta?.displayName ||
-                            "Full Overhead Deep Squat"}
+                          {displayName}
                         </div>
-                        <div className="text-[10px] text-slate-500 mt-0.5">
-                          Select either a full overhead deep squat or
-                          one or more compensations. Full = 9 points;
-                          1 issue = 6; 2 issues = 3; 3 issues = 0.
-                        </div>
+                        {instructions && (
+                          <div className="text-[10px] text-slate-500 mt-0.5">
+                            {instructions}
+                          </div>
+                        )}
                       </td>
+
                       {gridColumns.map((col) => {
                         const playerId = col.id;
                         const perPlayer =
-                          (sessionData.values as any)?.[playerId] ||
-                          {};
+                          (sessionData?.values as any)?.[playerId] || {};
                         const v = perPlayer[deepSquatMetric.id];
-                        const storedText = v?.value_text;
                         const numericValue = v?.value_numeric;
+                        const textValue = v?.value_text;
 
                         let selected: string[] = [];
+
                         if (
-                          typeof storedText === "string" &&
-                          storedText.trim() !== ""
+                          typeof textValue === "string" &&
+                          textValue.trim() !== ""
                         ) {
                           try {
-                            const parsed = JSON.parse(storedText);
+                            const parsed = JSON.parse(textValue);
                             if (Array.isArray(parsed)) {
                               selected = parsed.filter((c: any) =>
                                 ["full", "arms", "pelvis", "ankles"].includes(
@@ -2190,7 +2561,6 @@ export default function AssessmentSessionPage() {
                             // ignore parse errors
                           }
                         } else if (typeof numericValue === "number") {
-                          // Best-effort fallback if only score was saved
                           if (numericValue === 9) {
                             selected = ["full"];
                           }
@@ -2249,20 +2619,616 @@ export default function AssessmentSessionPage() {
                 const remainingMobilityMetrics = group.metrics.filter(
                   (m) => !usedIds.has(m.id)
                 );
-                remainingMobilityMetrics.forEach((m) =>
-                  pushDefaultRow(m)
-                );
+                remainingMobilityMetrics.forEach((m) => pushDefaultRow(m));
+
+                return <Fragment key={group.key}>{rows}</Fragment>;
+              }
+
+              // Special layout: Catcher → screen matrices + Target Throws to 2B
+              if (isCatcherGroup) {
+                const usedIds = new Set<number>();
+
+                const pushCatcherMatrixRow = (metric: AssessmentMetric) => {
+                  const metricKey = (metric as any).metric_key as
+                    | string
+                    | undefined;
+                  const config = metricKey
+                    ? CATCHER_MATRIX_CONFIG[metricKey]
+                    : undefined;
+
+                  // If we don't recognize this metric as a catcher matrix, fall back to the generic row
+                  if (!config) {
+                    pushDefaultRow(metric);
+                    return;
+                  }
+
+                  usedIds.add(metric.id);
+
+                  const meta = metricKey ? getMetricMeta(metricKey) : undefined;
+                  const pitchCount = config.pitchCount;
+                  const options =
+                    config.kind === "screens"
+                      ? CATCHER_SCREEN_OPTIONS
+                      : CATCHER_TTT2B_OPTIONS;
+
+                  const displayName =
+                    meta?.displayName ||
+                    (metric as any).label ||
+                    "Catcher test";
+
+                  const description =
+                    meta?.instructions ||
+                    (config.kind === "screens"
+                      ? "For each pitch: Miss/passed ball = 0, Block in front = 1, Catch or scoop = 2. The total score is calculated automatically."
+                      : "For each throw: No catch = 0, Missed target = 1, Hit target = 3. The total score is calculated automatically.");
+
+                  const pointsMap = new Map<string, number>();
+                  options.forEach((opt) => pointsMap.set(opt.code, opt.points));
+
+                  rows.push(
+                    <tr
+                      key={`${group.key}-catcher-matrix-${metric.id}`}
+                      className="border-b border-slate-800"
+                    >
+                      <td className="align-top px-2 py-2">
+                        <div className="font-medium text-slate-100">
+                          {displayName}
+                        </div>
+                        <div className="text-[10px] text-slate-500 mt-0.5">
+                          {description}
+                        </div>
+                      </td>
+
+                      {gridColumns.map((col) => {
+                        const playerId = col.id;
+                        const perPlayer =
+                          (sessionData?.values as any)?.[playerId] || {};
+                        const v = perPlayer[metric.id];
+                        const storedText = v?.value_text;
+                        const numericValue = v?.value_numeric;
+
+                        let events: string[] = new Array(pitchCount).fill("");
+
+                        if (
+                          typeof storedText === "string" &&
+                          storedText.trim() !== ""
+                        ) {
+                          try {
+                            const parsed = JSON.parse(storedText);
+                            if (Array.isArray(parsed)) {
+                              for (
+                                let i = 0;
+                                i < Math.min(parsed.length, pitchCount);
+                                i++
+                              ) {
+                                events[i] = String(parsed[i] ?? "");
+                              }
+                            }
+                          } catch {
+                            // ignore parse errors
+                          }
+                        }
+
+                        const displayTotal =
+                          typeof numericValue === "number"
+                            ? numericValue
+                            : events.reduce(
+                                (sum, code) => sum + (pointsMap.get(code) ?? 0),
+                                0
+                              );
+
+                        return (
+                          <td
+                            key={`${group.key}-catcher-matrix-${metric.id}-${playerId}`}
+                            className="px-2 py-1 align-top text-center"
+                          >
+                            <div className="flex flex-col gap-1">
+                              <div
+                                className={
+                                  pitchCount <= 10
+                                    ? "grid grid-cols-2 gap-1"
+                                    : "grid grid-cols-5 gap-1"
+                                }
+                              >
+                                {Array.from({ length: pitchCount }).map(
+                                  (_, idx) => {
+                                    const code = events[idx] || "";
+                                    return (
+                                      <div
+                                        key={`${metric.id}-${playerId}-catch-${idx}`}
+                                        className="flex flex-col items-stretch"
+                                      >
+                                        <div className="text-[9px] text-slate-500 mb-0.5">
+                                          {config.kind === "screens"
+                                            ? `Pitch ${idx + 1}`
+                                            : `Throw ${idx + 1}`}
+                                        </div>
+                                        <select
+                                          className="w-full rounded-md bg-slate-950 border border-slate-700 px-1 py-0.5 text-[11px]"
+                                          value={code}
+                                          onChange={(e) =>
+                                            handleHittingMatrixSwingChange(
+                                              metric.id,
+                                              playerId,
+                                              idx,
+                                              e.target.value,
+                                              options,
+                                              pitchCount
+                                            )
+                                          }
+                                          disabled={isFinalized}
+                                        >
+                                          <option value="">—</option>
+                                          {options.map((opt) => (
+                                            <option
+                                              key={opt.code}
+                                              value={opt.code}
+                                            >
+                                              {opt.label}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                    );
+                                  }
+                                )}
+                              </div>
+                              <div className="text-[10px] text-slate-400">
+                                Total:{" "}
+                                <span className="font-mono">
+                                  {displayTotal || "—"}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                };
+
+                // Render all catcher metrics in this group
+                group.metrics.forEach((m) => pushCatcherMatrixRow(m));
 
                 return <Fragment key={group.key}>{rows}</Fragment>;
               }
 
 
-                  // All other groups (Speed, Strength, Power, etc.) use generic rows
-                  group.metrics.forEach((m) => pushDefaultRow(m));
 
-                  return <Fragment key={group.key}>{rows}</Fragment>;
-                })}
+              // Special layout: Pitching command → 10/20-pitch matrices + optional 5‑pitch extras
+              if (isPitchCommandGroup) {
+                const usedIds = new Set<number>();
+
+                // Which metric_keys are "additional pitch" 5-pitch matrices
+                const extraPitchKeys = new Set<string>([
+                  "tpitch5ap1",
+                  "tpitch5ap2",
+                  "tpitch5ap3",
+                  "tpitch5ap4",
+                  "tpitch5ap5",
+                ]);
+
+                const metricHasAnyValue = (metric: AssessmentMetric) => {
+                  if (!sessionData?.values) return false;
+                  const metricId = metric.id;
+                  const values = sessionData.values as any;
+
+                  for (const col of gridColumns) {
+                    const perPlayer = values[col.id] || {};
+                    const v = perPlayer[metricId];
+                    const numeric = v?.value_numeric;
+                    const text = v?.value_text;
+
+                    if (
+                      (numeric !== null &&
+                        numeric !== undefined &&
+                        !Number.isNaN(numeric)) ||
+                      (text !== null &&
+                        text !== undefined &&
+                        String(text).trim() !== "")
+                    ) {
+                      return true;
+                    }
+                  }
+
+                  return false;
+                };
+
+                const isExtraMetricVisible = (metric: AssessmentMetric) => {
+                  const metricKey = (metric as any).metric_key as string | undefined;
+                  if (!metricKey) return false;
+                  return (
+                    visibleExtraPitchMatrices.includes(metricKey) ||
+                    metricHasAnyValue(metric)
+                  );
+                };
+
+                const pushPitchMatrixRow = (metric: AssessmentMetric) => {
+                  const metricKey = (metric as any).metric_key as string | undefined;
+                  const config = metricKey ? PITCH_MATRIX_CONFIG[metricKey] : undefined;
+                  if (!config) {
+                    // e.g. max_throwing_speed stays as a simple numeric row
+                    return pushDefaultRow(metric);
+                  }
+
+                  usedIds.add(metric.id);
+
+                  const meta = metricKey ? getMetricMeta(metricKey) : undefined;
+                  const pitchCount = config.pitchCount;
+                  const displayName =
+                    meta?.displayName || (metric as any).label || "Pitching Matrix";
+
+                  const description =
+                    meta?.instructions ||
+                    "For each pitch, mark Miss (0), Hit target (1), or Hit called section (3). The total score is calculated automatically.";
+
+                  const options = PITCH_COMMAND_OPTIONS;
+                  const pointsMap = new Map<string, number>();
+                  options.forEach((opt) => pointsMap.set(opt.code, opt.points));
+
+                  rows.push(
+                    <tr
+                      key={`${group.key}-pitch-matrix-${metric.id}`}
+                      className="border-b border-slate-800"
+                    >
+                      <td className="align-top px-2 py-2">
+                        <div className="font-medium text-slate-100">{displayName}</div>
+                        <div className="text-[10px] text-slate-500 mt-0.5">
+                          {description}
+                        </div>
+                      </td>
+
+                      {gridColumns.map((col) => {
+                        const playerId = col.id;
+                        const perPlayer =
+                          (sessionData?.values as any)?.[playerId] || {};
+                        const v = perPlayer[metric.id];
+                        const storedText = v?.value_text;
+                        const numericValue = v?.value_numeric;
+
+                        const pitchCountSafe = Math.max(1, pitchCount);
+                        let pitches: string[] = new Array(pitchCountSafe).fill("");
+
+                        if (
+                          typeof storedText === "string" &&
+                          storedText.trim() !== ""
+                        ) {
+                          try {
+                            const parsed = JSON.parse(storedText);
+                            if (Array.isArray(parsed)) {
+                              for (
+                                let i = 0;
+                                i < Math.min(parsed.length, pitchCountSafe);
+                                i++
+                              ) {
+                                pitches[i] = String(parsed[i] ?? "");
+                              }
+                            }
+                          } catch {
+                            // ignore parse errors
+                          }
+                        }
+
+                        const displayTotal =
+                          typeof numericValue === "number" &&
+                          !Number.isNaN(numericValue)
+                            ? numericValue
+                            : pitches.reduce((sum, code) => {
+                                if (!code) return sum;
+                                return sum + (pointsMap.get(code) ?? 0);
+                              }, 0);
+
+                        return (
+                          <td
+                            key={`${metric.id}-${playerId}`}
+                            className="px-2 py-2 align-top"
+                          >
+                            <div className="flex flex-col gap-1">
+                              <div className="grid grid-cols-5 gap-1">
+                                {pitches.map((code, idx) => (
+                                  <div
+                                    key={`${metric.id}-${playerId}-pitch-${idx}`}
+                                    className="flex flex-col items-stretch"
+                                  >
+                                    <div className="text-[9px] text-slate-500 mb-0.5">
+                                      Pitch {idx + 1}
+                                    </div>
+                                    <select
+                                      className="w-full rounded-md bg-slate-950 border border-slate-700 px-1 py-0.5 text-[11px]"
+                                      value={code}
+                                      onChange={(e) =>
+                                        handleHittingMatrixSwingChange(
+                                          metric.id,
+                                          playerId,
+                                          idx,
+                                          e.target.value,
+                                          options,
+                                          pitchCountSafe
+                                        )
+                                      }
+                                      disabled={isFinalized}
+                                    >
+                                      <option value="">—</option>
+                                      {options.map((opt) => (
+                                        <option key={opt.code} value={opt.code}>
+                                          {opt.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="mt-1 text-[10px] text-slate-400">
+                                Total:{" "}
+                                <span className="font-mono text-slate-100">
+                                  {displayTotal ?? "—"}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                };
+
+                // Split base command metrics vs optional extra pitch types
+                const baseCommandMetrics: AssessmentMetric[] = [];
+                const extraPitchMetrics: AssessmentMetric[] = [];
+
+                for (const m of group.metrics) {
+                  const metricKey = (m as any).metric_key as string | undefined;
+                  if (metricKey && extraPitchKeys.has(metricKey)) {
+                    extraPitchMetrics.push(m);
+                  } else {
+                    baseCommandMetrics.push(m);
+                  }
+                }
+
+                // First, render the main command matrices (10/20-pitch fastball tests, etc.)
+                baseCommandMetrics.forEach((m) => pushPitchMatrixRow(m));
+
+                // "Add another pitch type" control row (only if there are optional extra matrices)
+                if (extraPitchMetrics.length > 0) {
+                  const nextHiddenExtra = extraPitchMetrics.find(
+                    (m) => !isExtraMetricVisible(m)
+                  );
+
+                  const handleAddExtraPitchMatrix = () => {
+                    if (!nextHiddenExtra) return;
+                    const metricKey = (nextHiddenExtra as any)
+                      .metric_key as string | undefined;
+                    if (!metricKey) return;
+
+                    setVisibleExtraPitchMatrices((prev) =>
+                      prev.includes(metricKey) ? prev : [...prev, metricKey]
+                    );
+                  };
+
+                  rows.push(
+                    <tr
+                      key={`${group.key}-add-extra-pitch`}
+                      className="border-b border-slate-800 bg-slate-950/40"
+                    >
+                      <td
+                        colSpan={1 + gridColumns.length}
+                        className="px-2 py-2 align-top"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="text-[10px] text-slate-400">
+                            Optional: track additional pitch types (change-up, slider,
+                            cutter, etc.). Add up to {extraPitchMetrics.length} extra
+                            pitch matrices per pitcher.
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleAddExtraPitchMatrix}
+                            disabled={!nextHiddenExtra || isFinalized}
+                            className={[
+                              "px-2 py-0.5 rounded-md border text-[11px]",
+                              !nextHiddenExtra || isFinalized
+                                ? "border-slate-700 text-slate-500 bg-slate-900 cursor-not-allowed opacity-60"
+                                : "border-emerald-500/80 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20",
+                            ].join(" ")}
+                          >
+                            {nextHiddenExtra
+                              ? "Add another pitch type"
+                              : "All additional pitch slots added"}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                }
+
+                // Now render any extra pitch matrices that are visible (either clicked on or already have values)
+                extraPitchMetrics.forEach((m) => {
+                  if (isExtraMetricVisible(m)) {
+                    pushPitchMatrixRow(m);
+                  }
+                });
+
+                // Any remaining non-extra metrics fall back to the generic renderer
+                const remaining = group.metrics.filter((m) => {
+                  const metricKey = (m as any).metric_key as string | undefined;
+                  if (metricKey && extraPitchKeys.has(metricKey)) {
+                    // extra pitch metrics are either rendered above or intentionally hidden
+                    return false;
+                  }
+                  return !usedIds.has(m.id);
+                });
+                remaining.forEach((m) => pushDefaultRow(m));
+
+                return <Fragment key={group.key}>{rows}</Fragment>;
+              }
+
+
+              // Special layout: Hitting → per-swing matrices + generic rows
+              // Special layout: Hitting → per-swing matrices + generic rows
+              if (isHittingGroup) {
+                const byKey = new Map<string, AssessmentMetric>();
+                group.metrics.forEach((m) => {
+                  const metricKey = (m as any).metric_key as string | undefined;
+                  if (metricKey) {
+                    byKey.set(metricKey, m);
+                  }
+                });
+
+                const fastballMetric = byKey.get(HITTING_MATRIX_METRIC_KEYS.fastball);
+                const youthPitchMetric = byKey.get(HITTING_MATRIX_METRIC_KEYS.youthPitch);
+                const youthTeeMetric = byKey.get(HITTING_MATRIX_METRIC_KEYS.youthTee);
+                const varSpeedMetric = byKey.get(HITTING_MATRIX_METRIC_KEYS.varSpeed);
+                const curveballMetric = byKey.get(HITTING_MATRIX_METRIC_KEYS.curveball);
+
+                const usedIds = new Set<number>();
+                if (fastballMetric) usedIds.add(fastballMetric.id);
+                if (youthPitchMetric) usedIds.add(youthPitchMetric.id);
+                if (youthTeeMetric) usedIds.add(youthTeeMetric.id);
+                if (varSpeedMetric) usedIds.add(varSpeedMetric.id);
+                if (curveballMetric) usedIds.add(curveballMetric.id);
+
+                const pushMatrixRow = (
+                  metric: AssessmentMetric,
+                  swingSetKey: keyof typeof HITTING_MATRIX_METRIC_KEYS
+                ) => {
+                  const metricKey = (metric as any).metric_key as string | undefined;
+                  const meta = metricKey ? getMetricMeta(metricKey) : undefined;
+                  const options = HITTING_MATRIX_OPTIONS[swingSetKey] ?? [];
+                  const pointsMap = new Map<string, number>();
+                  options.forEach((opt) => pointsMap.set(opt.code, opt.points));
+
+                  const swingCount = HITTING_SWING_COUNTS[swingSetKey] ?? 10;
+
+                  const displayName =
+                    meta?.displayName || (metric as any).label || "Hitting Matrix";
+
+                  const description =
+                    meta?.instructions ||
+                    "Select the outcome of each swing. The total score is calculated automatically.";
+
+                  rows.push(
+                    <tr
+                      key={`${group.key}-hit-matrix-${metric.id}`}
+                      className="border-b border-slate-800"
+                    >
+                      <td className="align-top px-2 py-2">
+                        <div className="font-medium text-slate-100">{displayName}</div>
+                        <div className="text-[10px] text-slate-500 mt-0.5">
+                          {description}
+                        </div>
+                      </td>
+
+                      {gridColumns.map((col) => {
+                        const playerId = col.id;
+                        const perPlayer = (sessionData?.values as any)?.[playerId] || {};
+                        const v = perPlayer[metric.id];
+                        const storedText = v?.value_text;
+                        const numericValue = v?.value_numeric;
+
+                        let swings: string[] = new Array(swingCount).fill("");
+
+                        if (typeof storedText === "string" && storedText.trim() !== "") {
+                          try {
+                            const parsed = JSON.parse(storedText);
+                            if (Array.isArray(parsed)) {
+                              for (
+                                let i = 0;
+                                i < Math.min(parsed.length, swingCount);
+                                i++
+                              ) {
+                                swings[i] = String(parsed[i] ?? "");
+                              }
+                            }
+                          } catch {
+                            // ignore parse errors
+                          }
+                        }
+
+                        const displayTotal =
+                          typeof numericValue === "number"
+                            ? numericValue
+                            : swings.reduce(
+                                (sum, code) => sum + (pointsMap.get(code) ?? 0),
+                                0
+                              );
+
+                        return (
+                          <td
+                            key={`${group.key}-hit-matrix-${metric.id}-${playerId}`}
+                            className="px-2 py-1 align-top text-center"
+                          >
+                            <div className="flex flex-col gap-1">
+                              <div className="grid grid-cols-2 gap-1">
+                                {Array.from({ length: swingCount }).map((_, idx) => {
+                                  const code = swings[idx] || "";
+                                  return (
+                                    <div
+                                      key={`${metric.id}-${playerId}-swing-${idx}`}
+                                      className="flex flex-col items-stretch"
+                                    >
+                                      <div className="text-[9px] text-slate-500 mb-0.5">
+                                        Swing {idx + 1}
+                                      </div>
+                                      <select
+                                        className="w-full rounded-md bg-slate-950 border border-slate-700 px-1 py-0.5 text-[11px]"
+                                        value={code}
+                                        onChange={(e) =>
+                                          handleHittingMatrixSwingChange(
+                                            metric.id,
+                                            playerId,
+                                            idx,
+                                            e.target.value,
+                                            options,
+                                            swingCount
+                                          )
+                                        }
+                                        disabled={isFinalized}
+                                      >
+                                        <option value="">—</option>
+                                        {options.map((opt) => (
+                                          <option key={opt.code} value={opt.code}>
+                                            {opt.label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              <div className="text-[10px] text-slate-400">
+                                Total:{" "}
+                                <span className="font-mono">{displayTotal || "—"}</span>
+                              </div>
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                };
+
+                if (fastballMetric) pushMatrixRow(fastballMetric, "fastball");
+                if (youthPitchMetric) pushMatrixRow(youthPitchMetric, "youthPitch");
+                if (youthTeeMetric) pushMatrixRow(youthTeeMetric, "youthTee");
+                if (varSpeedMetric) pushMatrixRow(varSpeedMetric, "varSpeed");
+                if (curveballMetric) pushMatrixRow(curveballMetric, "curveball");
+
+                // Any other Hitting metrics (bat speed, exit velo, tee LD, etc.) use default rendering
+                const remainingHittingMetrics = group.metrics.filter(
+                  (m) => !usedIds.has(m.id)
+                );
+                remainingHittingMetrics.forEach((m) => pushDefaultRow(m));
+
+                return <Fragment key={group.key}>{rows}</Fragment>;
+              }
+
+
+              // Default: generic numeric / select rows
+              group.metrics.forEach((m) => pushDefaultRow(m));
+              return <Fragment key={group.key}>{rows}</Fragment>;
+              })}
               </tbody>
+
 
             </table>
           )}

@@ -408,18 +408,64 @@ const METRIC_META: Record<string, MetricMeta> = {
 
 
   /* ---------------------------------------------------------------------- */
-  /*                        HITTING (10U+ core tests)                       */
+  /*                        HITTING (5U+ tests)                             */
   /* ---------------------------------------------------------------------- */
 
-  // Tee Line Drive Test – 10 swings off tee, count line drives
+  //
+  // Youth (5U–9U) contact tests
+  //
+
+  // 10 Swing Tee Contact (H10TEE)
+  m_10_swing_tee_contact_test: {
+    code: "H10TEE",
+    group: "Hitting – Contact",
+    shortLabel: "Hitting Contact (Tee)",
+    displayName: "Hitting Contact – 10-swing tee test",
+    instructions:
+      "Have the player take 10 swings off a batting tee. For each swing: " +
+      "Miss = 0; foul tip / mishit = 1; good contact = 2. " +
+      "Enter the total score across the 10 swings (0–20).",
+    notes: "Used for 5U–9U hitting alongside Max Bat Speed.",
+    inputType: "number",
+    min: 0,
+    max: 20,
+    step: 1,
+    unitHint: "matrix score (0–20)",
+    placeholder: "0–20",
+  },
+
+  // 10 Swing Pitch Matrix (H10PITCH) – youth version of the matrix
+  m_10_swing_pitch_matrix: {
+    code: "H10PITCH",
+    group: "Hitting – Contact",
+    shortLabel: "Hitting Matrix – 10 pitch",
+    displayName: "Hitting Matrix – 10 pitch (youth)",
+    instructions:
+      "With live pitching or a machine, have the player choose 10 pitches to swing at. " +
+      "For each swing: Miss = 0; foul tip = 1; ball put in play / contact = 2. " +
+      "Enter the total score across the 10 swings (0–20).",
+    notes: "Used for 5U–6U in place of the full fastball matrix.",
+    inputType: "number",
+    min: 0,
+    max: 20,
+    step: 1,
+    unitHint: "matrix score (0–20)",
+    placeholder: "0–20",
+  },
+
+  //
+  // Shared hitting tests (all/most ages)
+  //
+
+  // Tee line drive test – all ages
   tee_line_drive_test_10: {
     code: "HC10LD",
     group: "Hitting – Contact",
     shortLabel: "Tee Line Drive Test",
     displayName: "Tee Line Drive Test (10 swings)",
     instructions:
-      "Have the player hit off a tee and count how many true line drives they hit in a row, up to 10. " +
-      "Enter the number of successful line drives (0–10).",
+      "Have the player attempt to hit line drives off a tee. Count how many true line drives " +
+      "they hit in a row, up to 10. Enter the number of successful line drives (0–10).",
     inputType: "number",
     min: 0,
     max: 10,
@@ -435,7 +481,7 @@ const METRIC_META: Record<string, MetricMeta> = {
     shortLabel: "Max Exit Velo (tee)",
     displayName: "Max Exit Velocity off Tee",
     instructions:
-      "Player gets 3 attempts to max their exit velo off a tee. Enter the best exit velocity in MPH.",
+      "Player gets 3 attempts to max their exit velocity off a tee. Enter the best exit velocity in MPH.",
     inputType: "number",
     min: 0,
     max: 130,
@@ -445,17 +491,40 @@ const METRIC_META: Record<string, MetricMeta> = {
     placeholder: "e.g. 72.4",
   },
 
-  // 10-pitch fastball quality → Hitting Matrix
+  // Max bat speed – dry swings
+  max_bat_speed: {
+    code: "HPBS",
+    group: "Hitting – Power",
+    shortLabel: "Max Bat Speed",
+    displayName: "Max Bat Speed",
+    instructions:
+      "Have the player make dry swings with their game bat in front of a radar. " +
+      "They get 3 attempts; enter the highest bat speed in MPH.",
+    inputType: "number",
+    min: 0,
+    max: 130,
+    step: 0.1,
+    decimals: 1,
+    unitHint: "mph",
+    placeholder: "e.g. 65.2",
+  },
+
+  //
+  // Hitting Matrix family (7U+)
+  //
+
+  // 10-pitch fastball matrix – 7U+
   m_10_fastball_quality: {
     code: "H10FAST",
     group: "Hitting – Contact & Power",
-    shortLabel: "Hitting Matrix",
-    displayName: "Hitting Matrix (10-pitch fastball test)",
+    shortLabel: "Hitting Matrix – Fastballs",
+    displayName: "Hitting Matrix – Fastballs",
     instructions:
-      "With live pitching or a machine, have the player take 10 game-like swings at fastballs. " +
-      "Score each swing based on contact quality (miss, foul, weak contact, hard line drive, HR, etc.) using the BPOP matrix " +
-      "and enter the total Hitting Matrix score (0–50).",
-    notes: "This replaces the more technical label '10-Pitch Fastball Quality' in the UI.",
+      "With live pitching or a machine, have the player take 10 swings at fastballs. " +
+      "Each swing is scored for quality of contact (miss, foul, weak contact, hard line drive, HR, etc.) " +
+      "using the BPOP hitting matrix. Enter the total matrix score (0–50).",
+    notes:
+      "Shown in the UI as 'Hitting Matrix – Fastballs' instead of the backend name '10-Pitch Fastball Quality'.",
     inputType: "number",
     min: 0,
     max: 50,
@@ -464,60 +533,284 @@ const METRIC_META: Record<string, MetricMeta> = {
     placeholder: "0–50",
   },
 
-  // Max bat speed
-  max_bat_speed: {
-    code: "HPBS",
-    group: "Hitting – Power",
-    shortLabel: "Max Bat Speed",
-    displayName: "Max Bat Speed",
+  // 5-pitch varied speed matrix – 12U+
+  m_5_varied_speed_quality: {
+    code: "H5VAR",
+    group: "Hitting – Contact & Power",
+    shortLabel: "Hitting Matrix – Varied Speed",
+    displayName: "Hitting Matrix – Varied Speed (5-pitch)",
     instructions:
-      "Have the player take dry swings with their game bat in front of a bat sensor. " +
-      "Enter the best bat speed in MPH (from 3 attempts).",
+      "With live pitching or a machine, have the player face 5 pitches with varied speeds. " +
+      "Score each swing using the same BPOP hitting matrix as the fastball test and enter the total score.",
+    notes: "Scored with the same rules as the fastball matrix; just 5 pitches instead of 10.",
     inputType: "number",
     min: 0,
-    max: 130,
-    step: 0.1,
-    decimals: 1,
-    unitHint: "mph",
-    placeholder: "e.g. 67.8",
+    max: 25,
+    step: 1,
+    unitHint: "matrix score (0–25)",
+    placeholder: "0–25",
+  },
+
+  // 5-pitch curveball matrix – HS/College/Pro
+  m_5_curveball_quality: {
+    code: "H5CB",
+    group: "Hitting – Contact & Power",
+    shortLabel: "Hitting Matrix – Curveball",
+    displayName: "Hitting Matrix – Curveball (5-pitch)",
+    instructions:
+      "With live pitching or a machine, have the player face 5 curveballs. " +
+      "Score each swing using the same BPOP hitting matrix as the fastball test and enter the total score.",
+    notes: "Used for HS, College, and Pro hitting templates.",
+    inputType: "number",
+    min: 0,
+    max: 25,
+    step: 1,
+    unitHint: "matrix score (0–25)",
+    placeholder: "0–25",
   },
 
   /* ---------------------------------------------------------------------- */
   /*                        THROWING / PITCHING TESTS                       */
   /* ---------------------------------------------------------------------- */
 
-  m_10_throw_test_50ft: {
-    code: "TPITCH1050",
-    group: "Pitching – Command",
-    shortLabel: "10 Pitch Command Test (50 ft)",
-    displayName: "10 Pitch Target Test (50 ft)",
-    instructions:
-      "From 50 ft, pitch 10 balls at a 9-square target. Score each pitch per the BPOP rubric " +
-      "(miss, hit target, hit called section) and enter the total command score.",
-    inputType: "number",
-    min: 0,
-    max: 50,
-    step: 1,
-    unitHint: "score",
-    placeholder: "e.g. 32",
-  },
   max_throwing_speed: {
     code: "TSPEED",
     group: "Pitching – Velocity",
-    shortLabel: "Max Throwing Velo",
-    displayName: "Max Throwing Velocity",
+    shortLabel: "Pitch Velocity",
+    displayName: "Pitch Velocity",
     instructions:
-      "Have the player throw 5 pitches from mound distance or 50 ft trying to max out velocity. " +
-      "Enter the best pitch velocity in MPH.",
+      "Have the player throw 5 pitches from the appropriate mound distance for their age group. The player should try to max out their velocity. Enter the fastest pitch (mph).",
     inputType: "number",
     min: 0,
-    max: 130,
-    step: 0.1,
-    decimals: 1,
+    max: 110,
+    step: 1,
     unitHint: "mph",
-    placeholder: "e.g. 63.2",
+    placeholder: "mph",
   },
+
+  // Youth throwing / command (used inside Throwing & Pitching for 5U–9U)
+  m_10_throw_test_40ft: {
+    code: "TPITCH1040",
+    group: "Throwing & Pitching",
+    shortLabel: "10 Pitch Command (40 ft)",
+    displayName: "10 Pitch Command Test (40 ft)",
+    instructions:
+      "Have the player throw 10 pitches toward a 9-slot target from 40 ft. Before each pitch, have them call the slot they are aiming at. Score separately; total score is entered here.",
+    inputType: "number",
+    min: 0,
+    max: 30,
+    step: 1,
+    unitHint: "score",
+    placeholder: "0–30",
+  },
+
+  m_10_throw_test_45ft: {
+    code: "TPITCH1045",
+    group: "Throwing & Pitching",
+    shortLabel: "10 Pitch Command (45 ft)",
+    displayName: "10 Pitch Command Test (45 ft)",
+    instructions:
+      "Have the player throw 10 pitches toward a 9-slot target from 45 ft. Before each pitch, have them call the slot they are aiming at. Score separately; total score is entered here.",
+    inputType: "number",
+    min: 0,
+    max: 30,
+    step: 1,
+    unitHint: "score",
+    placeholder: "0–30",
+  },
+
+  // 10-pitch command @ 50 ft (10U–11U Pitching Eval)
+  m_10_throw_test_50ft: {
+    code: "TPITCH1050",
+    group: "Pitching – Command",
+    shortLabel: "Pitching Matrix",
+    displayName: "Pitching Matrix (10 pitches @ 50 ft)",
+    instructions:
+      "From 50 ft, have the player throw 10 pitches at a 9-slot target. Before each pitch, they call a slot. For each pitch: Miss (0), Hit target (1), Hit called section (3). The matrix UI will total the score.",
+    inputType: "number",
+    min: 0,
+    max: 30, // 10 pitches × max 3 points
+    step: 1,
+    unitHint: "score",
+    placeholder: "0–30",
+  },
+
+  // 20-pitch command @ 60'6\" (12U+ Pitching Eval)
+  m_20_throw_test_60ft: {
+    code: "TPITCH2060",
+    group: "Pitching – Command",
+    shortLabel: "Pitching Matrix – Fastballs",
+    displayName: "Pitching Matrix – Fastballs (20 pitches @ 60'6\")",
+    instructions:
+      "From 60'6\", have the player throw 20 fastballs at a 9-slot target. Before each pitch, they call a slot. For each pitch: Miss (0), Hit target (1), Hit called section (3). The matrix UI will total the score.",
+    inputType: "number",
+    min: 0,
+    max: 60, // 20 pitches × max 3 points
+    step: 1,
+    unitHint: "score",
+    placeholder: "0–60",
+  },
+
+  // Additional pitch matrices (HS / College / Pro) – each 5 pitches
+  // These are wired to the “Additional Pitch Matrix” rows in the Pitching Eval UI.
+  tpitch5ap1: {
+    code: "TPITCH5AP1",
+    group: "Pitching – Command",
+    shortLabel: "Additional Pitch Matrix",
+    displayName: "Additional Pitch Matrix (5 pitches)",
+    instructions:
+      "For an additional pitch type (curve, slider, change-up, etc.), have the player throw 5 pitches at the 9-slot target. " +
+      "For each pitch: Miss (0), Hit target (1), Hit called section (3). The matrix UI will total the score (0–15).",
+    inputType: "number",
+    min: 0,
+    max: 15,
+    step: 1,
+    unitHint: "score",
+    placeholder: "0–15",
+  },
+  tpitch5ap2: {
+    code: "TPITCH5AP2",
+    group: "Pitching – Command",
+    shortLabel: "Additional Pitch Matrix",
+    displayName: "Additional Pitch Matrix (5 pitches)",
+    instructions:
+      "Second additional pitch type. Use the 5-pitch matrix: Miss (0), Hit target (1), Hit called section (3). The UI totals the score (0–15).",
+    inputType: "number",
+    min: 0,
+    max: 15,
+    step: 1,
+    unitHint: "score",
+    placeholder: "0–15",
+  },
+  tpitch5ap3: {
+    code: "TPITCH5AP3",
+    group: "Pitching – Command",
+    shortLabel: "Additional Pitch Matrix",
+    displayName: "Additional Pitch Matrix (5 pitches)",
+    instructions:
+      "Third additional pitch type. Use the 5-pitch matrix: Miss (0), Hit target (1), Hit called section (3). The UI totals the score (0–15).",
+    inputType: "number",
+    min: 0,
+    max: 15,
+    step: 1,
+    unitHint: "score",
+    placeholder: "0–15",
+  },
+  tpitch5ap4: {
+    code: "TPITCH5AP4",
+    group: "Pitching – Command",
+    shortLabel: "Additional Pitch Matrix",
+    displayName: "Additional Pitch Matrix (5 pitches)",
+    instructions:
+      "Fourth additional pitch type. Use the 5-pitch matrix: Miss (0), Hit target (1), Hit called section (3). The UI totals the score (0–15).",
+    inputType: "number",
+    min: 0,
+    max: 15,
+    step: 1,
+    unitHint: "score",
+    placeholder: "0–15",
+  },
+  tpitch5ap5: {
+    code: "TPITCH5AP5",
+    group: "Pitching – Command",
+    shortLabel: "Additional Pitch Matrix",
+    displayName: "Additional Pitch Matrix (5 pitches)",
+    instructions:
+      "Fifth additional pitch type. Use the 5-pitch matrix: Miss (0), Hit target (1), Hit called section (3). The UI totals the score (0–15).",
+    inputType: "number",
+    min: 0,
+    max: 15,
+    step: 1,
+    unitHint: "score",
+    placeholder: "0–15",
+  },
+
+
+  /* ---------------------------------------------------------------------- */
+  /*                             CATCHER TESTS                              */
+  /* ---------------------------------------------------------------------- */
+
+  // Catcher screen tests – younger (10 pitches)
+  c10pcs_points: {
+    code: "C10PCS",
+    group: "Catcher",
+    shortLabel: "Catcher Screens (10)",
+    displayName: "10 Pitch Catcher Screens (C10PCS)",
+    instructions:
+      "Have the catcher receive 10 pitches (live or machine). " +
+      "6 should be normal strikes in the zone, 2 should be balls outside the zone, " +
+      "and 2 should be balls in the dirt in front of the catcher. " +
+      "For each pitch: Miss/passed ball = 0, Block that stays in front = 1, Catch or scoop = 2. " +
+      "The grid UI lets you score each pitch and will total the points automatically.",
+    inputType: "number",
+    min: 0,
+    max: 20,
+    step: 1,
+    unitHint: "matrix score (0–20)",
+    placeholder: "0–20",
+  },
+
+  // Catcher screen tests – older (20 pitches)
+  c20pcs_points: {
+    code: "C20PCS",
+    group: "Catcher",
+    shortLabel: "Catcher Screens (20)",
+    displayName: "20 Pitch Catcher Screens (C20PCS)",
+    instructions:
+      "Have the catcher receive 20 pitches (live or machine). " +
+      "Mix strikes in the zone with pitches outside the zone and in the dirt. " +
+      "For each pitch: Miss/passed ball = 0, Block that stays in front = 1, Catch or scoop = 2. " +
+      "The grid UI lets you score each pitch and will total the points automatically.",
+    inputType: "number",
+    min: 0,
+    max: 40,
+    step: 1,
+    unitHint: "matrix score (0–40)",
+    placeholder: "0–40",
+  },
+
+  // Catcher Throw to 2B Time (CT2BT)
+  ct2bt_seconds: {
+    code: "CT2BT",
+    group: "Catcher",
+    shortLabel: "Throw to 2B Time",
+    displayName: "Catcher Throw to 2B Time (CT2BT)",
+    instructions:
+      "Have the catcher receive a pitch and throw to 2B (target or fielder). " +
+      "Start timing when the pitch crosses the plate and stop when the ball reaches 2B. " +
+      "Use the built-in stopwatch or enter the time in seconds to the hundredth.",
+    inputType: "number",
+    min: 0,
+    max: 5,
+    step: 0.01,
+    decimals: 2,
+    unitHint: "seconds",
+    placeholder: "e.g. 2.05",
+  },
+
+  // Target throws to 2B (CTTT2B) – 5 throws
+  cttt2b_points: {
+    code: "CTTT2B",
+    group: "Catcher",
+    shortLabel: "Target Throws to 2B",
+    displayName: "Target Throws to 2B (CTTT2B)",
+    instructions:
+      "Have the catcher receive 5 pitches and then throw to 2B each time. " +
+      "For each rep: No catch = 0, Missed target = 1, Hit target = 3. " +
+      "The grid UI lets you select the outcome for each throw and will total the score.",
+    inputType: "number",
+    min: 0,
+    max: 15,
+    step: 1,
+    unitHint: "matrix score (0–15)",
+    placeholder: "0–15",
+  },
+
+
+  
 };
+
+
 
 /** Helper to get metadata for a given metric_key (or undefined if we haven't customized it yet). */
 export function getMetricMeta(metricKey: MetricKey): MetricMeta | undefined {
