@@ -1803,7 +1803,7 @@ const METRIC_META: Record<string, MetricMeta> = {
     step: 1,
     unitHint: "points (0–20)",
   },
-
+  
   // Ground ball to home timed test
   ofgbht_seconds: {
     code: "OFGBHT",
@@ -1820,6 +1820,224 @@ const METRIC_META: Record<string, MetricMeta> = {
     decimals: 2,
     unitHint: "seconds",
     placeholder: "e.g. 6.25",
+  },
+
+  /* ---------------------------------------------------------------------- */
+  /*                         YOUTH CATCHING (5U–9U)                         */
+  /* ---------------------------------------------------------------------- */
+
+  // 5U–6U: 20 ft / 40 ft catching tests
+  m_20ft_catching_test: {
+    code: "C20FT",
+    group: "Catching",
+    shortLabel: "20 ft Catching (5 throws)",
+    displayName: "20 ft Catching Test (C20FT)",
+    instructions:
+      "Have the player stand 20 ft away and throw 5 balls to them. 0 points for a complete miss, 1 point if the ball touches the glove, and 2 points for a clean catch. The matrix UI lets you score each rep; the total out of 10 is calculated automatically.",
+    notes: "Scored per‑rep in the UI: Miss = 0, Glove touched = 1, Catch = 2 (max 10).",
+    inputType: "number",
+    min: 0,
+    max: 10,
+    step: 1,
+    unitHint: "points (0–10)",
+    placeholder: "0–10",
+  },
+
+  m_40_ft_catching_test: {
+    code: "C40FT",
+    group: "Catching",
+    shortLabel: "40 ft Catching (5 throws)",
+    displayName: "40 ft Catching Test (C40FT)",
+    instructions:
+      "Have the player stand 40 ft away and throw 5 balls to them. 0 points for a complete miss, 1 point if the ball touches the glove, and 2 points for a clean catch. The matrix UI lets you score each rep; the total out of 10 is calculated automatically.",
+    notes: "Scored per‑rep in the UI: Miss = 0, Glove touched = 1, Catch = 2 (max 10).",
+    inputType: "number",
+    min: 0,
+    max: 10,
+    step: 1,
+    unitHint: "points (0–10)",
+    placeholder: "0–10",
+  },
+
+  // 7U–9U: 1B catching test (C51B)
+  c51b_catching_test: {
+    code: "C51B",
+    group: "Catching – 1B",
+    shortLabel: "1B Catching (5 throws)",
+    displayName: "First Base Catching Test (C51B)",
+    instructions:
+      "Have the player set up at 1B to take 5 throws from SS. 3 should be good throws and 2 should be more challenging (high/low/side). 0 points for a missed catch that gets by, 1 point for a blocked ball, and 3 points for a clean catch with the foot on the bag. The matrix UI lets you score each rep; the total out of 15 is calculated automatically.",
+    notes: "Scored per‑rep in the UI: Miss = 0, Blocked = 1, Catch = 3 (max 15).",
+    inputType: "number",
+    min: 0,
+    max: 15,
+    step: 1,
+    unitHint: "points (0–15)",
+    placeholder: "0–15",
+  },
+
+  // 7U: Fly/LD combined tests (CIFFLD2B/SS/3B)
+  infield_fly_ld_2b: {
+    code: "CIFFLD2B",
+    group: "Catching – Infield",
+    shortLabel: "Fly/LD 2B (3 reps)",
+    displayName: "Infield Fly / Light LD – 2B (CIFFLD2B)",
+    instructions:
+      "Hit 3 infield fly balls or light line drives to 2B within about a 20 ft radius. 0 points for a miss and 2 points for a catch. The matrix UI lets you score each rep; the total out of 6 is calculated automatically.",
+    inputType: "number",
+    min: 0,
+    max: 6,
+    step: 1,
+    unitHint: "points (0–6)",
+    placeholder: "0–6",
+  },
+  infield_fly_ld_ss: {
+    code: "CIFFLDSS",
+    group: "Catching – Infield",
+    shortLabel: "Fly/LD SS (3 reps)",
+    displayName: "Infield Fly / Light LD – SS (CIFFLDSS)",
+    instructions:
+      "Hit 3 infield fly balls or light line drives to SS within about a 20 ft radius. 0 points for a miss and 2 points for a catch. The matrix UI lets you score each rep; the total out of 6 is calculated automatically.",
+    inputType: "number",
+    min: 0,
+    max: 6,
+    step: 1,
+    unitHint: "points (0–6)",
+    placeholder: "0–6",
+  },
+  infield_fly_ld_3b: {
+    code: "CIFFLD3B",
+    group: "Catching – Infield",
+    shortLabel: "Fly/LD 3B (3 reps)",
+    displayName: "Infield Fly / Light LD – 3B (CIFFLD3B)",
+    instructions:
+      "Hit 3 infield fly balls or light line drives to 3B within about a 20 ft radius. 0 points for a miss and 2 points for a catch. The matrix UI lets you score each rep; the total out of 6 is calculated automatically.",
+    inputType: "number",
+    min: 0,
+    max: 6,
+    step: 1,
+    unitHint: "points (0–6)",
+    placeholder: "0–6",
+  },
+
+
+  // 5×5 Fly Ball Ladder – Level (used in 7U–8U catching)
+  c5x5_fly_ball_ladder_level: {
+    code: "C5X5",
+    displayName: "5×5 Fly Ball Ladder – Level",
+    shortLabel: "5×5 Ladder",
+    group: "Catching",
+    instructions:
+      "Set markers every 20 ft back to 120 ft. Start at level 1 (20 ft) and work back as the player successfully catches two balls at each level. Record the highest level reached before they miss 3 total balls.",
+    unitHint: "Level 1–6 (0–25 pts)",
+    inputType: "number",          // ⬅️ was "integer"
+    min: 0,
+    max: 25,
+    step: 5,
+  },
+
+  // 10×10 Fly Ball Ladder – Level (used in 8U–9U catching)
+  c10x10_fly_ball_ladder_level: {
+    code: "C10X10",
+    displayName: "10×10 Fly Ball Ladder – Level",
+    shortLabel: "10×10 Ladder",
+    group: "Catching",
+    instructions:
+      "Set markers every 20 ft back to 120 ft. Start at level 1 (20 ft) and work back as the player successfully catches two balls at each level. Record the highest level reached before they miss 3 total balls. At higher levels, force the player to move within a 10-yard radius.",
+    unitHint: "Level 1–6 (0–25 pts)",
+    inputType: "number",          // ⬅️ was "integer"
+    min: 0,
+    max: 25,
+    step: 5,
+  },
+
+
+  // 9U: 5‑Pitch Catcher Screen & 15×15 matrix
+  c5pcs_points: {
+    code: "C5PCS",
+    group: "Catching – Screens",
+    shortLabel: "5 Pitch Catcher Screen",
+    displayName: "5 Pitch Catcher Screen (C5PCS)",
+    instructions:
+      "Have the catcher receive 5 pitches (3 strikes, 1 ball out of the zone, 1 in the dirt). 0 points for a passed ball, 1 point for a blocked ball that stays in front, and 2 points for a catch or scoop. The matrix UI lets you score each rep; the total out of 10 is calculated automatically.",
+    inputType: "number",
+    min: 0,
+    max: 10,
+    step: 1,
+    unitHint: "points (0–10)",
+    placeholder: "0–10",
+  },
+
+  c15x15m_points: {
+    code: "C15X15M",
+    group: "Catching – Matrix",
+    shortLabel: "15×15 Matrix (10 reps)",
+    displayName: "15×15 Catching Matrix (C15X15M)",
+    instructions:
+      "Set up a 15‑yard radius around the player and hit 10 fly balls to varied spots in the coverage area from about 80 ft away. 0 points for a miss and 2 points for a catch. The matrix UI lets you score each rep; the total out of 20 is calculated automatically.",
+    inputType: "number",
+    min: 0,
+    max: 20,
+    step: 1,
+    unitHint: "points (0–20)",
+    placeholder: "0–20",
+  },
+
+  // 5U–6U Fielding – basic grounders (FG2B, FGSS, FG3B, FGP)
+  grounders_2b: {
+    code: "FG2B",
+    group: "Fielding",
+    shortLabel: "Grounders – 2B",
+    displayName: "Grounders – 2B (3 reps)",
+    instructions:
+      "Hit 3 ground balls to the player at 2B. Score each rep: 0 = didn't field, 1 = fielded but missed the target at 1B, 2 = fielded cleanly and hit the target at 1B. Enter the total points (max 6).",
+    unitHint: "points (0–6)",
+    inputType: "number",
+    min: 0,
+    max: 6,
+    step: 1,
+  },
+
+  grounders_ss: {
+    code: "FGSS",
+    group: "Fielding",
+    shortLabel: "Grounders – SS",
+    displayName: "Grounders – Shortstop (3 reps)",
+    instructions:
+      "Hit 3 ground balls to the player at SS. Score each rep: 0 = didn't field, 1 = fielded but missed the target at 1B, 2 = fielded cleanly and hit the target at 1B. Enter the total points (max 6).",
+    unitHint: "points (0–6)",
+    inputType: "number",
+    min: 0,
+    max: 6,
+    step: 1,
+  },
+
+  grounders_3b: {
+    code: "FG3B",
+    group: "Fielding",
+    shortLabel: "Grounders – 3B",
+    displayName: "Grounders – 3B (3 reps)",
+    instructions:
+      "Hit 3 ground balls to the player at 3B. Score each rep: 0 = didn't field, 1 = fielded but missed the target at 1B, 2 = fielded cleanly and hit the target at 1B. Enter the total points (max 6).",
+    unitHint: "points (0–6)",
+    inputType: "number",
+    min: 0,
+    max: 6,
+    step: 1,
+  },
+
+  grounders_pitcher: {
+    code: "FGP",
+    group: "Fielding",
+    shortLabel: "Grounders – P",
+    displayName: "Grounders – Pitcher (3 reps)",
+    instructions:
+      "Hit 3 ground balls to the pitcher. Score each rep: 0 = didn't field, 1 = fielded but missed the target at 1B, 2 = fielded cleanly and hit the target at 1B. Enter the total points (max 6).",
+    unitHint: "points (0–6)",
+    inputType: "number",
+    min: 0,
+    max: 6,
+    step: 1,
   },
 
   

@@ -1123,6 +1123,16 @@ export default function AssessmentSessionPage() {
       }),
     [metrics]
   );
+
+  // IFSS1BT – SS to 1B throw timer (used in older Infield + 8U–9U Fielding)
+  const hasIfss1btMetric = useMemo(
+    () =>
+      metrics.some(
+        (m) => (m as any).metric_key === "ifss1bt_seconds"
+      ),
+    [metrics]
+  );
+
   
   function handleSpeedTimerStart() {
     setSpeedTimerMs(0);
@@ -1548,13 +1558,13 @@ export default function AssessmentSessionPage() {
   
 
   // Hitting matrix: per-swing quality tests (H10FAST, H10PITCH, H10TEE, H5VAR, H5CB)
-  // Hitting matrix: per-swing quality tests (H10FAST, H10PITCH, H10TEE, H5VAR, H5CB)
+  // Also reused for catcher screens, youth grounders, youth catching matrices, infield fly/LD, etc.
   function handleHittingMatrixSwingChange(
     metricId: number,
     playerId: string,
     swingIndex: number,
     swingCode: string,
-    options: HittingSwingOption[],
+    options: { code: string; label: string; points: number }[],
     swingCount: number
   ) {
     if (!sessionData || isFinalized) return;
@@ -1583,13 +1593,15 @@ export default function AssessmentSessionPage() {
           session_mode: effectiveSessionMode as any,
         };
 
+      // Shallow-clone the values map so we don't mutate state in place
       const values = { ...(base.values || {}) } as any;
       const byPlayer = { ...(values[playerId] || {}) };
       const existing = byPlayer[metricId];
 
-      // Start with an empty swing array for this test
+      // Start with an empty array of swings for this metric
       let swings: string[] = new Array(maxSwings).fill("");
 
+      // If we already have stored text, hydrate from it
       if (
         existing?.value_text &&
         typeof existing.value_text === "string" &&
@@ -1619,27 +1631,34 @@ export default function AssessmentSessionPage() {
         total += pointsMap.get(code) ?? 0;
       }
 
-      if (!hasAny) {
-        // Clear the metric if all swings are blank
-        byPlayer[metricId] = {
-          value_numeric: null,
-          value_text: null,
-        };
-      } else {
-        byPlayer[metricId] = {
-          value_numeric: total,
-          value_text: JSON.stringify(swings),
-        };
-      }
+      const nextMetricValue = hasAny
+        ? {
+            value_numeric: total,
+            value_text: JSON.stringify(swings),
+          }
+        : {
+            value_numeric: null,
+            value_text: null,
+          };
 
-      values[playerId] = byPlayer;
-      base.values = values;
+      const nextByPlayer = {
+        ...byPlayer,
+        [metricId]: nextMetricValue,
+      };
 
-      return base;
+      // IMPORTANT: return a *new* sessionData object so React re-renders
+      return {
+        ...base,
+        values: {
+          ...values,
+          [playerId]: nextByPlayer,
+        },
+      };
     });
 
     setDirty(true);
   }
+
 
 
   
@@ -2542,7 +2561,7 @@ export default function AssessmentSessionPage() {
         )}
 
 
-        {effectiveEvalType === "infield" && (
+        {hasIfss1btMetric && (
           <div className="mt-2 space-y-1 text-[11px]">
             <div className="font-semibold text-slate-200">
               SS to 1B timer (IFSS1BT)
@@ -3552,6 +3571,701 @@ export default function AssessmentSessionPage() {
                 return <Fragment key={group.key}>{rows}</Fragment>;
               }
 
+              // Special layout: Youth Catching (5U–9U)
+              // Handles:
+              // - C20FT / C40FT (m_20ft_catching_test, m_40_ft_catching_test)
+              // - C51B / C1BST (c51b_catching_test, c1bst_scoops_test)
+              // - CIFFLD2B/SS/3B (infield_fly_ld_2b/ss/3b)
+              // - CIFF / CLD 2B/SS/3B (infield_fly_*, infield_ld_*)
+              // - C5PCS (c5pcs_points)
+              // - C15X15M (c15x15m_points)
+              // - Ladders: C5X5LD / 10X10 Ladder (c5x5_fly_ball_ladder_level, c10x10_fly_ball_ladder_level)
+              if (effectiveEvalType === "catching") {
+                const usedIds = new Set<number>();
+
+                const YOUTH_CATCH_MATRIX_CONFIG: Record<
+                  string,
+                  {
+                    repCount: number;
+                    options: HittingSwingOption[];
+                    defaultLabel: string;
+                    defaultDescription: string;
+                  }
+                > = {
+                  // 5U–6U: 20 ft / 40 ft catching tests
+                  m_20ft_catching_test: {
+                    repCount: 5,
+                    options: [
+                      { code: "miss", label: "Miss (0)", points: 0 },
+                      {
+                        code: "glove",
+                        label: "Glove touched ball (1)",
+                        points: 1,
+                      },
+                      { code: "catch", label: "Catch (2)", points: 2 },
+                    ],
+                    defaultLabel: "20 ft Catching Test (C20FT)",
+                    defaultDescription:
+                      "Throw 5 balls to the player from 20 ft. 0 = miss, 1 = glove touched the ball, 2 = clean catch. Max score 10.",
+                  },
+                  m_40_ft_catching_test: {
+                    repCount: 5,
+                    options: [
+                      { code: "miss", label: "Miss (0)", points: 0 },
+                      {
+                        code: "glove",
+                        label: "Glove touched ball (1)",
+                        points: 1,
+                      },
+                      { code: "catch", label: "Catch (2)", points: 2 },
+                    ],
+                    defaultLabel: "40 ft Catching Test (C40FT)",
+                    defaultDescription:
+                      "Throw 5 balls to the player from 40 ft. 0 = miss, 1 = glove touched the ball, 2 = clean catch. Max score 10.",
+                  },
+
+                  // 7U–9U: 1B catching & scoops
+                  c51b_catching_test: {
+                    repCount: 5,
+                    options: [
+                      { code: "miss", label: "Miss (0)", points: 0 },
+                      {
+                        code: "block",
+                        label: "Blocked ball (1)",
+                        points: 1,
+                      },
+                      {
+                        code: "catch",
+                        label: "Catch with foot on bag (3)",
+                        points: 3,
+                      },
+                    ],
+                    defaultLabel: "1B Catching Test (C51B)",
+                    defaultDescription:
+                      "5 throws to 1B from SS. 0 = missed catch that gets by, 1 = blocked ball, 3 = catch with foot on the bag. Max score 15.",
+                  },
+                  c1bst_scoops_test: {
+                    repCount: 5,
+                    options: [
+                      { code: "miss", label: "Miss (0)", points: 0 },
+                      {
+                        code: "block",
+                        label: "Blocked ball (1)",
+                        points: 1,
+                      },
+                      {
+                        code: "catch",
+                        label: "Scooped / caught on bag (3)",
+                        points: 3,
+                      },
+                    ],
+                    defaultLabel: "1B Scoops Test (C1BST)",
+                    defaultDescription:
+                      "5 short-hop throws for the 1B to scoop. 0 = miss that gets by, 1 = blocked ball, 3 = scoop/catch with foot on the bag. Max score 15.",
+                  },
+                  
+                  // 7U: combined infield fly + light LD
+                  infield_fly_ld_2b: {
+                    repCount: 3,
+                    options: [
+                      { code: "miss", label: "Miss (0)", points: 0 },
+                      { code: "catch", label: "Catch (2)", points: 2 },
+                    ],
+                    defaultLabel: "Infield Fly/LD – 2B (CIFFLD2B)",
+                    defaultDescription:
+                      "3 infield fly balls or light line drives to 2B within ~20 ft. 0 = miss, 2 = catch. Max score 6.",
+                  },
+                  infield_fly_ld_ss: {
+                    repCount: 3,
+                    options: [
+                      { code: "miss", label: "Miss (0)", points: 0 },
+                      { code: "catch", label: "Catch (2)", points: 2 },
+                    ],
+                    defaultLabel: "Infield Fly/LD – SS (CIFFLDSS)",
+                    defaultDescription:
+                      "3 infield fly balls or light line drives to SS within ~20 ft. 0 = miss, 2 = catch. Max score 6.",
+                  },
+                  infield_fly_ld_3b: {
+                    repCount: 3,
+                    options: [
+                      { code: "miss", label: "Miss (0)", points: 0 },
+                      { code: "catch", label: "Catch (2)", points: 2 },
+                    ],
+                    defaultLabel: "Infield Fly/LD – 3B (CIFFLD3B)",
+                    defaultDescription:
+                      "3 infield fly balls or light line drives to 3B within ~20 ft. 0 = miss, 2 = catch. Max score 6.",
+                  },
+
+                  // 8U–9U: infield fly & line drives
+                  infield_fly_2b: {
+                    repCount: 3,
+                    options: [
+                      { code: "miss", label: "Miss (0)", points: 0 },
+                      { code: "catch", label: "Catch (2)", points: 2 },
+                    ],
+                    defaultLabel: "Infield Fly – 2B (CIFF2B)",
+                    defaultDescription:
+                      "3 infield fly balls to 2B within ~20 ft. 0 = miss, 2 = catch. Max score 6.",
+                  },
+                  infield_fly_ss: {
+                    repCount: 3,
+                    options: [
+                      { code: "miss", label: "Miss (0)", points: 0 },
+                      { code: "catch", label: "Catch (2)", points: 2 },
+                    ],
+                    defaultLabel: "Infield Fly – SS (CIFFSS)",
+                    defaultDescription:
+                      "3 infield fly balls to SS within ~20 ft. 0 = miss, 2 = catch. Max score 6.",
+                  },
+                  infield_fly_3b: {
+                    repCount: 3,
+                    options: [
+                      { code: "miss", label: "Miss (0)", points: 0 },
+                      { code: "catch", label: "Catch (2)", points: 2 },
+                    ],
+                    defaultLabel: "Infield Fly – 3B (CIFF3B)",
+                    defaultDescription:
+                      "3 infield fly balls to 3B within ~20 ft. 0 = miss, 2 = catch. Max score 6.",
+                  },
+                  infield_ld_2b: {
+                    repCount: 3,
+                    options: [
+                      { code: "miss", label: "Miss (0)", points: 0 },
+                      { code: "catch", label: "Catch (2)", points: 2 },
+                    ],
+                    defaultLabel: "Infield Line Drives – 2B (CLD2B)",
+                    defaultDescription:
+                      "3 line drives to 2B inside ~10 ft. 0 = miss, 2 = catch. Max score 6.",
+                  },
+                  infield_ld_ss: {
+                    repCount: 3,
+                    options: [
+                      { code: "miss", label: "Miss (0)", points: 0 },
+                      { code: "catch", label: "Catch (2)", points: 2 },
+                    ],
+                    defaultLabel: "Infield Line Drives – SS (CLDSS)",
+                    defaultDescription:
+                      "3 line drives to SS inside ~10 ft. 0 = miss, 2 = catch. Max score 6.",
+                  },
+                  infield_ld_3b: {
+                    repCount: 3,
+                    options: [
+                      { code: "miss", label: "Miss (0)", points: 0 },
+                      { code: "catch", label: "Catch (2)", points: 2 },
+                    ],
+                    defaultLabel: "Infield Line Drives – 3B (CLD3B)",
+                    defaultDescription:
+                      "3 line drives to 3B inside ~10 ft. 0 = miss, 2 = catch. Max score 6.",
+                  },
+
+                  // 9U: 5‑pitch catcher screen
+                  c5pcs_points: {
+                    repCount: 5,
+                    options: [
+                      { code: "passed", label: "Passed ball (0)", points: 0 },
+                      {
+                        code: "block",
+                        label: "Blocked ball in front (1)",
+                        points: 1,
+                      },
+                      { code: "catch", label: "Catch (2)", points: 2 },
+                      { code: "scoop", label: "Scoop (2)", points: 2 },
+                    ],
+                    defaultLabel: "5‑Pitch Catcher Screen (C5PCS)",
+                    defaultDescription:
+                      "5‑pitch catcher screen: 3 strikes, 1 ball out of the zone, 1 in the dirt. 0 = passed ball, 1 = blocked ball that stays in front, 2 = catch or scoop. Max score 10.",
+                  },
+
+                  // 9U: 15×15 catching matrix
+                  c15x15m_points: {
+                    repCount: 10,
+                    options: [
+                      { code: "miss", label: "Miss (0)", points: 0 },
+                      { code: "catch", label: "Catch (2)", points: 2 },
+                    ],
+                    defaultLabel: "15×15 Catching Matrix (C15X15M)",
+                    defaultDescription:
+                      "Set up a 15‑yard radius around the player and hit 10 fly balls from about 80 ft. 0 = miss, 2 = catch. Max score 20.",
+                  },
+                };
+
+                const pushYouthCatchMatrixRow = (
+                  metric: AssessmentMetric,
+                  config: {
+                    repCount: number;
+                    options: HittingSwingOption[];
+                    defaultLabel: string;
+                    defaultDescription: string;
+                  }
+                ) => {
+                  const metricKey = (metric as any)
+                    .metric_key as string | undefined;
+
+                  const meta = metricKey ? getMetricMeta(metricKey) : undefined;
+                  const displayName =
+                    meta?.displayName ||
+                    (metric as any).label ||
+                    config.defaultLabel;
+                  const description =
+                    meta?.instructions || config.defaultDescription;
+
+                  const repCount = config.repCount;
+                  const options = config.options;
+
+                  const pointsMap = new Map<string, number>();
+                  options.forEach((opt) => pointsMap.set(opt.code, opt.points));
+
+                  rows.push(
+                    <tr
+                      key={`yc-${group.key}-${metric.id}`}
+                      className="border-b border-slate-800"
+                    >
+                      <td className="align-top px-2 py-2">
+                        <div className="font-medium text-slate-100">
+                          {displayName}
+                        </div>
+                        <div className="text-[10px] text-slate-500 mt-0.5">
+                          {description}
+                        </div>
+                      </td>
+                      {gridColumns.map((col) => {
+                        const playerId = col.id;
+                        const perPlayer =
+                          (sessionData?.values as any)?.[playerId] || {};
+                        const v = perPlayer[metric.id];
+
+                        const rawText = (v?.value_text ?? "") as string;
+                        let reps: string[] = Array(repCount).fill("");
+                        if (rawText && typeof rawText === "string") {
+                          try {
+                            const parsed = JSON.parse(rawText);
+                            if (Array.isArray(parsed)) {
+                              reps = reps.map(
+                                (existing, idx) =>
+                                  (parsed[idx] ?? existing) as string
+                              );
+                            }
+                          } catch {
+                            // ignore parse errors
+                          }
+                        }
+
+                        const numericValue =
+                          typeof v?.value_numeric === "number" &&
+                          !Number.isNaN(v.value_numeric)
+                            ? v.value_numeric
+                            : reps.reduce(
+                                (sum, code) => sum + (pointsMap.get(code) ?? 0),
+                                0
+                              );
+
+                        return (
+                          <td
+                            key={`yc-${group.key}-${metric.id}-${playerId}`}
+                            className="px-2 py-2 align-top"
+                          >
+                            <div className="flex flex-col gap-1">
+                              <div
+                                className={`grid gap-1 ${
+                                  repCount <= 5 ? "grid-cols-5" : "grid-cols-5"
+                                }`}
+                              >
+                                {reps.map((code, idx) => (
+                                  <div
+                                    key={`yc-${group.key}-${metric.id}-${playerId}-${idx}`}
+                                    className="flex flex-col gap-0.5"
+                                  >
+                                    <div className="text-[10px] text-slate-400 text-center">
+                                      Rep {idx + 1}
+                                    </div>
+                                    <select
+                                      className="w-full rounded border border-slate-700 bg-slate-900 px-1 py-0.5 text-[10px]"
+                                      value={code}
+                                      disabled={isFinalized}
+                                      onChange={(e) =>
+                                        handleHittingMatrixSwingChange(
+                                          metric.id,
+                                          playerId,
+                                          idx,
+                                          e.target.value,
+                                          options,
+                                          repCount
+                                        )
+                                      }
+                                    >
+                                      <option value="">—</option>
+                                      {options.map((opt) => (
+                                        <option
+                                          key={opt.code}
+                                          value={opt.code}
+                                        >
+                                          {opt.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="text-[10px] text-slate-400 text-center">
+                                Score:{" "}
+                                <span className="font-mono">
+                                  {numericValue ?? "—"}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                };
+
+                const pushLadderRow = (
+                  metric: AssessmentMetric,
+                  kind: "5x5" | "10x10"
+                ) => {
+                  const metricKey = (metric as any)
+                    .metric_key as string | undefined;
+                  const meta = metricKey ? getMetricMeta(metricKey) : undefined;
+
+                  const displayName =
+                    meta?.displayName ||
+                    (metric as any).label ||
+                    (kind === "5x5"
+                      ? "Catching Ladder – 5 yards (C5X5LD)"
+                      : "Catching Ladder – 10 yards (10X10 Ladder)");
+
+                  const description =
+                    meta?.instructions ||
+                    (kind === "5x5"
+                      ? "Record the highest level reached in the 5×5 catching ladder (Levels 1–6)."
+                      : "Record the highest level reached in the 10×10 catching ladder (Levels 1–6).");
+
+                  rows.push(
+                    <tr
+                      key={`yc-ladder-${group.key}-${metric.id}`}
+                      className="border-b border-slate-800"
+                    >
+                      <td className="align-top px-2 py-2">
+                        <div className="font-medium text-slate-100">
+                          {displayName}
+                        </div>
+                        <div className="text-[10px] text-slate-500 mt-0.5">
+                          {description}
+                        </div>
+                      </td>
+                      {gridColumns.map((col) => {
+                        const playerId = col.id;
+                        const perPlayer =
+                          (sessionData?.values as any)?.[playerId] || {};
+                        const v = perPlayer[metric.id];
+                        const numericValue = v?.value_numeric as
+                          | number
+                          | null
+                          | undefined;
+
+                        // Always keep the select's value as a string
+                        const selected =
+                          typeof numericValue === "number" && !Number.isNaN(numericValue)
+                            ? String(numericValue)
+                            : "";
+
+                        return (
+                          <td
+                            key={`yc-ladder-${group.key}-${metric.id}-${playerId}`}
+                            className="px-2 py-2 align-top text-center"
+                          >
+                            <div className="flex flex-col items-center gap-1">
+                              <select
+                                className="w-full max-w-[120px] rounded border border-slate-700 bg-slate-900 px-1 py-0.5 text-[10px]"
+                                value={selected}
+                                disabled={isFinalized}
+                                onChange={(e) =>
+                                  handleValueChange(
+                                    metric.id,
+                                    playerId,
+                                    e.target.value          // ⬅️ no `|| null`
+                                  )
+                                }
+                              >
+                                <option value="">Select level</option>
+                                <option value="1">Level 1</option>
+                                <option value="2">Level 2</option>
+                                <option value="3">Level 3</option>
+                                <option value="4">Level 4</option>
+                                <option value="5">Level 5</option>
+                                <option value="6">Level 6</option>
+                              </select>
+                              <div className="text-[10px] text-slate-400">
+                                Level:{" "}
+                                <span className="font-mono">
+                                  {numericValue ?? "—"}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                };
+
+                // Walk the group's metrics and render with the youth catching layouts
+                for (const metric of group.metrics) {
+                  const metricKey = (metric as any)
+                    .metric_key as string | undefined;
+
+                  if (!metricKey) {
+                    pushDefaultRow(metric);
+                    continue;
+                  }
+
+                  if (
+                    metricKey === "c5x5_fly_ball_ladder_level" ||
+                    metricKey === "c10x10_fly_ball_ladder_level"
+                  ) {
+                    usedIds.add(metric.id);
+                    pushLadderRow(
+                      metric,
+                      metricKey === "c5x5_fly_ball_ladder_level"
+                        ? "5x5"
+                        : "10x10"
+                    );
+                    continue;
+                  }
+
+                  const config = YOUTH_CATCH_MATRIX_CONFIG[metricKey];
+                  if (config) {
+                    usedIds.add(metric.id);
+                    pushYouthCatchMatrixRow(metric, config);
+                    continue;
+                  }
+
+                  // Anything else in a Catching eval falls back to generic rendering
+                  pushDefaultRow(metric);
+                }
+
+                return <Fragment key={group.key}>{rows}</Fragment>;
+              }
+
+              // Special layout: Youth Fielding (5U–6U simple grounders FG2B/FG3B/FGSS/FGP)
+              // These use metric_keys: grounders_2b, grounders_ss, grounders_3b, grounders_pitcher
+              if (effectiveEvalType === "fielding") {
+                const byKey = new Map<string, AssessmentMetric>();
+                for (const m of group.metrics) {
+                  const metricKey = (m as any).metric_key as string | undefined;
+                  if (metricKey) {
+                    byKey.set(metricKey, m);
+                  }
+                }
+
+                type GrounderKey =
+                  | "grounders_2b"
+                  | "grounders_ss"
+                  | "grounders_3b"
+                  | "grounders_pitcher";
+
+                const grounderConfigs: Record<
+                  GrounderKey,
+                  { defaultLabel: string; defaultDescription: string }
+                > = {
+                  grounders_2b: {
+                    defaultLabel: "Grounders – 2B (FG2B)",
+                    defaultDescription:
+                      "Hit 3 ground balls to the player at 2B. 0 = didn’t field, 1 = fielded but missed the target at 1B, 2 = fielded cleanly and hit the target at 1B.",
+                  },
+                  grounders_ss: {
+                    defaultLabel: "Grounders – SS (FGSS)",
+                    defaultDescription:
+                      "Hit 3 ground balls to the player at shortstop. 0 = didn’t field, 1 = fielded but missed the target at 1B, 2 = fielded cleanly and hit the target at 1B.",
+                  },
+                  grounders_3b: {
+                    defaultLabel: "Grounders – 3B (FG3B)",
+                    defaultDescription:
+                      "Hit 3 ground balls to the player at 3B. 0 = didn’t field, 1 = fielded but missed the target at 1B, 2 = fielded cleanly and hit the target at 1B.",
+                  },
+                  grounders_pitcher: {
+                    defaultLabel: "Grounders – P (FGP)",
+                    defaultDescription:
+                      "Hit 3 ground balls to the player on the mound. 0 = didn’t field, 1 = fielded but missed the target at 1B, 2 = fielded cleanly and hit the target at 1B.",
+                  },
+                };
+
+                const usedIds = new Set<number>();
+
+                const options: HittingSwingOption[] = [
+                  { code: "miss", label: "Didn’t field (0)", points: 0 },
+                  {
+                    code: "field_miss",
+                    label: "Fielded, missed target (1)",
+                    points: 1,
+                  },
+                  {
+                    code: "field_hit",
+                    label: "Fielded & hit target (2)",
+                    points: 2,
+                  },
+                ];
+
+                const repCount = 3;
+
+                const pushYouthGroundersRow = (metricKey: GrounderKey) => {
+                  const metric = byKey.get(metricKey);
+                  if (!metric) return;
+
+                  usedIds.add(metric.id);
+
+                  const mk = (metric as any).metric_key as string | undefined;
+                  const meta = mk ? getMetricMeta(mk) : undefined;
+                  const cfg = grounderConfigs[metricKey];
+
+                  const displayName =
+                    meta?.displayName ||
+                    (metric as any).label ||
+                    cfg.defaultLabel;
+                  const description =
+                    meta?.instructions || cfg.defaultDescription;
+
+                  const pointsMap = new Map<string, number>();
+                  options.forEach((opt) => pointsMap.set(opt.code, opt.points));
+
+                  rows.push(
+                    <tr
+                      key={`${group.key}-youth-grounders-${metric.id}`}
+                      className="border-b border-slate-800"
+                    >
+                      <td className="align-top px-2 py-2">
+                        <div className="font-medium text-slate-100">
+                          {displayName}
+                        </div>
+                        <div className="text-[10px] text-slate-500 mt-0.5">
+                          {description}
+                        </div>
+                      </td>
+
+                      {gridColumns.map((col) => {
+                        const playerId = col.id;
+                        const perPlayer =
+                          (sessionData?.values as any)?.[playerId] || {};
+                        const v = perPlayer[metric.id];
+                        const storedText = v?.value_text as
+                          | string
+                          | null
+                          | undefined;
+                        const numericValue = v?.value_numeric as
+                          | number
+                          | null
+                          | undefined;
+
+                        let events: string[] = new Array(repCount).fill("");
+
+                        if (
+                          typeof storedText === "string" &&
+                          storedText.trim() !== ""
+                        ) {
+                          try {
+                            const parsed = JSON.parse(storedText);
+                            if (Array.isArray(parsed)) {
+                              for (
+                                let i = 0;
+                                i < Math.min(parsed.length, repCount);
+                                i++
+                              ) {
+                                events[i] = String(parsed[i] ?? "");
+                              }
+                            }
+                          } catch {
+                            // ignore parse errors
+                          }
+                        }
+
+                        const displayTotal =
+                          typeof numericValue === "number" &&
+                          !Number.isNaN(numericValue)
+                            ? numericValue
+                            : events.reduce(
+                                (sum, code) => sum + (pointsMap.get(code) ?? 0),
+                                0
+                              );
+
+                        return (
+                          <td
+                            key={`${metric.id}-${playerId}`}
+                            className="px-2 py-2 align-top text-center"
+                          >
+                            <div className="flex flex-col gap-1 items-center">
+                              <div className="grid grid-cols-3 gap-1">
+                                {Array.from({ length: repCount }).map((_, idx) => {
+                                  const code = events[idx] || "";
+                                  return (
+                                    <div
+                                      key={`${metric.id}-${playerId}-rep-${idx}`}
+                                      className="flex flex-col items-stretch"
+                                    >
+                                      <div className="text-[9px] text-slate-500 mb-0.5">
+                                        Rep {idx + 1}
+                                      </div>
+                                      <select
+                                        className="w-full rounded-md bg-slate-950 border border-slate-700 px-1 py-0.5 text-[11px]"
+                                        value={code}
+                                        onChange={(e) =>
+                                          handleHittingMatrixSwingChange(
+                                            metric.id,
+                                            playerId,
+                                            idx,
+                                            e.target.value,
+                                            options,
+                                            repCount
+                                          )
+                                        }
+                                        disabled={isFinalized}
+                                      >
+                                        <option value="">—</option>
+                                        {options.map((opt) => (
+                                          <option
+                                            key={opt.code}
+                                            value={opt.code}
+                                          >
+                                            {opt.label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              <div className="mt-1 text-[10px] text-slate-400">
+                                Total:{" "}
+                                <span className="font-mono text-slate-100">
+                                  {displayTotal ?? "—"}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                };
+
+                // Order: 2B, SS, 3B, P — only rows whose metrics actually exist will render
+                (
+                  [
+                    "grounders_2b",
+                    "grounders_ss",
+                    "grounders_3b",
+                    "grounders_pitcher",
+                  ] as GrounderKey[]
+                ).forEach((key) => pushYouthGroundersRow(key));
+
+                // Only take over rendering for this group if we actually found any of the youth grounder metrics
+                if (usedIds.size > 0) {
+                  return <Fragment key={group.key}>{rows}</Fragment>;
+                }
+              }
+
+
+              
               // Special layout: Catcher → screen matrices + Target Throws to 2B
               if (isCatcherGroup) {
                 const usedIds = new Set<number>();
@@ -4502,6 +5216,10 @@ export default function AssessmentSessionPage() {
                   renderRlcGrounders(
                     "rlc3b_grounder",
                     "RLC Grounders – 3B (6 reps)"
+                  );
+                  renderRlcGrounders(
+                      "rlcp_grounder",
+                      "RLC Grounders – P (6 reps)"
                   );
                 }
 
