@@ -806,6 +806,254 @@ const METRIC_META: Record<string, MetricMeta> = {
     placeholder: "0–15",
   },
 
+  /* ---------------------------------------------------------------------- */
+  /*                            FIRST BASE (1B)                             */
+  /* ---------------------------------------------------------------------- */
+
+  // 10U–Pro: First Base Catching (C101B)
+  c101b_catching_test: {
+    code: "C101B",
+    group: "First Base \u2013 Catching",
+    shortLabel: "1B Catching (10 throws)",
+    displayName: "First Base Catching Test (C101B)",
+    instructions:
+      "Have the player set up at 1B to take 10 throws from SS. 0 points for a missed catch that gets by, 1 point for a blocked ball, and 3 points for a clean catch with the foot on the bag.",
+    notes: "Scored with a 10-rep matrix: Miss = 0, Block = 1, Catch = 3.",
+    inputType: "number",
+    min: 0,
+    max: 30,
+    step: 1,
+    unitHint: "points (0\u201330)",
+    placeholder: "0\u201330",
+  },
+
+  // 10U–Pro: First Base Scoops (C1BST)
+  c1bst_scoops_test: {
+    code: "C1BST",
+    group: "First Base – Catching",
+    shortLabel: "1B Scoops (5 throws)",
+    displayName: "First Base Scoops Test (C1BST)",
+    instructions:
+      "Have the player set up at 1B and throw 5 balls that require scoops. 0 points for a miss that gets by, 1 point for a blocked ball, and 3 points for a scoop/catch with the foot on the bag.",
+    notes: "Scored with a 5-rep matrix: Miss = 0, Block = 1, Catch = 3.",
+    inputType: "number",
+    min: 0,
+    max: 15,
+    step: 1,
+    unitHint: "points (0–15)",
+    placeholder: "0–15",
+  },
+
+
+  // 12U–Pro: RLC Grounders – 1B (direction + result per rep)
+
+  rlc1b_grounder_1_direction: {
+    code: "RLC1B-G1-DIR",
+    group: "First Base \u2013 Fielding",
+    shortLabel: "RLC 1B G1 Dir",
+    displayName: "RLC Grounder #1 \u2013 Direction",
+    instructions:
+      "Direction of the first RLC grounder to 1B: Right, Left, or Center. Stored for reporting only.",
+    inputType: "select",
+    options: [
+      { value: "", label: "— Direction —" },
+      { value: "center", label: "Center" },
+      { value: "right", label: "Right" },
+      { value: "left", label: "Left" },
+    ],
+  },
+  rlc1b_grounder_1_points: {
+    code: "RLC1B-G1",
+    group: "First Base \u2013 Fielding",
+    shortLabel: "RLC 1B G1",
+    displayName: "RLC Grounder #1 \u2013 Result",
+    instructions:
+      "0 points if the player fails to field the ball. 2 points if they field the ball and run to touch 1B.",
+    inputType: "number",
+    min: 0,
+    max: 2,
+    step: 1,
+    unitHint: "points (0 or 2)",
+  },
+
+  rlc1b_grounder_2_direction: {
+    code: "RLC1B-G2-DIR",
+    group: "First Base \u2013 Fielding",
+    shortLabel: "RLC 1B G2 Dir",
+    displayName: "RLC Grounder #2 \u2013 Direction",
+    instructions:
+      "Direction of the second RLC grounder to 1B: Right, Left, or Center.",
+    inputType: "select",
+    options: [
+      { value: "", label: "— Direction —" },
+      { value: "center", label: "Center" },
+      { value: "right", label: "Right" },
+      { value: "left", label: "Left" },
+    ],
+  },
+  rlc1b_grounder_2_points: {
+    code: "RLC1B-G2",
+    group: "First Base \u2013 Fielding",
+    shortLabel: "RLC 1B G2",
+    displayName: "RLC Grounder #2 \u2013 Result",
+    instructions:
+      "0 points if the player fails to field the ball. 2 points if they field the ball and run to touch 1B.",
+    inputType: "number",
+    min: 0,
+    max: 2,
+    step: 1,
+    unitHint: "points (0 or 2)",
+  },
+
+  rlc1b_grounder_3_direction: {
+    code: "RLC1B-G3-DIR",
+    group: "First Base \u2013 Fielding",
+    shortLabel: "RLC 1B G3 Dir",
+    displayName: "RLC Grounder #3 \u2013 Direction",
+    instructions:
+      "Direction of the third RLC grounder to 1B: Right, Left, or Center.",
+    inputType: "select",
+    options: [
+      { value: "", label: "— Direction —" },
+      { value: "center", label: "Center" },
+      { value: "right", label: "Right" },
+      { value: "left", label: "Left" },
+    ],
+  },
+  rlc1b_grounder_3_points: {
+    code: "RLC1B-G3",
+    group: "First Base \u2013 Fielding",
+    shortLabel: "RLC 1B G3",
+    displayName: "RLC Grounder #3 \u2013 Result",
+    instructions:
+      "0 points if the player fails to field the ball. 2 points if they field the ball and run to touch 1B.",
+    inputType: "number",
+    min: 0,
+    max: 2,
+    step: 1,
+    unitHint: "points (0 or 2)",
+  },
+
+  rlc1b_grounder_4_direction: {
+    code: "RLC1B-G4-DIR",
+    group: "First Base \u2013 Fielding",
+    shortLabel: "RLC 1B G4 Dir",
+    displayName: "RLC Grounder #4 \u2013 Direction",
+    instructions:
+      "Direction of the fourth RLC grounder to 1B: Right, Left, or Center.",
+    inputType: "select",
+    options: [
+      { value: "", label: "— Direction —" },
+      { value: "center", label: "Center" },
+      { value: "right", label: "Right" },
+      { value: "left", label: "Left" },
+    ],
+  },
+  rlc1b_grounder_4_points: {
+    code: "RLC1B-G4",
+    group: "First Base \u2013 Fielding",
+    shortLabel: "RLC 1B G4",
+    displayName: "RLC Grounder #4 \u2013 Result",
+    instructions:
+      "0 points if the player fails to field the ball. 2 points if they field the ball and run to touch 1B.",
+    inputType: "number",
+    min: 0,
+    max: 2,
+    step: 1,
+    unitHint: "points (0 or 2)",
+  },
+
+  rlc1b_grounder_5_direction: {
+    code: "RLC1B-G5-DIR",
+    group: "First Base \u2013 Fielding",
+    shortLabel: "RLC 1B G5 Dir",
+    displayName: "RLC Grounder #5 \u2013 Direction",
+    instructions:
+      "Direction of the fifth RLC grounder to 1B: Right, Left, or Center.",
+    inputType: "select",
+    options: [
+      { value: "", label: "— Direction —" },
+      { value: "center", label: "Center" },
+      { value: "right", label: "Right" },
+      { value: "left", label: "Left" },
+    ],
+  },
+  rlc1b_grounder_5_points: {
+    code: "RLC1B-G5",
+    group: "First Base \u2013 Fielding",
+    shortLabel: "RLC 1B G5",
+    displayName: "RLC Grounder #5 \u2013 Result",
+    instructions:
+      "0 points if the player fails to field the ball. 2 points if they field the ball and run to touch 1B.",
+    inputType: "number",
+    min: 0,
+    max: 2,
+    step: 1,
+    unitHint: "points (0 or 2)",
+  },
+
+  rlc1b_grounder_6_direction: {
+    code: "RLC1B-G6-DIR",
+    group: "First Base \u2013 Fielding",
+    shortLabel: "RLC 1B G6 Dir",
+    displayName: "RLC Grounder #6 \u2013 Direction",
+    instructions:
+      "Direction of the sixth RLC grounder to 1B: Right, Left, or Center.",
+    inputType: "select",
+    options: [
+      { value: "", label: "— Direction —" },
+      { value: "center", label: "Center" },
+      { value: "right", label: "Right" },
+      { value: "left", label: "Left" },
+    ],
+  },
+  rlc1b_grounder_6_points: {
+    code: "RLC1B-G6",
+    group: "First Base \u2013 Fielding",
+    shortLabel: "RLC 1B G6",
+    displayName: "RLC Grounder #6 \u2013 Result",
+    instructions:
+      "0 points if the player fails to field the ball. 2 points if they field the ball and run to touch 1B.",
+    inputType: "number",
+    min: 0,
+    max: 2,
+    step: 1,
+    unitHint: "points (0 or 2)",
+  },
+
+  // 12U–Pro: First Base Fly Balls (FBFLY)
+  fbfly_points: {
+    code: "FBFLY",
+    group: "First Base \u2013 Fielding",
+    shortLabel: "1B Fly Balls (3)",
+    displayName: "First Base Fly Balls (FBFLY)",
+    instructions:
+      "Hit 3 fly balls to the 1B side (foul, behind, or in front of the player). The player gets 2 points for each catch and 0 for each miss.",
+    notes: "Scored with a 3-rep matrix: Miss = 0, Catch = 2.",
+    inputType: "number",
+    min: 0,
+    max: 6,
+    step: 1,
+    unitHint: "points (0\u20136)",
+    placeholder: "0\u20136",
+  },
+
+  // 12U–Pro: First Base Line Drives (FBLD)
+  fbld_points: {
+    code: "FBLD",
+    group: "First Base \u2013 Fielding",
+    shortLabel: "1B Line Drives (3)",
+    displayName: "First Base Line Drives (FBLD)",
+    instructions:
+      "Hit 3 line drives to the player at 1B. The player gets 2 points for each catch and 0 for each miss.",
+    notes: "Scored with a 3-rep matrix: Miss = 0, Catch = 2.",
+    inputType: "number",
+    min: 0,
+    max: 6,
+    step: 1,
+    unitHint: "points (0\u20136)",
+    placeholder: "0\u20136",
+  },
 
   
 };

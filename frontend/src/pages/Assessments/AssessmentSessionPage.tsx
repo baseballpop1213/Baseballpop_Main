@@ -197,6 +197,52 @@ const HITTING_LIVE_METRIC_KEYS = new Set<string>([
   "m_5_curveball_quality",
 ]);
 
+// First Base (1B) matrix configuration (10U–Pro)
+// These mirror the hitting / pitching matrix tests:
+// - C101B: 10 throws to 1B (Miss / Block / Catch)
+// - C1BST: 10 scoops (Miss / Block / Catch)
+// - FBFly: 3 fly balls (Miss / Catch)
+// - FBLD: 3 line drives (Miss / Catch)
+
+const FIRSTBASE_MATRIX_METRIC_KEYS = {
+  catching: "c101b_catching_test",
+  scoops: "c1bst_scoops_test",
+  fly: "fbfly_points",
+  lineDrive: "fbld_points",
+} as const;
+
+type FirstBaseMatrixKey = keyof typeof FIRSTBASE_MATRIX_METRIC_KEYS;
+
+const FIRSTBASE_REP_COUNTS: Record<FirstBaseMatrixKey, number> = {
+  catching: 10,
+  scoops: 5,
+  fly: 3,
+  lineDrive: 3,
+};
+
+const FIRSTBASE_MATRIX_OPTIONS: Record<
+  FirstBaseMatrixKey,
+  HittingSwingOption[]
+> = {
+  catching: [
+    { code: "miss", label: "Miss (0)", points: 0 },
+    { code: "block", label: "Block (1)", points: 1 },
+    { code: "catch", label: "Catch on bag (3)", points: 3 },
+  ],
+  scoops: [
+    { code: "miss", label: "Miss (0)", points: 0 },
+    { code: "block", label: "Block (1)", points: 1 },
+    { code: "catch", label: "Scoop / catch on bag (3)", points: 3 },
+  ],
+  fly: [
+    { code: "miss", label: "Miss (0)", points: 0 },
+    { code: "catch", label: "Catch (2)", points: 2 },
+  ],
+  lineDrive: [
+    { code: "miss", label: "Miss (0)", points: 0 },
+    { code: "catch", label: "Catch (2)", points: 2 },
+  ],
+};
 
 
 function formatPlayerName(profile?: TeamPlayerRow["profiles"] | null): string {
@@ -470,7 +516,12 @@ export default function AssessmentSessionPage() {
     "tee" | "live"
   >("tee");
 
+  // First Base (1B): Catching vs Fielding section
+  const [activeFirstBaseSection, setActiveFirstBaseSection] = useState<
+    "catching" | "fielding"
+  >("catching");
 
+  
   // Pitching: which “additional pitch” matrices are visible in the grid
   // (we always show any that already have data; this just controls which
   // empty slots are revealed by the "Add another pitch type" button)
@@ -512,7 +563,18 @@ export default function AssessmentSessionPage() {
     return groups;
   }, [metrics]);
 
-  // For Athletic Skills and Hitting, show only the metrics for the active block
+  // First Base: does this template actually have Fielding metrics?
+  const hasFirstBaseFieldingGroup = useMemo(
+    () =>
+      groupedMetrics.some((g) => {
+        const lower = g.label.toLowerCase();
+        return lower.startsWith("first base") && lower.includes("field");
+      }),
+    [groupedMetrics]
+  );
+
+  
+  // For Athletic Skills, Hitting, and First Base, show only the metrics for the active block/tab
   const visibleGroupedMetrics = useMemo(() => {
     let groups = groupedMetrics.map((g) => ({
       ...g,
@@ -520,48 +582,78 @@ export default function AssessmentSessionPage() {
     }));
 
     if (effectiveEvalType === "athletic") {
-      // Hide the raw base-path distance rows; we drive those via the base-length field UI
-      const hiddenKeys = new Set<string>([
-        "timed_run_1b_distance_ft",
-        "timed_run_4b_distance_ft",
+      // For Athletic Skills, hide BASEDIST helper metrics and only show the active block
+      const speedKeys = new Set([
+        "m_10_30yd_dash",
+        "m_10_60yd_dash",
+        "m_10_home_to_1st",
+      ]);
+
+      const strengthKeys = new Set([
+        "apush_60",
+        "asit_60",
+        "apush_30",
+        "asit_30",
+      ]);
+
+      const powerKeys = new Set([
+        "bs_swing_velocity",
+        "bs_medball_put",
+        "bs_medball_throw",
+      ]);
+
+      const mobilityKeys = new Set([
+        "msr1",
+        "msr2",
+        "msr3",
+        "deep_squat",
+        "single_leg_squat_left",
+        "single_leg_squat_right",
       ]);
 
       groups = groups
-        .map((g) => ({
-          ...g,
-          metrics: g.metrics.filter((m) => {
+        .map((group) => {
+          const filtered = group.metrics.filter((m) => {
             const metricKey = (m as any).metric_key as string | undefined;
-            return !metricKey || !hiddenKeys.has(metricKey);
-          }),
-        }))
+            if (!metricKey) return true;
+
+            // Drop "BASEDIST" helper metrics from the UI
+            if (metricKey.toLowerCase().includes("basedist")) {
+              return false;
+            }
+
+            if (activeAthleticBlock === "speed") {
+              return speedKeys.has(metricKey);
+            }
+            if (activeAthleticBlock === "strength") {
+              return strengthKeys.has(metricKey);
+            }
+            if (activeAthleticBlock === "power") {
+              return powerKeys.has(metricKey);
+            }
+            if (activeAthleticBlock === "mobility") {
+              return mobilityKeys.has(metricKey);
+            }
+
+            // Fallback: include anything else
+            return true;
+          });
+
+          return {
+            ...group,
+            metrics: filtered,
+          };
+        })
         .filter((g) => g.metrics.length > 0);
-
-      const blockToGroups: Record<
-        "speed" | "strength" | "power" | "balance" | "mobility",
-        string[]
-      > = {
-        speed: ["Speed", "Agility"],
-        strength: ["Strength"],
-        power: ["Power"],
-        balance: ["Balance"],
-        mobility: ["Mobility"],
-      };
-
-      const allowedLabels = blockToGroups[activeAthleticBlock].map((s) =>
-        s.toLowerCase()
-      );
-
-      groups = groups.filter((g) =>
-        allowedLabels.includes(g.label.toLowerCase())
-      );
     } else if (effectiveEvalType === "hitting") {
       // For Hitting, split metrics into Tee Work vs Live Pitching
       groups = groups
-        .map((g) => {
-          const isHitting = g.label.toLowerCase().startsWith("hitting");
-          if (!isHitting) return g;
+        .map((group) => {
+          const isHittingGroupLocal =
+            group.label.toLowerCase().startsWith("hitting");
+          if (!isHittingGroupLocal) return group;
 
-          const filteredMetrics = g.metrics.filter((m) => {
+          const filtered = group.metrics.filter((m) => {
             const metricKey = (m as any).metric_key as string | undefined;
             if (!metricKey) return true;
 
@@ -577,15 +669,34 @@ export default function AssessmentSessionPage() {
           });
 
           return {
-            ...g,
-            metrics: filteredMetrics,
+            ...group,
+            metrics: filtered,
           };
         })
         .filter((g) => g.metrics.length > 0);
+    } else if (effectiveEvalType === "firstbase" && hasFirstBaseFieldingGroup) {
+      // For First Base evals that actually have Fielding metrics, split into "Catching" and "Fielding" tabs
+      const allowedLabels =
+        activeFirstBaseSection === "catching"
+          ? ["First Base – Catching"]
+          : ["First Base – Fielding"];
+
+      const allowedLower = allowedLabels.map((s) => s.toLowerCase());
+
+      groups = groups.filter((g) =>
+        allowedLower.includes(g.label.toLowerCase())
+      );
     }
 
     return groups;
-  }, [groupedMetrics, effectiveEvalType, activeAthleticBlock, activeHittingSection]);
+  }, [
+    groupedMetrics,
+    effectiveEvalType,
+    activeAthleticBlock,
+    activeHittingSection,
+    activeFirstBaseSection,
+    hasFirstBaseFieldingGroup,
+  ]);
 
 
   // Overall progress: how many metrics have at least one value for any player
@@ -1125,6 +1236,45 @@ export default function AssessmentSessionPage() {
     setDirty(true);
   }
 
+  // Helper for select-style metrics that are pure text (e.g. RLC 1B direction)
+  function handleTextValueChange(
+    metricId: number,
+    playerId: string,
+    text: string | null
+  ) {
+    if (!sessionData || isFinalized) return;
+
+    setSessionData((prev) => {
+      const base: EvalSessionData =
+        prev ?? {
+          player_ids: sessionData.player_ids ?? [],
+          values: {},
+          completed_metric_ids: sessionData.completed_metric_ids ?? [],
+          evaluation_type: effectiveEvalType,
+          session_mode: effectiveSessionMode as any,
+        };
+
+      const values = { ...(base.values || {}) } as EvalSessionData["values"];
+      const byPlayer = { ...(values?.[playerId] || {}) };
+
+      byPlayer[metricId] = {
+        value_numeric: null,
+        value_text: text && text.trim() !== "" ? text : null,
+      };
+
+      return {
+        ...base,
+        values: {
+          ...values,
+          [playerId]: byPlayer,
+        },
+      };
+    });
+
+    setDirty(true);
+  }
+
+  
 
   // Hitting matrix: per-swing quality tests (H10FAST, H10PITCH, H10TEE, H5VAR, H5CB)
   // Hitting matrix: per-swing quality tests (H10FAST, H10PITCH, H10TEE, H5VAR, H5CB)
@@ -1821,6 +1971,31 @@ export default function AssessmentSessionPage() {
           </div>
         )}
 
+        {effectiveEvalType === "firstbase" && hasFirstBaseFieldingGroup && (
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
+            <span className="text-slate-400">Section:</span>
+            {(["catching", "fielding"] as const).map((section) => {
+              const isActive = activeFirstBaseSection === section;
+              const label = section === "catching" ? "Catching" : "Fielding";
+              return (
+                <button
+                  key={section}
+                  type="button"
+                  onClick={() => setActiveFirstBaseSection(section)}
+                  className={[
+                    "px-2 py-0.5 rounded-full border text-[11px]",
+                    isActive
+                      ? "border-emerald-400 bg-emerald-500/10 text-emerald-200"
+                      : "border-slate-600 bg-slate-900 text-slate-200 hover:bg-slate-800",
+                  ].join(" ")}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         
         {effectiveEvalType === "athletic" &&
           activeAthleticBlock === "speed" && (
@@ -2121,6 +2296,12 @@ export default function AssessmentSessionPage() {
                   const isHittingGroup = labelLower.startsWith("hitting");
                   const isPitchCommandGroup =
                     labelLower.includes("pitching") && labelLower.includes("command");
+                  const isFirstBaseCatchingGroup =
+                    labelLower.startsWith("first base") && labelLower.includes("catch");
+                  const isFirstBaseFieldingGroup =
+                    labelLower.startsWith("first base") && labelLower.includes("field");
+                  const isFirstBaseGroup = isFirstBaseCatchingGroup || isFirstBaseFieldingGroup;
+
                   const isCatcherGroup = labelLower.startsWith("catcher");
               
                   const rows: React.ReactNode[] = [];
@@ -3062,6 +3243,322 @@ export default function AssessmentSessionPage() {
                 return <Fragment key={group.key}>{rows}</Fragment>;
               }
 
+              // Special layout: First Base (1B) – Catching & Fielding
+              if (isFirstBaseGroup) {
+                const usedIds = new Set<number>();
+
+                const byKey = new Map<string, AssessmentMetric>();
+                for (const m of group.metrics) {
+                  const metricKey = (m as any).metric_key as string | undefined;
+                  if (metricKey) byKey.set(metricKey, m);
+                }
+
+                const findFirstBaseKeyForMetric = (
+                  metric: AssessmentMetric
+                ): FirstBaseMatrixKey | undefined => {
+                  const metricKey = (metric as any).metric_key as string | undefined;
+                  if (!metricKey) return undefined;
+                  const entry = (Object.entries(
+                    FIRSTBASE_MATRIX_METRIC_KEYS
+                  ) as [FirstBaseMatrixKey, string][]).find(
+                    ([, key]) => key === metricKey
+                  );
+                  return entry?.[0];
+                };
+
+                const pushFirstBaseMatrixRow = (metric: AssessmentMetric) => {
+                  const fbKey = findFirstBaseKeyForMetric(metric);
+                  if (!fbKey) {
+                    return pushDefaultRow(metric);
+                  }
+
+                  usedIds.add(metric.id);
+
+                  const metricKey = (metric as any).metric_key as string | undefined;
+                  const meta = metricKey ? getMetricMeta(metricKey) : undefined;
+                  const repCount = FIRSTBASE_REP_COUNTS[fbKey] ?? 10;
+                  const options = FIRSTBASE_MATRIX_OPTIONS[fbKey] ?? [];
+                  const pointsMap = new Map<string, number>();
+                  options.forEach((opt) => pointsMap.set(opt.code, opt.points));
+
+                  const displayName =
+                    meta?.displayName || (metric as any).label || "1B Test";
+
+                  const description =
+                    meta?.instructions ||
+                    "Score each rep using the buttons below. Total score is calculated automatically.";
+
+                  const gridColsClass =
+                    repCount <= 3 ? "grid-cols-3" : "grid-cols-5";
+
+                  rows.push(
+                    <tr
+                      key={`${group.key}-firstbase-matrix-${metric.id}`}
+                      className="border-b border-slate-800"
+                    >
+                      <td className="align-top px-2 py-2">
+                        <div className="font-medium text-slate-100">
+                          {displayName}
+                        </div>
+                        <div className="text-[10px] text-slate-500 mt-0.5">
+                          {description}
+                        </div>
+                      </td>
+                      {gridColumns.map((col) => {
+                        const playerId = col.id;
+                        const perPlayer =
+                          (sessionData?.values as any)?.[playerId] || {};
+                        const v = perPlayer[metric.id];
+                        const storedText = v?.value_text;
+                        const numericValue = v?.value_numeric;
+
+                        const repCountSafe = repCount > 0 ? repCount : 10;
+                        let reps: string[] = new Array(repCountSafe).fill("");
+
+                        if (
+                          typeof storedText === "string" &&
+                          storedText.trim() !== ""
+                        ) {
+                          try {
+                            const parsed = JSON.parse(storedText);
+                            if (Array.isArray(parsed)) {
+                              for (
+                                let i = 0;
+                                i < Math.min(parsed.length, repCountSafe);
+                                i++
+                              ) {
+                                reps[i] = String(parsed[i] ?? "");
+                              }
+                            }
+                          } catch {
+                            // ignore parse errors
+                          }
+                        }
+
+                        const displayTotal =
+                          typeof numericValue === "number" &&
+                          !Number.isNaN(numericValue)
+                            ? numericValue
+                            : reps.reduce((sum, code) => {
+                                if (!code) return sum;
+                                return sum + (pointsMap.get(code) ?? 0);
+                              }, 0);
+
+                        return (
+                          <td
+                            key={`${metric.id}-${playerId}`}
+                            className="px-2 py-2 align-top"
+                          >
+                            <div className="flex flex-col gap-1">
+                              <div className={`grid ${gridColsClass} gap-1`}>
+                                {reps.map((code, idx) => (
+                                  <div
+                                    key={`${metric.id}-${playerId}-${idx}`}
+                                    className="flex flex-col gap-0.5"
+                                  >
+                                    <div className="text-[10px] text-slate-400 text-center">
+                                      Rep {idx + 1}
+                                    </div>
+                                    <select
+                                      className="w-full rounded border border-slate-700 bg-slate-900 px-1 py-0.5 text-[10px]"
+                                      value={code}
+                                      disabled={isFinalized}
+                                      onChange={(e) =>
+                                        handleHittingMatrixSwingChange(
+                                          metric.id,
+                                          playerId,
+                                          idx,
+                                          e.target.value,
+                                          options,
+                                          repCountSafe
+                                        )
+                                      }
+                                    >
+                                      <option value="">—</option>
+                                      {options.map((opt) => (
+                                        <option key={opt.code} value={opt.code}>
+                                          {opt.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="text-[10px] text-slate-400 text-center">
+                                Score:{" "}
+                                <span className="font-mono">
+                                  {displayTotal ?? "—"}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                };
+
+                if (isFirstBaseCatchingGroup) {
+                  const catchingMetric = byKey.get(
+                    FIRSTBASE_MATRIX_METRIC_KEYS.catching
+                  );
+                  const scoopsMetric = byKey.get(
+                    FIRSTBASE_MATRIX_METRIC_KEYS.scoops
+                  );
+
+                  if (catchingMetric) pushFirstBaseMatrixRow(catchingMetric);
+                  if (scoopsMetric) pushFirstBaseMatrixRow(scoopsMetric);
+                }
+
+                if (isFirstBaseFieldingGroup) {
+                  // RLC Grounders (6 reps, direction + result)
+                  const grounders: {
+                    repIndex: number;
+                    directionMetric?: AssessmentMetric;
+                    pointsMetric?: AssessmentMetric;
+                  }[] = [];
+
+                  for (let i = 1; i <= 6; i++) {
+                    const dir = byKey.get(`rlc1b_grounder_${i}_direction`);
+                    const pts = byKey.get(`rlc1b_grounder_${i}_points`);
+                    if (dir || pts) {
+                      if (dir) usedIds.add(dir.id);
+                      if (pts) usedIds.add(pts.id);
+                      grounders.push({
+                        repIndex: i,
+                        directionMetric: dir,
+                        pointsMetric: pts,
+                      });
+                    }
+                  }
+
+                  if (grounders.length > 0) {
+                    rows.push(
+                      <tr
+                        key={`${group.key}-rlc1b-grounders`}
+                        className="border-b border-slate-800"
+                      >
+                        <td className="align-top px-2 py-2">
+                          <div className="font-medium text-slate-100">
+                            RLC Grounders – 1B (6 reps)
+                          </div>
+                          <div className="text-[10px] text-slate-500 mt-0.5">
+                            Hit 6 ground balls: 2 center, 2 right, 2 left. Score
+                            each rep: 0 = didn&apos;t field; 2 = fielded clean and
+                            ran to 1B. Direction is stored for reporting only.
+                          </div>
+                        </td>
+                        {gridColumns.map((col) => {
+                          const playerId = col.id;
+                          const perPlayer =
+                            (sessionData?.values as any)?.[playerId] || {};
+
+                          return (
+                            <td
+                              key={`${group.key}-rlc1b-${playerId}`}
+                              className="px-2 py-2 align-top"
+                            >
+                              <div className="flex flex-col gap-1">
+                                {grounders.map((g) => {
+                                  const dirMetric = g.directionMetric;
+                                  const ptsMetric = g.pointsMetric;
+
+                                  const dirValue =
+                                    dirMetric &&
+                                    perPlayer[dirMetric.id]?.value_text;
+                                  const ptsValue =
+                                    ptsMetric &&
+                                    perPlayer[ptsMetric.id]?.value_numeric;
+
+                                  return (
+                                    <div
+                                      key={`${group.key}-rlc1b-${playerId}-${g.repIndex}`}
+                                      className="flex flex-wrap items-center gap-1"
+                                    >
+                                      <span className="text-[10px] text-slate-400 w-10">
+                                        Rep {g.repIndex}
+                                      </span>
+                                      {dirMetric && (
+                                        <select
+                                          className="rounded border border-slate-700 bg-slate-900 px-1 py-0.5 text-[10px]"
+                                          disabled={isFinalized}
+                                          value={dirValue ?? ""}
+                                          onChange={(e) =>
+                                            handleTextValueChange(
+                                              dirMetric.id,
+                                              playerId,
+                                              e.target.value || null
+                                            )
+                                          }
+                                        >
+                                          <option value="">Dir</option>
+                                          <option value="center">Center</option>
+                                          <option value="right">Right</option>
+                                          <option value="left">Left</option>
+                                        </select>
+                                      )}
+                                      {ptsMetric && (
+                                        <select
+                                          className="rounded border border-slate-700 bg-slate-900 px-1 py-0.5 text-[10px]"
+                                          disabled={isFinalized}
+                                          value={
+                                            typeof ptsValue === "number"
+                                              ? String(ptsValue)
+                                              : ""
+                                          }
+                                          onChange={(e) =>
+                                            handleValueChange(
+                                              ptsMetric.id,
+                                              playerId,
+                                              e.target.value
+                                            )
+                                          }
+                                        >
+                                          <option value="">Result</option>
+                                          <option value="0">
+                                            Didn&apos;t field (0)
+                                          </option>
+                                          <option value="2">
+                                            Fielded &amp; to 1B (2)
+                                          </option>
+                                        </select>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  }
+
+                  const fbflyMetric = byKey.get(FIRSTBASE_MATRIX_METRIC_KEYS.fly);
+                  const fbldMetric = byKey.get(
+                    FIRSTBASE_MATRIX_METRIC_KEYS.lineDrive
+                  );
+
+                  if (fbflyMetric) {
+                    usedIds.add(fbflyMetric.id);
+                    pushFirstBaseMatrixRow(fbflyMetric);
+                  }
+                  if (fbldMetric) {
+                    usedIds.add(fbldMetric.id);
+                    pushFirstBaseMatrixRow(fbldMetric);
+                  }
+                }
+
+                // Any remaining First Base metrics fall back to generic rendering
+                const remainingFirstBaseMetrics = group.metrics.filter(
+                  (m) => !usedIds.has(m.id)
+                );
+                remainingFirstBaseMetrics.forEach((m) => pushDefaultRow(m));
+
+                return <Fragment key={group.key}>{rows}</Fragment>;
+              }
+
+              
 
               // Special layout: Hitting → per-swing matrices + generic rows
               // Special layout: Hitting → per-swing matrices + generic rows
