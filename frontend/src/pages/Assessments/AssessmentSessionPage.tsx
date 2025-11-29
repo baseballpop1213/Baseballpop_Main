@@ -244,6 +244,97 @@ const FIRSTBASE_MATRIX_OPTIONS: Record<
   ],
 };
 
+// Outfield matrix configuration (10U–Pro)
+type OutfieldMatrixKind = "fly_matrix" | "throw_test";
+
+const OUTFIELD_MATRIX_CONFIG: Record<
+  string,
+  { repCount: number; kind: OutfieldMatrixKind }
+> = {
+  c20x20m_points: { repCount: 10, kind: "fly_matrix" },
+  c30x30m_points: { repCount: 10, kind: "fly_matrix" },
+  throw_80ft_target: { repCount: 5, kind: "throw_test" },
+  throw_100ft_target: { repCount: 5, kind: "throw_test" },
+  throw_120ft_target: { repCount: 5, kind: "throw_test" },
+};
+
+const OUTFIELD_FLY_OPTIONS: HittingSwingOption[] = [
+  { code: "miss", label: "Miss (0)", points: 0 },
+  { code: "catch", label: "Catch (2)", points: 2 },
+];
+
+const OUTFIELD_THROW_OPTIONS: HittingSwingOption[] = [
+  { code: "short_gt_10", label: ">10 ft short (0)", points: 0 },
+  {
+    code: "short_lt_10_miss",
+    label: "<10 ft short – misses target (1)",
+    points: 1,
+  },
+  {
+    code: "short_lt_10_bounce",
+    label: "<10 ft short – bounces into target (2)",
+    points: 2,
+  },
+  {
+    code: "at_or_past_miss",
+    label: "At/past target – misses (3)",
+    points: 3,
+  },
+  { code: "hit_target", label: "Hits target (4)", points: 4 },
+];
+
+
+// Infield (2B / SS / 3B) – fly balls & line drives: 3 reps, 0/2 scoring
+const INFIELD_CATCH_MATRIX_KEYS = {
+  fly2b: "infield_fly_2b",
+  flySs: "infield_fly_ss",
+  fly3b: "infield_fly_3b",
+  ld2b: "infield_ld_2b",
+  ldSs: "infield_ld_ss",
+  ld3b: "infield_ld_3b",
+} as const;
+
+type InfieldCatchMatrixKey = keyof typeof INFIELD_CATCH_MATRIX_KEYS;
+
+const INFIELD_CATCH_REP_COUNTS: Record<InfieldCatchMatrixKey, number> = {
+  fly2b: 3,
+  flySs: 3,
+  fly3b: 3,
+  ld2b: 3,
+  ldSs: 3,
+  ld3b: 3,
+};
+
+const INFIELD_CATCH_MATRIX_OPTIONS: Record<
+  InfieldCatchMatrixKey,
+  HittingSwingOption[]
+> = {
+  fly2b: [
+    { code: "miss", label: "Miss (0)", points: 0 },
+    { code: "catch", label: "Catch (2)", points: 2 },
+  ],
+  flySs: [
+    { code: "miss", label: "Miss (0)", points: 0 },
+    { code: "catch", label: "Catch (2)", points: 2 },
+  ],
+  fly3b: [
+    { code: "miss", label: "Miss (0)", points: 0 },
+    { code: "catch", label: "Catch (2)", points: 2 },
+  ],
+  ld2b: [
+    { code: "miss", label: "Miss (0)", points: 0 },
+    { code: "catch", label: "Catch (2)", points: 2 },
+  ],
+  ldSs: [
+    { code: "miss", label: "Miss (0)", points: 0 },
+    { code: "catch", label: "Catch (2)", points: 2 },
+  ],
+  ld3b: [
+    { code: "miss", label: "Miss (0)", points: 0 },
+    { code: "catch", label: "Catch (2)", points: 2 },
+  ],
+};
+
 
 function formatPlayerName(profile?: TeamPlayerRow["profiles"] | null): string {
   if (!profile) return "Unknown player";
@@ -521,6 +612,11 @@ export default function AssessmentSessionPage() {
     "catching" | "fielding"
   >("catching");
 
+  // Infield: Fielding vs Catching section
+  const [activeInfieldSection, setActiveInfieldSection] = useState<
+    "fielding" | "catching"
+  >("fielding");
+
   
   // Pitching: which “additional pitch” matrices are visible in the grid
   // (we always show any that already have data; this just controls which
@@ -573,6 +669,15 @@ export default function AssessmentSessionPage() {
     [groupedMetrics]
   );
 
+  // Infield: do we have a Fielding group (so tabs make sense)?
+  const hasInfieldFieldingGroup = useMemo(
+    () =>
+      groupedMetrics.some((g) => {
+        const lower = g.label.toLowerCase();
+        return lower.startsWith("infield") && lower.includes("field");
+      }),
+    [groupedMetrics]
+  );
   
   // For Athletic Skills, Hitting, and First Base, show only the metrics for the active block/tab
   const visibleGroupedMetrics = useMemo(() => {
@@ -686,6 +791,16 @@ export default function AssessmentSessionPage() {
       groups = groups.filter((g) =>
         allowedLower.includes(g.label.toLowerCase())
       );
+    } else if (effectiveEvalType === "infield" && hasInfieldFieldingGroup) {
+      const allowedLabels =
+        activeInfieldSection === "fielding"
+          ? ["Infield – Fielding"]
+          : ["Infield – Catching"];
+
+      const allowedLower = allowedLabels.map((s) => s.toLowerCase());
+      groups = groups.filter((g) =>
+        allowedLower.includes(g.label.toLowerCase())
+      );
     }
 
     return groups;
@@ -696,6 +811,8 @@ export default function AssessmentSessionPage() {
     activeHittingSection,
     activeFirstBaseSection,
     hasFirstBaseFieldingGroup,
+    activeInfieldSection,
+    hasInfieldFieldingGroup,
   ]);
 
 
@@ -841,7 +958,11 @@ export default function AssessmentSessionPage() {
   const [ct2btTimerRunning, setCt2btTimerRunning] = useState(false);
   const [ct2btTimerMs, setCt2btTimerMs] = useState(0);
 
-  
+  const [ifss1btTimerRunning, setIfss1btTimerRunning] = useState(false);
+  const [ifss1btTimerMs, setIfss1btTimerMs] = useState(0);
+  const [ofgbhtTimerRunning, setOfgbhtTimerRunning] = useState(false);
+  const [ofgbhtTimerMs, setOfgbhtTimerMs] = useState(0);
+
   
   useEffect(() => {
     if (!speedTimerRunning) return;
@@ -871,8 +992,36 @@ export default function AssessmentSessionPage() {
     };
   }, [ct2btTimerRunning, ct2btTimerMs]);
 
-  
+  // Simple stopwatch for SS to 1B throw (IFSS1BT)
+  useEffect(() => {
+    if (!ifss1btTimerRunning) return;
 
+    const start = performance.now() - ifss1btTimerMs;
+    const id = window.setInterval(() => {
+      setIfss1btTimerMs(performance.now() - start);
+    }, 30);
+
+    return () => {
+      window.clearInterval(id);
+    };
+  }, [ifss1btTimerRunning, ifss1btTimerMs]);
+
+  // Simple stopwatch for Outfield Ground Ball → Home Time (OFGBHT)
+  useEffect(() => {
+    if (!ofgbhtTimerRunning) return;
+
+    const start = performance.now() - ofgbhtTimerMs;
+    const id = window.setInterval(() => {
+      setOfgbhtTimerMs(performance.now() - start);
+    }, 30);
+
+    return () => {
+      window.clearInterval(id);
+    };
+  }, [ofgbhtTimerRunning, ofgbhtTimerMs]);
+
+
+  
   const strengthDurationMs = useMemo(() => {
     // If this athletic template uses 30-second strength tests (11U and below),
     // we look for the 30s metric keys. Otherwise default to 60 seconds.
@@ -960,7 +1109,20 @@ export default function AssessmentSessionPage() {
     Math.round((speedTimerMs / 1000) * 100) / 100 || 0;
   const ct2btTimerSeconds =
     Math.round((ct2btTimerMs / 1000) * 100) / 100 || 0;
+  const ifss1btTimerSeconds =
+    Math.round((ifss1btTimerMs / 1000) * 100) / 100 || 0;
+  const ofgbhtTimerSeconds =
+    Math.round((ofgbhtTimerMs / 1000) * 100) / 100 || 0;
 
+  // CT2BT / CB2BT – used in 9U Throwing and 10U+ Catcher
+  const hasCt2btMetric = useMemo(
+    () =>
+      metrics.some((m) => {
+        const key = (m as any).metric_key as string | undefined;
+        return key === "ct2bt_seconds" || key === "cb2bt_seconds";
+      }),
+    [metrics]
+  );
   
   function handleSpeedTimerStart() {
     setSpeedTimerMs(0);
@@ -1055,8 +1217,64 @@ export default function AssessmentSessionPage() {
 
     if (!sessionData || !metrics.length || !gridColumns.length) return;
 
+    // Support both ct2bt_seconds (10U+ Catcher templates)
+    // and cb2bt_seconds (9U Throwing template)
+    const metric = metrics.find((m) => {
+      const key = (m as any).metric_key as string | undefined;
+      return key === "ct2bt_seconds" || key === "cb2bt_seconds";
+    });
+    if (!metric) return;
+
+    const metricId = metric.id;
+    const values = (sessionData.values || {}) as any;
+
+    let targetPlayerId: string | null = null;
+    for (const col of gridColumns) {
+      const pid = col.id;
+      const perPlayer = values[pid] || {};
+      const v = perPlayer[metricId];
+      const numeric = v?.value_numeric;
+      const text = v?.value_text;
+
+      if (
+        (numeric === null ||
+          numeric === undefined ||
+          Number.isNaN(numeric)) &&
+        (!text || String(text).trim() === "")
+      ) {
+        targetPlayerId = pid;
+        break;
+      }
+    }
+
+    if (!targetPlayerId && gridColumns.length > 0) {
+      targetPlayerId = gridColumns[0].id;
+    }
+
+    if (targetPlayerId) {
+      handleValueChange(metricId, targetPlayerId, seconds.toFixed(2));
+    }
+  }
+
+  function handleIfss1btTimerStart() {
+    setIfss1btTimerMs(0);
+    setIfss1btTimerRunning(true);
+  }
+
+  function handleIfss1btTimerReset() {
+    setIfss1btTimerRunning(false);
+    setIfss1btTimerMs(0);
+  }
+
+  function handleIfss1btTimerStopAndFill() {
+    setIfss1btTimerRunning(false);
+    const seconds =
+      Math.round((ifss1btTimerMs / 1000) * 100) / 100 || ifss1btTimerSeconds;
+
+    if (!sessionData || !metrics.length || !gridColumns.length) return;
+
     const metric = metrics.find(
-      (m) => (m as any).metric_key === "ct2bt_seconds"
+      (m) => (m as any).metric_key === "ifss1bt_seconds"
     );
     if (!metric) return;
 
@@ -1090,6 +1308,59 @@ export default function AssessmentSessionPage() {
       handleValueChange(metricId, targetPlayerId, seconds.toFixed(2));
     }
   }
+
+  const handleOfgbhtTimerStart = () => {
+    setOfgbhtTimerMs(0);
+    setOfgbhtTimerRunning(true);
+  };
+
+  const handleOfgbhtTimerReset = () => {
+    setOfgbhtTimerRunning(false);
+    setOfgbhtTimerMs(0);
+  };
+
+  const handleOfgbhtTimerStopAndFill = () => {
+    setOfgbhtTimerRunning(false);
+
+    const seconds =
+      Math.round((ofgbhtTimerMs / 1000) * 100) / 100 || ofgbhtTimerSeconds;
+    const rounded = Math.round(seconds * 100) / 100;
+
+    // Find the OFGBHT metric
+    const metric = metrics.find(
+      (m) => (m as any).metric_key === "ofgbht_seconds"
+    );
+    if (!metric || gridColumns.length === 0) return;
+
+    if (!sessionData) return;
+
+    const values = (sessionData.values || {}) as any;
+
+    // Fill the first player column that doesn't have a value yet
+    for (const col of gridColumns) {
+      const playerId = col.id;
+      const perPlayer = values[playerId] || {};
+      const v = perPlayer[metric.id];
+
+      const hasValue =
+        v &&
+        (typeof v.value_numeric === "number" ||
+          (v.value_text ?? "").toString().trim() !== "");
+
+      if (!hasValue) {
+        // metricId first, then playerId
+        handleValueChange(metric.id, playerId, rounded.toString());
+        return;
+      }
+    }
+
+    // Fallback: overwrite first column if everything is filled
+    const fallbackPlayerId = gridColumns[0]?.id;
+    if (fallbackPlayerId && sessionData) {
+      handleValueChange(metric.id, fallbackPlayerId, rounded.toString());
+    }
+
+  };
 
   
   // keep your existing handleValueChange(...) function below this
@@ -1996,6 +2267,31 @@ export default function AssessmentSessionPage() {
           </div>
         )}
 
+        {effectiveEvalType === "infield" && (
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
+            <span className="text-slate-400">Section:</span>
+            {(["fielding", "catching"] as const).map((section) => {
+              const isActive = activeInfieldSection === section;
+              const label = section === "fielding" ? "Fielding" : "Catching";
+              return (
+                <button
+                  key={section}
+                  type="button"
+                  onClick={() => setActiveInfieldSection(section)}
+                  className={[
+                    "px-2 py-0.5 rounded-full border text-[11px]",
+                    isActive
+                      ? "border-emerald-400 bg-emerald-500/10 text-emerald-200"
+                      : "border-slate-600 bg-slate-900 text-slate-200 hover:bg-slate-800",
+                  ].join(" ")}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         
         {effectiveEvalType === "athletic" &&
           activeAthleticBlock === "speed" && (
@@ -2197,11 +2493,12 @@ export default function AssessmentSessionPage() {
               </p>
             </div>
           )}
+       
 
-        {effectiveEvalType === "catcher" && (
+        {hasCt2btMetric && (
           <div className="mt-2 space-y-1 text-[11px]">
             <div className="font-semibold text-slate-200">
-              Catcher Throw to 2B timer (CT2BT)
+              Catcher Throw to 2B Time (CT2BT)
             </div>
             <div className="flex items-center gap-3">
               <div className="text-lg font-mono tabular-nums text-slate-50">
@@ -2240,6 +2537,99 @@ export default function AssessmentSessionPage() {
               Time from when the pitch crosses the plate until the ball reaches
               2B. When you stop, the time is written into the next empty CT2BT
               cell in the grid.
+            </p>
+          </div>
+        )}
+
+
+        {effectiveEvalType === "infield" && (
+          <div className="mt-2 space-y-1 text-[11px]">
+            <div className="font-semibold text-slate-200">
+              SS to 1B timer (IFSS1BT)
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="text-lg font-mono tabular-nums text-slate-50">
+                {ifss1btTimerSeconds.toFixed(2)}s
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {!ifss1btTimerRunning ? (
+                  <button
+                    type="button"
+                    onClick={handleIfss1btTimerStart}
+                    className="px-2 py-0.5 rounded-md border border-emerald-500/70 bg-emerald-500/10 text-[11px] text-emerald-200"
+                    disabled={isFinalized}
+                  >
+                    Start
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleIfss1btTimerStopAndFill}
+                    className="px-2 py-0.5 rounded-md border border-amber-400/70 bg-amber-500/10 text-[11px] text-amber-200"
+                    disabled={isFinalized}
+                  >
+                    Stop &amp; fill next
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleIfss1btTimerReset}
+                  className="px-2 py-0.5 rounded-md border border-slate-600 bg-slate-800/70 text-[11px] text-slate-200"
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+            <p className="text-[10px] text-slate-500">
+              Time from when the ball leaves the bat or machine at shortstop
+              until it reaches first base. When you stop, the time is written
+              into the next empty IFSS1BT cell in the grid.
+            </p>
+          </div>
+        )}
+
+        {effectiveEvalType === "outfield" && (
+          <div className="mt-2 space-y-1 text-[11px]">
+            <div className="font-semibold text-slate-200">
+              Outfield Ground Ball → Home timer (OFGBHT)
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="text-lg font-mono tabular-nums text-slate-50">
+                {ofgbhtTimerSeconds.toFixed(2)}s
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {!ofgbhtTimerRunning ? (
+                  <button
+                    type="button"
+                    onClick={handleOfgbhtTimerStart}
+                    className="px-2 py-0.5 rounded-md border border-emerald-500/70 bg-emerald-500/10 text-[11px] text-emerald-200"
+                    disabled={isFinalized}
+                  >
+                    Start
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleOfgbhtTimerStopAndFill}
+                    className="px-2 py-0.5 rounded-md border border-amber-400/70 bg-amber-500/10 text-[11px] text-amber-200"
+                    disabled={isFinalized}
+                  >
+                    Stop &amp; fill next
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleOfgbhtTimerReset}
+                  className="px-2 py-0.5 rounded-md border border-slate-600 bg-slate-800/70 text-[11px] text-slate-200"
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+            <p className="text-[10px] text-slate-500">
+              Time from when the ground ball is hit/sent to when the ball reaches
+              the area around home plate. When you stop, the time is written into
+              the next empty OFGBHT cell in the grid.
             </p>
           </div>
         )}
@@ -2301,39 +2691,238 @@ export default function AssessmentSessionPage() {
                   const isFirstBaseFieldingGroup =
                     labelLower.startsWith("first base") && labelLower.includes("field");
                   const isFirstBaseGroup = isFirstBaseCatchingGroup || isFirstBaseFieldingGroup;
-
                   const isCatcherGroup = labelLower.startsWith("catcher");
+                  const isInfieldCatchingGroup =
+                    labelLower.startsWith("infield") &&
+                    labelLower.includes("catch");
+                  const isInfieldFieldingGroup =
+                    labelLower.startsWith("infield") &&
+                    labelLower.includes("field");
+                  const isInfieldGroup =
+                    isInfieldCatchingGroup || isInfieldFieldingGroup;
+              // Youth 5U–9U “simple” evals (Throwing / Catching / Fielding) –
+              // we don’t show sub-group headers like “Outfield”, “Throwing”, etc.
+                  const isYouthSimpleEval =
+                    effectiveEvalType === "throwing" ||
+                    effectiveEvalType === "catching" ||
+                    effectiveEvalType === "fielding";
               
                   const rows: React.ReactNode[] = [];
 
 
-                  // Group header row (Speed / Strength / Balance / Mobility / Hitting / etc.)
-                  if (group.label !== "Other") {
-                    rows.push(
-                      <tr className="bg-slate-800/60" key={`${group.key}-header`}>
-                        <td
-                          colSpan={1 + gridColumns.length}
-                          className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-300 border-b border-slate-700"
-                        >
-                          {group.label}
-                        </td>
-                      </tr>
-                    );
-                  }
+                // Group header row (Speed / Strength / Balance / Mobility / Hitting / etc.)
+                if (!isYouthSimpleEval && group.label !== "Other") {
+                  rows.push(
+                    <tr className="bg-slate-800/60" key={`${group.key}-header`}>
+                      <td
+                        colSpan={1 + gridColumns.length}
+                        className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-300 border-b border-slate-700"
+                      >
+                        {group.label}
+                      </td>
+                    </tr>
+                  );
+                }
 
-                  // Helper for a generic metric row (used for non-special metrics)
+              // Generic metric row helper (used for most metrics)
               const pushDefaultRow = (m: AssessmentMetric) => {
                 const metricKey = (m as any).metric_key as string | undefined;
                 const meta = metricKey ? getMetricMeta(metricKey) : undefined;
 
+                // -------------------------------------------------------------------
+                // SPECIAL LAYOUT: TSPDSMALL (max_throwing_speed_small_ball)
+                // Needs a ball-type select + mph field per player.
+                // -------------------------------------------------------------------
+                if (metricKey === "max_throwing_speed_small_ball") {
+                  const displayName =
+                    meta?.shortLabel ||
+                    meta?.displayName ||
+                    (m as any).label ||
+                    "Max throwing speed – small ball";
+
+                  rows.push(
+                    <tr key={`metric-${m.id}`} className="border-b border-slate-800">
+                      <td className="align-top px-2 py-2">
+                        <div className="font-medium text-slate-100">{displayName}</div>
+                        {meta?.instructions && (
+                          <div className="mt-0.5 text-[10px] text-slate-400">
+                            {meta.instructions}
+                          </div>
+                        )}
+                      </td>
+                      {gridColumns.map((col) => {
+                        const playerId = col.id;
+                        const perPlayer =
+                          (sessionData?.values as any)?.[playerId] || {};
+                        const v = perPlayer[m.id];
+
+                        const numericValue = v?.value_numeric as number | null | undefined;
+                        const ballTypeValue =
+                          typeof v?.value_text === "string" ? v.value_text : "";
+
+                        const cellKey = `${m.id}-${playerId}`;
+
+                        const updateBallType = (nextType: string) => {
+                          if (isFinalized) return;
+
+                          setSessionData((prev) => {
+                            const base: EvalSessionData =
+                              prev ??
+                              sessionData ?? {
+                                player_ids: [],
+                                values: {},
+                                completed_metric_ids: [],
+                                evaluation_type: effectiveEvalType,
+                                session_mode: effectiveSessionMode,
+                              };
+
+                            const values = { ...(base.values || {}) } as any;
+                            const byPlayer = { ...(values[playerId] || {}) };
+                            const existing = byPlayer[m.id] || {
+                              value_numeric: null,
+                              value_text: null,
+                            };
+
+                            byPlayer[m.id] = {
+                              value_numeric:
+                                typeof existing.value_numeric === "number"
+                                  ? existing.value_numeric
+                                  : null,
+                              value_text: nextType || null,
+                            };
+
+                            values[playerId] = byPlayer;
+                            return { ...base, values };
+                          });
+
+                          setDirty(true);
+                        };
+
+                        const updateSpeed = (raw: string) => {
+                          if (isFinalized) return;
+
+                          setSessionData((prev) => {
+                            const base: EvalSessionData =
+                              prev ??
+                              sessionData ?? {
+                                player_ids: [],
+                                values: {},
+                                completed_metric_ids: [],
+                                evaluation_type: effectiveEvalType,
+                                session_mode: effectiveSessionMode,
+                              };
+
+                            const values = { ...(base.values || {}) } as any;
+                            const byPlayer = { ...(values[playerId] || {}) };
+                            const existing = byPlayer[m.id] || {
+                              value_numeric: null,
+                              value_text: null,
+                            };
+
+                            const trimmed = raw.trim();
+                            let numeric: number | null = null;
+                            if (trimmed !== "") {
+                              const parsed = Number.parseFloat(trimmed);
+                              numeric = Number.isNaN(parsed) ? null : parsed;
+                            }
+
+                            byPlayer[m.id] = {
+                              value_numeric: numeric,
+                              value_text:
+                                typeof existing.value_text === "string"
+                                  ? existing.value_text
+                                  : null,
+                            };
+
+                            values[playerId] = byPlayer;
+                            return { ...base, values };
+                          });
+
+                          setDirty(true);
+                        };
+
+                        return (
+                          <td
+                            key={cellKey}
+                            className="px-2 py-1 align-top text-center text-xs"
+                          >
+                            <div className="flex flex-col gap-1 items-stretch">
+                              <select
+                                className="w-full max-w-[8rem] rounded-md border border-slate-700 bg-slate-950 px-1 py-0.5 text-[11px]"
+                                value={ballTypeValue}
+                                disabled={isFinalized}
+                                onChange={(e) => updateBallType(e.target.value)}
+                              >
+                                <option value="">Ball type…</option>
+                                <option value="small_baseball">
+                                  Small baseball (7.2")
+                                </option>
+                                <option value="tennis_ball">Tennis ball</option>
+                                <option value="racquetball">Racquetball</option>
+                                <option value="other">Other</option>
+                              </select>
+
+                              <input
+                                type="number"
+                                inputMode="decimal"
+                                className="w-full max-w-[7rem] rounded-md border border-slate-700 bg-slate-950 px-1 py-0.5 text-[11px]"
+                                placeholder={meta?.placeholder ?? "mph"}
+                                step={meta?.step ?? 0.1}
+                                min={meta?.min}
+                                max={meta?.max}
+                                disabled={isFinalized}
+                                value={
+                                  numericValue === null ||
+                                  numericValue === undefined ||
+                                  Number.isNaN(numericValue)
+                                    ? ""
+                                    : String(numericValue)
+                                }
+                                onChange={(e) => updateSpeed(e.target.value)}
+                              />
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+
+                  return;
+                }
+
+                // -------------------------------------------------------------------
+                // Default rendering for all other metrics (your existing logic)
+                // -------------------------------------------------------------------
+                const displayName =
+                  meta?.shortLabel ||
+                  meta?.displayName ||
+                  (m as any).label ||
+                  metricKey ||
+                  "Metric";
+
+                const detailLineParts: string[] = [];
+
+                if (meta?.group) detailLineParts.push(meta.group);
+                if (meta?.code) detailLineParts.push(`Code: ${meta.code}`);
+                if ((m as any).unit) detailLineParts.push(`Unit: ${(m as any).unit}`);
+                if (
+                  meta?.unitHint &&
+                  !detailLineParts.some((p) => p.toLowerCase().includes("unit"))
+                ) {
+                  detailLineParts.push(meta.unitHint);
+                }
+
                 rows.push(
-                  <tr key={`${group.key}-${m.id}`} className="border-b border-slate-800">
-                    <td className="align-top px-2 py-1">
-                      <div className="font-medium text-slate-100">
-                        {meta?.displayName || (m as any).label || `Metric ${m.id}`}
-                      </div>
+                  <tr key={`metric-${m.id}`} className="border-b border-slate-800">
+                    <td className="align-top px-2 py-2">
+                      <div className="font-medium text-slate-100">{displayName}</div>
+                      {detailLineParts.length > 0 && (
+                        <div className="mt-0.5 text-[10px] text-slate-400">
+                          {detailLineParts.join(" · ")}
+                        </div>
+                      )}
                       {meta?.instructions && (
-                        <div className="text-[10px] text-slate-500 mt-0.5">
+                        <div className="mt-0.5 text-[10px] text-slate-400">
                           {meta.instructions}
                         </div>
                       )}
@@ -2343,45 +2932,35 @@ export default function AssessmentSessionPage() {
                       const perPlayer =
                         (sessionData?.values as any)?.[playerId] || {};
                       const v = perPlayer[m.id];
-
                       const numericValue = v?.value_numeric;
                       const textValue = v?.value_text;
                       const commonKey = `${m.id}-${playerId}`;
 
-                      // Select-style metrics (e.g. MSR, Toe Touch) – generic path
-                      if (
-                        meta?.inputType === "select" &&
-                        meta.options &&
-                        meta.options.length > 0
-                      ) {
+                      // If the metric is configured as a select, use options UI
+                      if (meta?.inputType === "select" && meta.options?.length) {
                         const selectValue =
-                          numericValue !== null &&
-                          numericValue !== undefined &&
-                          !Number.isNaN(numericValue)
+                          typeof textValue === "string" && textValue.trim() !== ""
+                            ? textValue
+                            : typeof numericValue === "number"
                             ? String(numericValue)
-                            : textValue != null
-                            ? String(textValue)
                             : "";
 
                         return (
                           <td
                             key={commonKey}
-                            className="px-2 py-1 align-top text-center"
+                            className="px-2 py-1 align-top text-center text-xs"
                           >
                             <select
-                              className="w-full max-w-[7rem] rounded-md bg-slate-950 border border-slate-700 px-1 py-0.5 text-[11px]"
+                              className="w-full max-w-[7rem] rounded-md border border-slate-700 bg-slate-950 px-1 py-0.5 text-[11px]"
                               value={selectValue}
+                              disabled={isFinalized}
                               onChange={(e) =>
                                 handleValueChange(m.id, playerId, e.target.value)
                               }
-                              disabled={isFinalized}
                             >
-                              <option value="">Select…</option>
+                              <option value="">—</option>
                               {meta.options.map((opt) => (
-                                <option
-                                  key={String(opt.value)}
-                                  value={String(opt.value)}
-                                >
+                                <option key={opt.value} value={opt.value}>
                                   {opt.label}
                                 </option>
                               ))}
@@ -2392,23 +2971,33 @@ export default function AssessmentSessionPage() {
 
                       const value = numericValue ?? (textValue ?? "");
 
+                      const inputType: "number" | "text" =
+                       meta?.inputType === "text" ? "text" : "number";
+
                       return (
                         <td
                           key={commonKey}
-                          className="px-2 py-1 align-top text-center"
+                          className="px-2 py-1 align-top text-center text-xs"
                         >
                           <input
-                            type="number"
-                            className="w-full max-w-[5rem] rounded-md bg-slate-950 border border-slate-700 px-1 py-0.5 text-[11px] text-center"
-                            value={value === null ? "" : value}
+                            type={inputType}
+                            inputMode={
+                              inputType === "number" ? "decimal" : "text"
+                            }
+                            className="w-full max-w-[7rem] rounded-md border border-slate-700 bg-slate-950 px-1 py-0.5 text-[11px]"
+                            placeholder={meta?.placeholder}
+                            step={meta?.step}
+                            min={meta?.min}
+                            max={meta?.max}
+                            disabled={isFinalized}
+                            value={
+                              value === null || value === undefined
+                                ? ""
+                                : String(value)
+                            }
                             onChange={(e) =>
                               handleValueChange(m.id, playerId, e.target.value)
                             }
-                            disabled={isFinalized}
-                            step={meta?.step ?? undefined}
-                            min={meta?.min ?? undefined}
-                            max={meta?.max ?? undefined}
-                            placeholder={meta?.placeholder}
                           />
                         </td>
                       );
@@ -2417,6 +3006,164 @@ export default function AssessmentSessionPage() {
                 );
               };
 
+
+              // Special layout: Outfield eval → fly ball matrix + throw accuracy matrix
+              if (effectiveEvalType === "outfield") {
+                const pushOutfieldMatrixRow = (
+                  metric: AssessmentMetric,
+                  cfg: { repCount: number; kind: OutfieldMatrixKind }
+                ) => {
+                  const metricKey = (metric as any).metric_key as
+                    | string
+                    | undefined;
+
+                  const meta = metricKey ? getMetricMeta(metricKey) : undefined;
+                  const displayName =
+                    meta?.shortLabel ||
+                    meta?.displayName ||
+                    (metric as any).label ||
+                    metricKey ||
+                    "Outfield test";
+
+                  const options =
+                    cfg.kind === "fly_matrix"
+                      ? OUTFIELD_FLY_OPTIONS
+                      : OUTFIELD_THROW_OPTIONS;
+
+                  const repCountSafe = cfg.repCount;
+
+                  rows.push(
+                    <tr
+                      key={`${group.key}-outfield-${metric.id}`}
+                      className="border-b border-slate-800"
+                    >
+                      <td className="align-top px-2 py-2">
+                        <div className="font-medium text-slate-100">
+                          {displayName}
+                        </div>
+                        {meta?.instructions && (
+                          <div className="mt-0.5 text-[10px] text-slate-500">
+                            {meta.instructions}
+                          </div>
+                        )}
+                      </td>
+
+                      {gridColumns.map((col) => {
+                        const playerId = col.id;
+                        const perPlayer =
+                          (sessionData.values as any)?.[playerId] || {};
+                        const cell = perPlayer[metric.id];
+
+                        const storedText = cell?.value_text;
+                        const numericValue = cell?.value_numeric;
+
+                        let codes: string[] = [];
+                        if (
+                          typeof storedText === "string" &&
+                          storedText.trim() !== ""
+                        ) {
+                          try {
+                            const parsed = JSON.parse(storedText);
+                            if (Array.isArray(parsed)) {
+                              codes = parsed.map((c) => String(c));
+                            }
+                          } catch {
+                            // ignore bad JSON
+                          }
+                        }
+
+                        if (codes.length < repCountSafe) {
+                          codes = [
+                            ...codes,
+                            ...Array(repCountSafe - codes.length).fill(""),
+                          ];
+                        } else if (codes.length > repCountSafe) {
+                          codes = codes.slice(0, repCountSafe);
+                        }
+
+                        const displayTotal =
+                          typeof numericValue === "number"
+                            ? numericValue
+                            : undefined;
+
+                        return (
+                          <td
+                            key={`${group.key}-outfield-${metric.id}-${playerId}`}
+                            className="px-2 py-2 align-top text-center"
+                          >
+                            <div className="flex flex-col gap-1 items-center">
+                              <div className="flex flex-wrap gap-2 justify-center">
+                                {codes.map((code, idx) => (
+                                  <div
+                                    key={`${metric.id}-${playerId}-${idx}`}
+                                    className="flex flex-col gap-0.5"
+                                  >
+                                    <div className="text-[10px] text-slate-400 text-center">
+                                      Rep {idx + 1}
+                                    </div>
+                                    <select
+                                      className="w-full rounded border border-slate-700 bg-slate-900 px-1 py-0.5 text-[10px]"
+                                      value={code}
+                                      disabled={isFinalized}
+                                      onChange={(e) =>
+                                        handleHittingMatrixSwingChange(
+                                          metric.id,
+                                          playerId,
+                                          idx,
+                                          e.target.value,
+                                          options,
+                                          repCountSafe
+                                        )
+                                      }
+                                    >
+                                      <option value="">—</option>
+                                      {options.map((opt) => (
+                                        <option key={opt.code} value={opt.code}>
+                                          {opt.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="text-[10px] text-slate-400 text-center">
+                                Score:{" "}
+                                <span className="font-mono">
+                                  {displayTotal ?? "—"}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                };
+
+                // For Outfield sessions, render any matrix-style metrics via the Outfield matrix UI
+                group.metrics.forEach((m) => {
+                  const metricKey = (m as any).metric_key as
+                    | string
+                    | undefined;
+
+                  if (!metricKey) {
+                    pushDefaultRow(m);
+                    return;
+                  }
+
+                  const cfg = OUTFIELD_MATRIX_CONFIG[metricKey];
+                  if (cfg) {
+                    pushOutfieldMatrixRow(m, cfg);
+                  } else {
+                    // OFGBHT and any other numeric metrics fall back to the generic row
+                    pushDefaultRow(m);
+                  }
+                });
+
+                return <Fragment key={group.key}>{rows}</Fragment>;
+              }
+
+              
               // Special layout: Balance → SLS Eyes Open/Closed (R/L)
               // Special layout: Balance → SLS Eyes Open/Closed (R/L)
               if (isBalance) {
@@ -3558,7 +4305,389 @@ export default function AssessmentSessionPage() {
                 return <Fragment key={group.key}>{rows}</Fragment>;
               }
 
-              
+              // Special layout: Infield – Fielding & Catching
+              if (isInfieldGroup) {
+                const usedIds = new Set<number>();
+
+                const byKey = new Map<string, AssessmentMetric>();
+                for (const m of group.metrics) {
+                  const metricKey = (m as any)
+                    .metric_key as string | undefined;
+                  if (metricKey) byKey.set(metricKey, m);
+                }
+
+                // -----------------------
+                // Fielding: RLCG 2B / SS / 3B
+                // -----------------------
+                if (isInfieldFieldingGroup) {
+                  const renderRlcGrounders = (
+                    prefix: string,
+                    label: string
+                  ) => {
+                    type RlcGrounderSpec = {
+                      directionMetric?: AssessmentMetric;
+                      pointsMetric?: AssessmentMetric;
+                      repIndex: number;
+                    };
+
+                    const grounders: RlcGrounderSpec[] = [];
+
+                    for (let rep = 1; rep <= 6; rep++) {
+                      const dirMetric = byKey.get(
+                        `${prefix}_${rep}_direction`
+                      );
+                      const ptsMetric = byKey.get(
+                        `${prefix}_${rep}_points`
+                      );
+
+                      if (!dirMetric && !ptsMetric) continue;
+
+                      if (dirMetric) usedIds.add(dirMetric.id);
+                      if (ptsMetric) usedIds.add(ptsMetric.id);
+
+                      grounders.push({
+                        directionMetric: dirMetric,
+                        pointsMetric: ptsMetric,
+                        repIndex: rep,
+                      });
+                    }
+
+                    if (grounders.length === 0) return;
+
+                    rows.push(
+                      <tr
+                        key={`${group.key}-${prefix}`}
+                        className="border-b border-slate-800"
+                      >
+                        <td className="align-top px-2 py-2">
+                          <div className="font-medium text-slate-100">
+                            {label}
+                          </div>
+                          <div className="text-[10px] text-slate-500 mt-0.5">
+                            Hit 6 ground balls to the infielder. Two should be
+                            at the player, two should require moving to the
+                            right, and two to the left. The player should not
+                            know the direction in advance.
+                          </div>
+                          <div className="text-[10px] text-slate-500 mt-0.5">
+                            Score each rep: 0 = Didn&apos;t field, 1 = Fielded
+                            but missed target, 2 = Fielded and hit target at
+                            1B. Max score per position is 12 points.
+                          </div>
+                          <div className="text-[10px] text-slate-500 mt-0.5">
+                            Distance / exit velo guidelines: 10U–11U ≈ 45&nbsp;
+                            mph &amp; 10&nbsp;ft; 12U–14U ≈ 55&nbsp;mph &amp;
+                            20&nbsp;ft; HS–Pro ≈ 65&nbsp;mph &amp; 30&nbsp;ft.
+                          </div>
+                          <div className="text-[10px] text-slate-500 mt-0.5">
+                            Direction is stored for reporting and doesn&apos;t
+                            affect the score.
+                          </div>
+                        </td>
+                        {gridColumns.map((col) => {
+                          const playerId = col.id;
+                          const perPlayer =
+                            (sessionData?.values as any)?.[playerId] || {};
+
+                          let totalPoints = 0;
+
+                          return (
+                            <td
+                              key={`${group.key}-${prefix}-${playerId}`}
+                              className="px-2 py-2 align-top"
+                            >
+                              <div className="flex flex-col gap-1">
+                                {grounders.map((g) => {
+                                  const dirMetric = g.directionMetric;
+                                  const ptsMetric = g.pointsMetric;
+                                  const rawDir =
+                                    dirMetric &&
+                                    perPlayer[dirMetric.id]?.value_text;
+                                  const numericPoints =
+                                    ptsMetric &&
+                                    perPlayer[ptsMetric.id]?.value_numeric;
+
+                                  if (
+                                    typeof numericPoints === "number" &&
+                                    !Number.isNaN(numericPoints)
+                                  ) {
+                                    totalPoints += numericPoints;
+                                  }
+
+                                  return (
+                                    <div
+                                      key={`${group.key}-${prefix}-${playerId}-${g.repIndex}`}
+                                      className="flex flex-wrap items-center gap-1"
+                                    >
+                                      <span className="text-[10px] text-slate-400 w-10">
+                                        Rep {g.repIndex}
+                                      </span>
+                                      {dirMetric && (
+                                        <select
+                                          className="rounded border border-slate-700 bg-slate-900 px-1 py-0.5 text-[10px]"
+                                          disabled={isFinalized}
+                                          value={rawDir ?? ""}
+                                          onChange={(e) =>
+                                            handleTextValueChange(
+                                              dirMetric.id,
+                                              playerId,
+                                              e.target.value || null
+                                            )
+                                          }
+                                        >
+                                          <option value="">Dir</option>
+                                          <option value="center">
+                                            Center
+                                          </option>
+                                          <option value="right">
+                                            Right
+                                          </option>
+                                          <option value="left">Left</option>
+                                        </select>
+                                      )}
+                                      {ptsMetric && (
+                                        <select
+                                          className="rounded border border-slate-700 bg-slate-900 px-1 py-0.5 text-[10px]"
+                                          disabled={isFinalized}
+                                          value={
+                                            typeof numericPoints === "number"
+                                              ? String(numericPoints)
+                                              : ""
+                                          }
+                                          onChange={(e) =>
+                                            handleValueChange(
+                                              ptsMetric.id,
+                                              playerId,
+                                              e.target.value
+                                            )
+                                          }
+                                        >
+                                          <option value="">Result</option>
+                                          <option value="0">
+                                            Didn&apos;t field (0)
+                                          </option>
+                                          <option value="1">
+                                            Fielded / missed target (1)
+                                          </option>
+                                          <option value="2">
+                                            Fielded &amp; hit target (2)
+                                          </option>
+                                        </select>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                                <div className="mt-1 text-[10px] text-slate-400">
+                                  Score:{" "}
+                                  <span className="font-mono">
+                                    {totalPoints || "—"}
+                                  </span>
+                                </div>
+                              </div>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  };
+
+                  renderRlcGrounders(
+                    "rlc2b_grounder",
+                    "RLC Grounders – 2B (6 reps)"
+                  );
+                  renderRlcGrounders(
+                    "rlcss_grounder",
+                    "RLC Grounders – SS (6 reps)"
+                  );
+                  renderRlcGrounders(
+                    "rlc3b_grounder",
+                    "RLC Grounders – 3B (6 reps)"
+                  );
+                }
+
+                // -----------------------
+                // Catching: CIFF / CLD
+                // -----------------------
+                if (isInfieldCatchingGroup) {
+                  const infieldKeyForMetric = (
+                    metric: AssessmentMetric
+                  ): InfieldCatchMatrixKey | undefined => {
+                    const metricKey = (metric as any)
+                      .metric_key as string | undefined;
+                    if (!metricKey) return undefined;
+                    const entry = (
+                      Object.entries(
+                        INFIELD_CATCH_MATRIX_KEYS
+                      ) as [InfieldCatchMatrixKey, string][]
+                    ).find(([, key]) => key === metricKey);
+                    return entry?.[0];
+                  };
+
+                  const pushInfieldCatchMatrixRow = (
+                    metric: AssessmentMetric
+                  ) => {
+                    const infKey = infieldKeyForMetric(metric);
+                    if (!infKey) {
+                      return pushDefaultRow(metric);
+                    }
+
+                    usedIds.add(metric.id);
+
+                    const metricKey = (metric as any)
+                      .metric_key as string | undefined;
+                    const meta = metricKey ? getMetricMeta(metricKey) : undefined;
+                    const repCount = INFIELD_CATCH_REP_COUNTS[infKey] ?? 3;
+                    const options = INFIELD_CATCH_MATRIX_OPTIONS[infKey] ?? [];
+                    const pointsMap = new Map<string, number>();
+                    options.forEach((opt) =>
+                      pointsMap.set(opt.code, opt.points)
+                    );
+
+                    const displayName =
+                      meta?.displayName ||
+                      (metric as any).label ||
+                      "Infield Catching Test";
+
+                    const description =
+                      meta?.instructions ||
+                      "Hit 3 balls to this position. 0 points for a miss and 2 points for a catch. Total score is calculated automatically.";
+
+                    rows.push(
+                      <tr
+                        key={`${group.key}-infield-catch-${metric.id}`}
+                        className="border-b border-slate-800"
+                      >
+                        <td className="align-top px-2 py-2">
+                          <div className="font-medium text-slate-100">
+                            {displayName}
+                          </div>
+                          <div className="text-[10px] text-slate-500 mt-0.5">
+                            {description}
+                          </div>
+                        </td>
+                        {gridColumns.map((col) => {
+                          const playerId = col.id;
+                          const perPlayer =
+                            (sessionData?.values as any)?.[playerId] || {};
+                          const v = perPlayer[metric.id];
+
+                          const numericValue = v?.value_numeric;
+                          const textValue = v?.value_text;
+
+                          let events: string[] = [];
+                          if (typeof textValue === "string" && textValue) {
+                            try {
+                              const parsed = JSON.parse(textValue);
+                              if (Array.isArray(parsed)) {
+                                events = parsed.map((s) => String(s));
+                              }
+                            } catch {
+                              // ignore malformed
+                            }
+                          }
+
+                          while (events.length < repCount) {
+                            events.push("");
+                          }
+                          if (events.length > repCount) {
+                            events = events.slice(0, repCount);
+                          }
+
+                          const total =
+                            typeof numericValue === "number" &&
+                            !Number.isNaN(numericValue)
+                              ? numericValue
+                              : events.reduce(
+                                  (sum, code) =>
+                                    sum + (pointsMap.get(code) ?? 0),
+                                  0
+                                );
+
+                          return (
+                            <td
+                              key={`${group.key}-infcatch-${metric.id}-${playerId}`}
+                              className="px-2 py-2 align-top"
+                            >
+                              <div className="flex flex-col gap-1">
+                                <div className="grid grid-cols-3 gap-1">
+                                  {events.map((code, repIndex) => (
+                                    <button
+                                      key={`${group.key}-infcatch-${metric.id}-${playerId}-${repIndex}`}
+                                      type="button"
+                                      className={[
+                                        "px-1 py-0.5 rounded text-[10px] border",
+                                        code === "catch"
+                                          ? "border-emerald-400 bg-emerald-500/10 text-emerald-100"
+                                          : code === "miss"
+                                          ? "border-rose-400 bg-rose-500/10 text-rose-100"
+                                          : "border-slate-700 bg-slate-900 text-slate-200",
+                                      ].join(" ")}
+                                      disabled={isFinalized}
+                                      onClick={() => {
+                                        const nextCode =
+                                          code === "catch"
+                                            ? "miss"
+                                            : code === "miss"
+                                            ? ""
+                                            : "catch";
+                                        handleHittingMatrixSwingChange(
+                                          metric.id,
+                                          playerId,
+                                          repIndex,
+                                          nextCode,
+                                          options,
+                                          repCount
+                                        );
+                                      }}
+                                    >
+                                      Rep {repIndex + 1}:{" "}
+                                      {code === "catch"
+                                        ? "Catch (2)"
+                                        : code === "miss"
+                                        ? "Miss (0)"
+                                        : "—"}
+                                    </button>
+                                  ))}
+                                </div>
+                                <div className="mt-1 text-[10px] text-slate-400">
+                                  Score:{" "}
+                                  <span className="font-mono">
+                                    {total || "—"}
+                                  </span>
+                                </div>
+                              </div>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  };
+
+                  // Order: fly balls 2B/SS/3B, then line drives 2B/SS/3B
+                  const fly2b = byKey.get(INFIELD_CATCH_MATRIX_KEYS.fly2b);
+                  const flySs = byKey.get(INFIELD_CATCH_MATRIX_KEYS.flySs);
+                  const fly3b = byKey.get(INFIELD_CATCH_MATRIX_KEYS.fly3b);
+                  const ld2b = byKey.get(INFIELD_CATCH_MATRIX_KEYS.ld2b);
+                  const ldSs = byKey.get(INFIELD_CATCH_MATRIX_KEYS.ldSs);
+                  const ld3b = byKey.get(INFIELD_CATCH_MATRIX_KEYS.ld3b);
+
+                  if (fly2b) pushInfieldCatchMatrixRow(fly2b);
+                  if (flySs) pushInfieldCatchMatrixRow(flySs);
+                  if (fly3b) pushInfieldCatchMatrixRow(fly3b);
+                  if (ld2b) pushInfieldCatchMatrixRow(ld2b);
+                  if (ldSs) pushInfieldCatchMatrixRow(ldSs);
+                  if (ld3b) pushInfieldCatchMatrixRow(ld3b);
+                }
+
+                // Any remaining Infield metrics fall back to generic rendering
+                const remainingInfieldMetrics = group.metrics.filter(
+                  (m) => !usedIds.has(m.id)
+                );
+                remainingInfieldMetrics.forEach((m) => pushDefaultRow(m));
+
+                return <Fragment key={group.key}>{rows}</Fragment>;
+              }
+
 
               // Special layout: Hitting → per-swing matrices + generic rows
               // Special layout: Hitting → per-swing matrices + generic rows

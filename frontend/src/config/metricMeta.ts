@@ -575,49 +575,21 @@ const METRIC_META: Record<string, MetricMeta> = {
 
   max_throwing_speed: {
     code: "TSPEED",
-    group: "Pitching – Velocity",
-    shortLabel: "Pitch Velocity",
-    displayName: "Pitch Velocity",
+    group: "Throwing",
+    shortLabel: "Max throwing / pitching velo",
+    displayName: "Max Throwing / Pitching Speed",
     instructions:
-      "Have the player throw 5 pitches from the appropriate mound distance for their age group. The player should try to max out their velocity. Enter the fastest pitch (mph).",
+      "Have the player make 5 throws or pitches as hard as possible from the age-appropriate distance shown in the template label " +
+      "(e.g. 20 ft for 5U–7U TSPEED20, 40–45 ft for 8U–9U TSPEED, mound distance in older pitching templates). " +
+      "Record the fastest velocity in MPH from the 5 attempts.",
     inputType: "number",
     min: 0,
-    max: 110,
-    step: 1,
+    max: 120,
+    step: 0.1,
     unitHint: "mph",
-    placeholder: "mph",
+    placeholder: "e.g. 32.5",
   },
 
-  // Youth throwing / command (used inside Throwing & Pitching for 5U–9U)
-  m_10_throw_test_40ft: {
-    code: "TPITCH1040",
-    group: "Throwing & Pitching",
-    shortLabel: "10 Pitch Command (40 ft)",
-    displayName: "10 Pitch Command Test (40 ft)",
-    instructions:
-      "Have the player throw 10 pitches toward a 9-slot target from 40 ft. Before each pitch, have them call the slot they are aiming at. Score separately; total score is entered here.",
-    inputType: "number",
-    min: 0,
-    max: 30,
-    step: 1,
-    unitHint: "score",
-    placeholder: "0–30",
-  },
-
-  m_10_throw_test_45ft: {
-    code: "TPITCH1045",
-    group: "Throwing & Pitching",
-    shortLabel: "10 Pitch Command (45 ft)",
-    displayName: "10 Pitch Command Test (45 ft)",
-    instructions:
-      "Have the player throw 10 pitches toward a 9-slot target from 45 ft. Before each pitch, have them call the slot they are aiming at. Score separately; total score is entered here.",
-    inputType: "number",
-    min: 0,
-    max: 30,
-    step: 1,
-    unitHint: "score",
-    placeholder: "0–30",
-  },
 
   // 10-pitch command @ 50 ft (10U–11U Pitching Eval)
   m_10_throw_test_50ft: {
@@ -723,6 +695,82 @@ const METRIC_META: Record<string, MetricMeta> = {
     step: 1,
     unitHint: "score",
     placeholder: "0–15",
+  },
+
+
+  /* ---------------------------------------------------------------------- */
+  /*                        THROWING – YOUTH (5U–9U)                        */
+  /* ---------------------------------------------------------------------- */
+
+  // TSPEED20 / TSPEED / TSPEED40 / TSPEED45 etc.
+  // (same metric_key reused across youth & older pitching templates)
+
+  // TSPDSMALL – Max throwing speed with small ball
+  max_throwing_speed_small_ball: {
+    code: "TSPDSMALL",
+    group: "Throwing",
+    shortLabel: "Max speed – small ball",
+    displayName: "Max Throwing Speed – Small Ball (TSPDSMALL)",
+    instructions:
+      "For 5U–7U: have the player throw 5 balls as hard as possible at a ~20 ft target using either a 7.2\" baseball, a tennis ball, a racquetball, or a similar small ball. " +
+      "Select the ball type used and record the fastest velocity in MPH.",
+    inputType: "number", // we still store the mph as numeric, ball type in value_text
+    min: 0,
+    max: 120,
+    step: 0.1,
+    unitHint: "mph",
+    placeholder: "e.g. 29.7",
+  },
+
+  // T20FT – 10 x 20 ft throws: 0 = miss, 1 = hit target
+  m_10_throw_test_20ft: {
+    code: "T20FT",
+    group: "Throwing",
+    shortLabel: "20 ft throw test",
+    displayName: "20 ft Throw Accuracy Test (T20FT)",
+    instructions:
+      "Have the player throw toward a 9-slot target from 20 ft. Before each throw they can call a specific slot if desired. " +
+      "Score each attempt: 0 points for a miss, 1 point for any hit on the target. Enter the total points out of 10.",
+    inputType: "number",
+    min: 0,
+    max: 10,
+    step: 1,
+    unitHint: "points (0–10)",
+    placeholder: "0–10",
+  },
+
+  // TPITCH2040 / TPITCH1040 – 10-pitch accuracy at 40 ft (5U–8U throwing)
+  m_10_throw_test_40ft: {
+    code: "TPITCH2040",
+    group: "Throwing",
+    shortLabel: "10-pitch accuracy (40 ft)",
+    displayName: "10-Pitch Accuracy Test – 40 ft (TPITCH2040 / TPITCH1040)",
+    instructions:
+      "Have the player pitch/throw toward a 9-slot target from 40 ft. Before each pitch they call the slot they are aiming for. " +
+      "Score each pitch: 0 = miss, 1 = hit the target but not the called slot, 3 = hit the called slot. Enter the total points out of 30.",
+    inputType: "number",
+    min: 0,
+    max: 30,
+    step: 1,
+    unitHint: "points (0–30)",
+    placeholder: "0–30",
+  },
+
+  // TPITCH1045 – 10-pitch accuracy at 45 ft (9U)
+  m_10_throw_test_45ft: {
+    code: "TPITCH1045",
+    group: "Throwing",
+    shortLabel: "10-pitch accuracy (45 ft)",
+    displayName: "10-Pitch Accuracy Test – 45 ft (TPITCH1045)",
+    instructions:
+      "Have the player pitch/throw toward a 9-slot target from 45 ft. Before each pitch they call the slot they are aiming for. " +
+      "Score each pitch: 0 = miss, 1 = hit the target but not the called slot, 3 = hit the called slot. Enter the total points out of 30.",
+    inputType: "number",
+    min: 0,
+    max: 30,
+    step: 1,
+    unitHint: "points (0–30)",
+    placeholder: "0–30",
   },
 
 
@@ -1053,6 +1101,725 @@ const METRIC_META: Record<string, MetricMeta> = {
     step: 1,
     unitHint: "points (0\u20136)",
     placeholder: "0\u20136",
+  },
+
+  // -------------------------------------------------------------------------
+  // INFIELD – 2B / SS / 3B
+  // -------------------------------------------------------------------------
+
+  // RLC Grounders – 2B (RLCG2B)
+  rlc2b_grounder_1_direction: {
+    code: "RLC2B-G1-DIR",
+    group: "Infield – Fielding",
+    shortLabel: "RLC 2B G1 Dir",
+    displayName: "RLC Grounder #1 – 2B – Direction",
+    instructions:
+      "Direction of the first RLC ground ball hit to 2B (center, right, or left). Direction is stored for reporting and does not change the score.",
+    inputType: "select",
+    options: [
+      { value: "", label: "—" },
+      { value: "center", label: "Center" },
+      { value: "right", label: "Right" },
+      { value: "left", label: "Left" },
+    ],
+  },
+  rlc2b_grounder_1_points: {
+    code: "RLC2B-G1",
+    group: "Infield – Fielding",
+    shortLabel: "RLC 2B G1",
+    displayName: "RLC Grounder #1 – 2B – Result",
+    instructions:
+      "Score for the first RLC ground ball to 2B: 0 = Didn’t field, 1 = Fielded but missed target, 2 = Fielded and hit target at 1B. Max total for 2B is 12 points (6 reps). 10U–11U ≈45 mph & 10 ft, 12U–14U ≈55 mph & 20 ft, HS–Pro ≈65 mph & 30 ft.",
+    inputType: "number",
+    min: 0,
+    max: 2,
+    step: 1,
+    unitHint: "points (0–2)",
+  },
+
+  rlc2b_grounder_2_direction: {
+    code: "RLC2B-G2-DIR",
+    group: "Infield – Fielding",
+    shortLabel: "RLC 2B G2 Dir",
+    displayName: "RLC Grounder #2 – 2B – Direction",
+    instructions:
+      "Direction of the second RLC ground ball to 2B (center, right, or left). Direction is stored for reporting only.",
+    inputType: "select",
+    options: [
+      { value: "", label: "—" },
+      { value: "center", label: "Center" },
+      { value: "right", label: "Right" },
+      { value: "left", label: "Left" },
+    ],
+  },
+  rlc2b_grounder_2_points: {
+    code: "RLC2B-G2",
+    group: "Infield – Fielding",
+    shortLabel: "RLC 2B G2",
+    displayName: "RLC Grounder #2 – 2B – Result",
+    instructions:
+      "Score for the second RLC ground ball to 2B (0/1/2 as defined in the test description).",
+    inputType: "number",
+    min: 0,
+    max: 2,
+    step: 1,
+    unitHint: "points (0–2)",
+  },
+
+  rlc2b_grounder_3_direction: {
+    code: "RLC2B-G3-DIR",
+    group: "Infield – Fielding",
+    shortLabel: "RLC 2B G3 Dir",
+    displayName: "RLC Grounder #3 – 2B – Direction",
+    instructions:
+      "Direction of the third RLC ground ball to 2B (center, right, or left).",
+    inputType: "select",
+    options: [
+      { value: "", label: "—" },
+      { value: "center", label: "Center" },
+      { value: "right", label: "Right" },
+      { value: "left", label: "Left" },
+    ],
+  },
+  rlc2b_grounder_3_points: {
+    code: "RLC2B-G3",
+    group: "Infield – Fielding",
+    shortLabel: "RLC 2B G3",
+    displayName: "RLC Grounder #3 – 2B – Result",
+    instructions: "Score for the third RLC ground ball to 2B (0/1/2).",
+    inputType: "number",
+    min: 0,
+    max: 2,
+    step: 1,
+    unitHint: "points (0–2)",
+  },
+
+  rlc2b_grounder_4_direction: {
+    code: "RLC2B-G4-DIR",
+    group: "Infield – Fielding",
+    shortLabel: "RLC 2B G4 Dir",
+    displayName: "RLC Grounder #4 – 2B – Direction",
+    instructions:
+      "Direction of the fourth RLC ground ball to 2B (center, right, or left).",
+    inputType: "select",
+    options: [
+      { value: "", label: "—" },
+      { value: "center", label: "Center" },
+      { value: "right", label: "Right" },
+      { value: "left", label: "Left" },
+    ],
+  },
+  rlc2b_grounder_4_points: {
+    code: "RLC2B-G4",
+    group: "Infield – Fielding",
+    shortLabel: "RLC 2B G4",
+    displayName: "RLC Grounder #4 – 2B – Result",
+    instructions: "Score for the fourth RLC ground ball to 2B (0/1/2).",
+    inputType: "number",
+    min: 0,
+    max: 2,
+    step: 1,
+    unitHint: "points (0–2)",
+  },
+
+  rlc2b_grounder_5_direction: {
+    code: "RLC2B-G5-DIR",
+    group: "Infield – Fielding",
+    shortLabel: "RLC 2B G5 Dir",
+    displayName: "RLC Grounder #5 – 2B – Direction",
+    instructions:
+      "Direction of the fifth RLC ground ball to 2B (center, right, or left).",
+    inputType: "select",
+    options: [
+      { value: "", label: "—" },
+      { value: "center", label: "Center" },
+      { value: "right", label: "Right" },
+      { value: "left", label: "Left" },
+    ],
+  },
+  rlc2b_grounder_5_points: {
+    code: "RLC2B-G5",
+    group: "Infield – Fielding",
+    shortLabel: "RLC 2B G5",
+    displayName: "RLC Grounder #5 – 2B – Result",
+    instructions: "Score for the fifth RLC ground ball to 2B (0/1/2).",
+    inputType: "number",
+    min: 0,
+    max: 2,
+    step: 1,
+    unitHint: "points (0–2)",
+  },
+
+  rlc2b_grounder_6_direction: {
+    code: "RLC2B-G6-DIR",
+    group: "Infield – Fielding",
+    shortLabel: "RLC 2B G6 Dir",
+    displayName: "RLC Grounder #6 – 2B – Direction",
+    instructions:
+      "Direction of the sixth RLC ground ball to 2B (center, right, or left).",
+    inputType: "select",
+    options: [
+      { value: "", label: "—" },
+      { value: "center", label: "Center" },
+      { value: "right", label: "Right" },
+      { value: "left", label: "Left" },
+    ],
+  },
+  rlc2b_grounder_6_points: {
+    code: "RLC2B-G6",
+    group: "Infield – Fielding",
+    shortLabel: "RLC 2B G6",
+    displayName: "RLC Grounder #6 – 2B – Result",
+    instructions: "Score for the sixth RLC ground ball to 2B (0/1/2).",
+    inputType: "number",
+    min: 0,
+    max: 2,
+    step: 1,
+    unitHint: "points (0–2)",
+  },
+
+  // RLC Grounders – SS (RLCGSS)
+  rlcss_grounder_1_direction: {
+    code: "RLCSS-G1-DIR",
+    group: "Infield – Fielding",
+    shortLabel: "RLC SS G1 Dir",
+    displayName: "RLC Grounder #1 – SS – Direction",
+    instructions:
+      "Direction of the first RLC ground ball hit to SS (center, right, or left).",
+    inputType: "select",
+    options: [
+      { value: "", label: "—" },
+      { value: "center", label: "Center" },
+      { value: "right", label: "Right" },
+      { value: "left", label: "Left" },
+    ],
+  },
+  rlcss_grounder_1_points: {
+    code: "RLCSS-G1",
+    group: "Infield – Fielding",
+    shortLabel: "RLC SS G1",
+    displayName: "RLC Grounder #1 – SS – Result",
+    instructions:
+      "Score for the first RLC ground ball to SS (0 = Didn’t field, 1 = Fielded but missed target, 2 = Fielded and hit target at 1B).",
+    inputType: "number",
+    min: 0,
+    max: 2,
+    step: 1,
+    unitHint: "points (0–2)",
+  },
+
+  // ...repeat the same pattern for rlcss_grounder_2/3/4/5/6_direction + _points
+  rlcss_grounder_2_direction: {
+    code: "RLCSS-G2-DIR",
+    group: "Infield – Fielding",
+    shortLabel: "RLC SS G2 Dir",
+    displayName: "RLC Grounder #2 – SS – Direction",
+    instructions:
+      "Direction of the second RLC ground ball to SS (center, right, or left).",
+    inputType: "select",
+    options: [
+      { value: "", label: "—" },
+      { value: "center", label: "Center" },
+      { value: "right", label: "Right" },
+      { value: "left", label: "Left" },
+    ],
+  },
+  rlcss_grounder_2_points: {
+    code: "RLCSS-G2",
+    group: "Infield – Fielding",
+    shortLabel: "RLC SS G2",
+    displayName: "RLC Grounder #2 – SS – Result",
+    instructions: "Score for the second RLC ground ball to SS (0/1/2).",
+    inputType: "number",
+    min: 0,
+    max: 2,
+    step: 1,
+    unitHint: "points (0–2)",
+  },
+
+  rlcss_grounder_3_direction: {
+    code: "RLCSS-G3-DIR",
+    group: "Infield – Fielding",
+    shortLabel: "RLC SS G3 Dir",
+    displayName: "RLC Grounder #3 – SS – Direction",
+    instructions:
+      "Direction of the third RLC ground ball to SS (center, right, or left).",
+    inputType: "select",
+    options: [
+      { value: "", label: "—" },
+      { value: "center", label: "Center" },
+      { value: "right", label: "Right" },
+      { value: "left", label: "Left" },
+    ],
+  },
+  rlcss_grounder_3_points: {
+    code: "RLCSS-G3",
+    group: "Infield – Fielding",
+    shortLabel: "RLC SS G3",
+    displayName: "RLC Grounder #3 – SS – Result",
+    instructions: "Score for the third RLC ground ball to SS (0/1/2).",
+    inputType: "number",
+    min: 0,
+    max: 2,
+    step: 1,
+    unitHint: "points (0–2)",
+  },
+
+  rlcss_grounder_4_direction: {
+    code: "RLCSS-G4-DIR",
+    group: "Infield – Fielding",
+    shortLabel: "RLC SS G4 Dir",
+    displayName: "RLC Grounder #4 – SS – Direction",
+    instructions:
+      "Direction of the fourth RLC ground ball to SS (center, right, or left).",
+    inputType: "select",
+    options: [
+      { value: "", label: "—" },
+      { value: "center", label: "Center" },
+      { value: "right", label: "Right" },
+      { value: "left", label: "Left" },
+    ],
+  },
+  rlcss_grounder_4_points: {
+    code: "RLCSS-G4",
+    group: "Infield – Fielding",
+    shortLabel: "RLC SS G4",
+    displayName: "RLC Grounder #4 – SS – Result",
+    instructions: "Score for the fourth RLC ground ball to SS (0/1/2).",
+    inputType: "number",
+    min: 0,
+    max: 2,
+    step: 1,
+    unitHint: "points (0–2)",
+  },
+
+  rlcss_grounder_5_direction: {
+    code: "RLCSS-G5-DIR",
+    group: "Infield – Fielding",
+    shortLabel: "RLC SS G5 Dir",
+    displayName: "RLC Grounder #5 – SS – Direction",
+    instructions:
+      "Direction of the fifth RLC ground ball to SS (center, right, or left).",
+    inputType: "select",
+    options: [
+      { value: "", label: "—" },
+      { value: "center", label: "Center" },
+      { value: "right", label: "Right" },
+      { value: "left", label: "Left" },
+    ],
+  },
+  rlcss_grounder_5_points: {
+    code: "RLCSS-G5",
+    group: "Infield – Fielding",
+    shortLabel: "RLC SS G5",
+    displayName: "RLC Grounder #5 – SS – Result",
+    instructions: "Score for the fifth RLC ground ball to SS (0/1/2).",
+    inputType: "number",
+    min: 0,
+    max: 2,
+    step: 1,
+    unitHint: "points (0–2)",
+  },
+
+  rlcss_grounder_6_direction: {
+    code: "RLCSS-G6-DIR",
+    group: "Infield – Fielding",
+    shortLabel: "RLC SS G6 Dir",
+    displayName: "RLC Grounder #6 – SS – Direction",
+    instructions:
+      "Direction of the sixth RLC ground ball to SS (center, right, or left).",
+    inputType: "select",
+    options: [
+      { value: "", label: "—" },
+      { value: "center", label: "Center" },
+      { value: "right", label: "Right" },
+      { value: "left", label: "Left" },
+    ],
+  },
+  rlcss_grounder_6_points: {
+    code: "RLCSS-G6",
+    group: "Infield – Fielding",
+    shortLabel: "RLC SS G6",
+    displayName: "RLC Grounder #6 – SS – Result",
+    instructions: "Score for the sixth RLC ground ball to SS (0/1/2).",
+    inputType: "number",
+    min: 0,
+    max: 2,
+    step: 1,
+    unitHint: "points (0–2)",
+  },
+
+  // RLC Grounders – 3B (RLCG3B)
+  rlc3b_grounder_1_direction: {
+    code: "RLC3B-G1-DIR",
+    group: "Infield – Fielding",
+    shortLabel: "RLC 3B G1 Dir",
+    displayName: "RLC Grounder #1 – 3B – Direction",
+    instructions:
+      "Direction of the first RLC ground ball hit to 3B (center, right, or left).",
+    inputType: "select",
+    options: [
+      { value: "", label: "—" },
+      { value: "center", label: "Center" },
+      { value: "right", label: "Right" },
+      { value: "left", label: "Left" },
+    ],
+  },
+  rlc3b_grounder_1_points: {
+    code: "RLC3B-G1",
+    group: "Infield – Fielding",
+    shortLabel: "RLC 3B G1",
+    displayName: "RLC Grounder #1 – 3B – Result",
+    instructions:
+      "Score for the first RLC ground ball to 3B (0 = Didn’t field, 1 = Fielded but missed target, 2 = Fielded and hit target).",
+    inputType: "number",
+    min: 0,
+    max: 2,
+    step: 1,
+    unitHint: "points (0–2)",
+  },
+
+  // ...and similarly for rlc3b_grounder_2–6_direction + _points:
+  rlc3b_grounder_2_direction: {
+    code: "RLC3B-G2-DIR",
+    group: "Infield – Fielding",
+    shortLabel: "RLC 3B G2 Dir",
+    displayName: "RLC Grounder #2 – 3B – Direction",
+    instructions:
+      "Direction of the second RLC ground ball to 3B (center, right, or left).",
+    inputType: "select",
+    options: [
+      { value: "", label: "—" },
+      { value: "center", label: "Center" },
+      { value: "right", label: "Right" },
+      { value: "left", label: "Left" },
+    ],
+  },
+  rlc3b_grounder_2_points: {
+    code: "RLC3B-G2",
+    group: "Infield – Fielding",
+    shortLabel: "RLC 3B G2",
+    displayName: "RLC Grounder #2 – 3B – Result",
+    instructions: "Score for the second RLC ground ball to 3B (0/1/2).",
+    inputType: "number",
+    min: 0,
+    max: 2,
+    step: 1,
+    unitHint: "points (0–2)",
+  },
+
+  rlc3b_grounder_3_direction: {
+    code: "RLC3B-G3-DIR",
+    group: "Infield – Fielding",
+    shortLabel: "RLC 3B G3 Dir",
+    displayName: "RLC Grounder #3 – 3B – Direction",
+    instructions:
+      "Direction of the third RLC ground ball to 3B (center, right, or left).",
+    inputType: "select",
+    options: [
+      { value: "", label: "—" },
+      { value: "center", label: "Center" },
+      { value: "right", label: "Right" },
+      { value: "left", label: "Left" },
+    ],
+  },
+  rlc3b_grounder_3_points: {
+    code: "RLC3B-G3",
+    group: "Infield – Fielding",
+    shortLabel: "RLC 3B G3",
+    displayName: "RLC Grounder #3 – 3B – Result",
+    instructions: "Score for the third RLC ground ball to 3B (0/1/2).",
+    inputType: "number",
+    min: 0,
+    max: 2,
+    step: 1,
+    unitHint: "points (0–2)",
+  },
+
+  rlc3b_grounder_4_direction: {
+    code: "RLC3B-G4-DIR",
+    group: "Infield – Fielding",
+    shortLabel: "RLC 3B G4 Dir",
+    displayName: "RLC Grounder #4 – 3B – Direction",
+    instructions:
+      "Direction of the fourth RLC ground ball to 3B (center, right, or left).",
+    inputType: "select",
+    options: [
+      { value: "", label: "—" },
+      { value: "center", label: "Center" },
+      { value: "right", label: "Right" },
+      { value: "left", label: "Left" },
+    ],
+  },
+  rlc3b_grounder_4_points: {
+    code: "RLC3B-G4",
+    group: "Infield – Fielding",
+    shortLabel: "RLC 3B G4",
+    displayName: "RLC Grounder #4 – 3B – Result",
+    instructions: "Score for the fourth RLC ground ball to 3B (0/1/2).",
+    inputType: "number",
+    min: 0,
+    max: 2,
+    step: 1,
+    unitHint: "points (0–2)",
+  },
+
+  rlc3b_grounder_5_direction: {
+    code: "RLC3B-G5-DIR",
+    group: "Infield – Fielding",
+    shortLabel: "RLC 3B G5 Dir",
+    displayName: "RLC Grounder #5 – 3B – Direction",
+    instructions:
+      "Direction of the fifth RLC ground ball to 3B (center, right, or left).",
+    inputType: "select",
+    options: [
+      { value: "", label: "—" },
+      { value: "center", label: "Center" },
+      { value: "right", label: "Right" },
+      { value: "left", label: "Left" },
+    ],
+  },
+  rlc3b_grounder_5_points: {
+    code: "RLC3B-G5",
+    group: "Infield – Fielding",
+    shortLabel: "RLC 3B G5",
+    displayName: "RLC Grounder #5 – 3B – Result",
+    instructions: "Score for the fifth RLC ground ball to 3B (0/1/2).",
+    inputType: "number",
+    min: 0,
+    max: 2,
+    step: 1,
+    unitHint: "points (0–2)",
+  },
+
+  rlc3b_grounder_6_direction: {
+    code: "RLC3B-G6-DIR",
+    group: "Infield – Fielding",
+    shortLabel: "RLC 3B G6 Dir",
+    displayName: "RLC Grounder #6 – 3B – Direction",
+    instructions:
+      "Direction of the sixth RLC ground ball to 3B (center, right, or left).",
+    inputType: "select",
+    options: [
+      { value: "", label: "—" },
+      { value: "center", label: "Center" },
+      { value: "right", label: "Right" },
+      { value: "left", label: "Left" },
+    ],
+  },
+  rlc3b_grounder_6_points: {
+    code: "RLC3B-G6",
+    group: "Infield – Fielding",
+    shortLabel: "RLC 3B G6",
+    displayName: "RLC Grounder #6 – 3B – Result",
+    instructions: "Score for the sixth RLC ground ball to 3B (0/1/2).",
+    inputType: "number",
+    min: 0,
+    max: 2,
+    step: 1,
+    unitHint: "points (0–2)",
+  },
+
+  // Infield Fly Balls (CIFF2B / SS / 3B)
+  infield_fly_2b: {
+    code: "CIFF2B",
+    group: "Infield – Catching",
+    shortLabel: "IF Fly – 2B (3 balls)",
+    displayName: "Infield Fly Balls to 2B (CIFF2B)",
+    instructions:
+      "Hit 3 fly balls to 2B within a reasonable radius around the player. 0 points for a miss, 2 points for a catch. 10U–11U ≈10 ft radius, 12U–14U ≈20 ft, HS–Pro ≈30 ft. Max score is 6.",
+    notes:
+      "UI records each of the 3 reps as 0 or 2 and totals automatically to a maximum of 6 points.",
+    inputType: "number",
+    min: 0,
+    max: 6,
+    step: 2,
+    unitHint: "points (0–6)",
+  },
+  infield_fly_ss: {
+    code: "CIFFSS",
+    group: "Infield – Catching",
+    shortLabel: "IF Fly – SS (3 balls)",
+    displayName: "Infield Fly Balls to SS (CIFFSS)",
+    instructions:
+      "Hit 3 fly balls to SS within a reasonable radius around the player. 0 points for a miss, 2 points for a catch.",
+    inputType: "number",
+    min: 0,
+    max: 6,
+    step: 2,
+    unitHint: "points (0–6)",
+  },
+  infield_fly_3b: {
+    code: "CIFF3B",
+    group: "Infield – Catching",
+    shortLabel: "IF Fly – 3B (3 balls)",
+    displayName: "Infield Fly Balls to 3B (CIFF3B)",
+    instructions:
+      "Hit 3 fly balls to 3B within a reasonable radius around the player. 0 points for a miss, 2 points for a catch.",
+    inputType: "number",
+    min: 0,
+    max: 6,
+    step: 2,
+    unitHint: "points (0–6)",
+  },
+
+  // Infield Line Drives (CLD2B / SS / 3B)
+  infield_ld_2b: {
+    code: "CLD2B",
+    group: "Infield – Catching",
+    shortLabel: "IF Line Drive – 2B",
+    displayName: "Infield Line Drives to 2B (CLD2B)",
+    instructions:
+      "Hit 3 line drives to 2B that require the player to move within a radius around their starting spot. 0 points for a miss, 2 points for a catch. 10U–11U ≈5 ft radius, 12U–14U ≈10 ft, HS–Pro ≈20 ft. Max score 6.",
+    inputType: "number",
+    min: 0,
+    max: 6,
+    step: 2,
+    unitHint: "points (0–6)",
+  },
+  infield_ld_ss: {
+    code: "CLDSS",
+    group: "Infield – Catching",
+    shortLabel: "IF Line Drive – SS",
+    displayName: "Infield Line Drives to SS (CLDSS)",
+    instructions:
+      "Hit 3 line drives to SS inside the target radius. 0 points for a miss, 2 points for a catch.",
+    inputType: "number",
+    min: 0,
+    max: 6,
+    step: 2,
+    unitHint: "points (0–6)",
+  },
+  infield_ld_3b: {
+    code: "CLD3B",
+    group: "Infield – Catching",
+    shortLabel: "IF Line Drive – 3B",
+    displayName: "Infield Line Drives to 3B (CLD3B)",
+    instructions:
+      "Hit 3 line drives to 3B inside the target radius. 0 points for a miss, 2 points for a catch.",
+    inputType: "number",
+    min: 0,
+    max: 6,
+    step: 2,
+    unitHint: "points (0–6)",
+  },
+
+  // SS to 1B time – IFSS1BT
+  ifss1bt_seconds: {
+    code: "IFSS1BT",
+    group: "Infield – Fielding",
+    shortLabel: "SS–1B throw time",
+    displayName: "Infield – SS to 1B Throw Time (IFSS1BT)",
+    instructions:
+      "Hit a ball or use a machine to send a ground ball to the shortstop at the appropriate exit velocity for the level (10U–11U ≈45 mph, 12U–14U ≈55 mph, HS–Pro ≈65 mph). Time from when the ball leaves the bat/machine until it reaches 1B.",
+    inputType: "number",
+    min: 0,
+    max: 10,
+    step: 0.01,
+    unitHint: "seconds",
+    placeholder: "e.g. 3.25",
+  },
+
+  /* ---------------------------------------------------------------------- */
+  /*                             OUTFIELD (10U–Pro)                         */
+  /* ---------------------------------------------------------------------- */
+
+  // Fly ball coverage matrices
+  c20x20m_points: {
+    code: "C20X20M",
+    group: "Outfield",
+    shortLabel: "20×20 OF Matrix",
+    displayName: "20×20 Outfield Fly Ball Matrix",
+    instructions:
+      "Set up about a 20-yard radius around the outfielder and hit 10 fly balls to varied spots in the circle (around 50 yards away). " +
+      "Score each rep: 0 points for a miss, 2 points for a catch. Enter the total score out of 20.",
+    inputType: "number",
+    min: 0,
+    max: 20,
+    step: 1,
+    unitHint: "points (0–20)",
+  },
+
+  c30x30m_points: {
+    code: "C30X30M",
+    group: "Outfield",
+    shortLabel: "30×30 OF Matrix",
+    displayName: "30×30 Outfield Fly Ball Matrix",
+    instructions:
+      "Set up about a 30-yard radius around the outfielder and hit 10 fly balls to varied spots in the coverage area (around 50 yards away). " +
+      "Score each rep: 0 points for a miss, 2 points for a catch. Enter the total score out of 20.",
+    inputType: "number",
+    min: 0,
+    max: 20,
+    step: 1,
+    unitHint: "points (0–20)",
+  },
+
+  // Distance throw accuracy tests
+  throw_80ft_target: {
+    code: "T80FT",
+    group: "Outfield",
+    shortLabel: "80 ft Throw Test",
+    displayName: "80 ft Outfield Throw Accuracy",
+    instructions:
+      "Set up a throwing target 80 ft from the outfielder. The player gets 5 throws and may take a running start as long as they release behind the 80 ft marker. " +
+      "Score each throw: 0 = more than 10 ft short; 1 = lands <10 ft short and misses target; 2 = lands <10 ft short and bounces into the target; " +
+      "3 = lands at/past the target but misses; 4 = hits the target. Enter the total points out of 20.",
+    inputType: "number",
+    min: 0,
+    max: 20,
+    step: 1,
+    unitHint: "points (0–20)",
+  },
+
+  throw_100ft_target: {
+    code: "T100FT",
+    group: "Outfield",
+    shortLabel: "100 ft Throw Test",
+    displayName: "100 ft Outfield Throw Accuracy",
+    instructions:
+      "Set up a throwing target 100 ft from the outfielder. The player gets 5 throws and may take a running start as long as they release behind the 100 ft marker. " +
+      "Score each throw: 0 = more than 10 ft short; 1 = lands <10 ft short and misses target; 2 = lands <10 ft short and bounces into the target; " +
+      "3 = lands at/past the target but misses; 4 = hits the target. Enter the total points out of 20.",
+    inputType: "number",
+    min: 0,
+    max: 20,
+    step: 1,
+    unitHint: "points (0–20)",
+  },
+
+  throw_120ft_target: {
+    code: "T120FT",
+    group: "Outfield",
+    shortLabel: "120 ft Throw Test",
+    displayName: "120 ft Outfield Throw Accuracy",
+    instructions:
+      "Set up a throwing target 120 ft from the outfielder. The player gets 5 throws and may take a running start as long as they release behind the 120 ft marker. " +
+      "Score each throw: 0 = more than 10 ft short; 1 = lands <10 ft short and misses target; 2 = lands <10 ft short and bounces into the target; " +
+      "3 = lands at/past the target but misses; 4 = hits the target. Enter the total points out of 20.",
+    inputType: "number",
+    min: 0,
+    max: 20,
+    step: 1,
+    unitHint: "points (0–20)",
+  },
+
+  // Ground ball to home timed test
+  ofgbht_seconds: {
+    code: "OFGBHT",
+    group: "Outfield",
+    shortLabel: "OF GB → Home Time",
+    displayName: "Outfield Ground Ball to Home – Time",
+    instructions:
+      "Position the outfielder about 180 ft from home plate in left or right field. Hit or machine a ground ball at roughly 60 mph exit velocity. " +
+      "Start the timer when the ball is hit/sent and stop when the ball reaches the area around home plate. Enter the time in seconds to the hundredth.",
+    inputType: "number",
+    min: 0,
+    max: 20,
+    step: 0.01,
+    decimals: 2,
+    unitHint: "seconds",
+    placeholder: "e.g. 6.25",
   },
 
   
