@@ -8,6 +8,7 @@ import type {
   TeamOffenseDrilldown,
 } from "./types";
 
+
 export async function getTeamStatsOverview(
   teamId: string
 ): Promise<TeamStatsOverview> {
@@ -32,13 +33,13 @@ export async function getPlayerStatsOverview(
  */
 export async function getTeamOffenseDrilldown(
   teamId: string
-): Promise<TeamOffenseDrilldown | null> {
-  const res = await api.get<TeamOffenseDrilldown | null>(
-    `/teams/${teamId}/stats/offense`
+): Promise<TeamOffenseDrilldown> {
+  const res = await api.get<TeamOffenseDrilldown>(
+    `/teams/${teamId}/stats/offense-drilldown`
   );
-  // When there is no offense data, the backend will return `null`
-  return res.data ?? null;
+  return res.data;
 }
+
 
 /**
  * Existing backend route: GET /teams/:teamId/trophies

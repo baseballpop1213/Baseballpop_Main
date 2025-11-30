@@ -247,6 +247,61 @@ export interface PlayerMedalsResponse {
   medals: PlayerMedalWithDefinition[];
 }
 
+export type OffenseSubmetricCode =
+  | "offense"
+  | "contact"
+  | "power"
+  | "speed"
+  | "strikechance"; // hitters' StrikeChance (pitchers will use StrikeoutChance later)
+
+export interface OffenseDrilldownMetric {
+  code: OffenseSubmetricCode;
+  label: string;
+  team_average: number | null;
+  player_count: number;
+}
+
+export interface OffenseTestPlayerRow {
+  player_id: string;
+  player_name: string | null;
+  jersey_number: number | null;
+  value: number | null;
+}
+
+export interface OffenseTestBreakdown {
+  id: string;
+  label: string;
+  description?: string | null;
+  submetric: OffenseSubmetricCode;
+  team_average: number | null;
+  player_count: number;
+  per_player: OffenseTestPlayerRow[];
+}
+
+export interface OffenseDrilldownPlayerRow {
+  player_id: string;
+  player_name: string | null;
+  jersey_number: number | null;
+  hitting_score: number | null;
+  contact_score: number | null;
+  power_score: number | null;
+  speed_score: number | null;
+  strike_chance: number | null; // 0–1
+}
+
+export interface TeamOffenseDrilldown {
+  team_id: string;
+  team_name: string | null;
+  metrics: OffenseDrilldownMetric[];
+  players: OffenseDrilldownPlayerRow[];
+  tests_by_metric: {
+    offense?: OffenseTestBreakdown[];
+    contact?: OffenseTestBreakdown[];
+    power?: OffenseTestBreakdown[];
+    speed?: OffenseTestBreakdown[];
+    strikechance?: OffenseTestBreakdown[];
+  };
+}
 
 // You can expand this file as we go:
 // - BattingOrder

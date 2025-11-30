@@ -1902,12 +1902,16 @@ interface PlayerStatsOverview {
 }
 
 interface OffenseDrilldownMetric {
-  // Offense drilldown (hitters) – StrikeChance
   code: "offense" | "contact" | "power" | "speed" | "strikechance";
   label: string;
+  /**
+   * For offense, contact, power, speed:
+   *   - 0–50 score (same scale as BPOP)
+   * For strikeoutchance:
+   *   - stored as a 0–1 fraction (we’ll display as percent on the frontend)
+   */
   team_average: number | null;
 }
-
 
 interface OffenseDrilldownPlayerMetrics {
   player_id: string;
@@ -1917,6 +1921,10 @@ interface OffenseDrilldownPlayerMetrics {
   contact_score: number | null;
   power_score: number | null;
   speed_score: number | null;
+  /**
+   * Value from 0–1 (we display as K% on the frontend; lower is better).
+   * This corresponds to the hitter’s StrikeChance (not the pitcher’s StrikeoutChance).
+   */
   strike_chance: number | null;
 }
 
@@ -1928,6 +1936,7 @@ interface TeamOffenseDrilldown {
   metrics: OffenseDrilldownMetric[];
   players: OffenseDrilldownPlayerMetrics[];
 }
+
 
 
 // ---------------------------------------------------------------------------
@@ -2278,8 +2287,11 @@ async function computeTeamOffenseDrilldown(
       level: (teamRow as any).level ?? null,
       metrics: [],
       players: [],
+      // NEW: required by TeamOffenseDrilldown
+      tests_by_metric: {},
     };
   }
+
 
   // 3) Latest rating per player (no age-group filtering here; we only care about latest)
   type RatingRow = {
@@ -2322,6 +2334,7 @@ async function computeTeamOffenseDrilldown(
       level: (teamRow as any).level ?? null,
       metrics: [],
       players: [],
+      tests_by_metric: {},
     };
   }
 
@@ -2342,6 +2355,7 @@ async function computeTeamOffenseDrilldown(
       level: (teamRow as any).level ?? null,
       metrics: [],
       players: [],
+      tests_by_metric: {},
     };
   }
 
@@ -2420,35 +2434,43 @@ async function computeTeamOffenseDrilldown(
     strikeAvg = Number((total / battingMetrics.length).toFixed(3));
   }
 
+  const playerCount = players.length; // or `players.length` if that’s your array name
+
   const metrics: OffenseDrilldownMetric[] = [
     {
       code: "offense",
       label: "Offense score",
       team_average: offenseAvg,
+      player_count: playerCount,
     },
     {
       code: "contact",
       label: "Contact score",
       team_average: contactAvg,
+      player_count: playerCount,
     },
     {
       code: "power",
       label: "Power score",
       team_average: powerAvg,
+      player_count: playerCount,
     },
     {
       code: "speed",
       label: "Speed score",
       team_average: speedAvg,
+      player_count: playerCount,
     },
     {
       // 🔁 NOTE: offense uses StrikeChance (hitters),
-      // pitching will use StrikeoutChance later.
+      //         pitching section will later add StrikeoutChance for pitchers.
       code: "strikechance",
-      label: "Strikeout chance (K%)",
+      label: "Strikeout chance (hitters)",
       team_average: strikeAvg,
+      player_count: playerCount,
     },
   ];
+
 
   return {
     team_id: teamRow.id,
@@ -2457,6 +2479,7 @@ async function computeTeamOffenseDrilldown(
     level: (teamRow as any).level ?? null,
     metrics,
     players,
+    tests_by_metric: {},
   };
 }
 
@@ -4934,55 +4957,337 @@ function getDefaultBattingOrderConfig(
 
 
 // ratingRow is one row from player_ratings with breakdown json
-function getBattingMetricsFromRating(ratingRow: any): BattingPlayerMetrics | null {
+function getBattingMetricsFromRating(
+  ratingRow: any
+): BattingPlayerMetrics | null {
   const playerId = ratingRow.player_id as string | undefined;
   if (!playerId) return null;
 
   const hittingScoreRaw = ratingRow.offense_score as number | null;
-  const breakdown = (ratingRow.breakdown ?? {}) as any;
 
-  // These keys may need to be tweaked to match your exact breakdown structure.
-  // For now, we look in a few likely places and fall back to offense_score.
-  const contact =
-    breakdown?.hitting?.contact_score ??
+  // Normalize breakdown into a plain object
+  let breakdown: any = ratingRow.breakdown ?? {};
+  if (typeof breakdown === "string") {
+    try {
+      breakdown = JSON.parse(breakdown);
+    } catch {
+      breakdown = {};
+    }
+  }
+
+  const hittingTests =
+    (breakdown?.hitting?.tests as Record<string, any> | undefined) ??
+    (breakdown?.hitting as Record<string, any> | undefined) ??
+    {};
+
+  const athleticTests =
+    (breakdown?.athletic?.tests as Record<string, any> | undefined) ??
+    (breakdown?.athlete?.tests as Record<string, any> | undefined) ??
+    (breakdown?.athletic as Record<string, any> | undefined) ??
+    (breakdown?.athlete as Record<string, any> | undefined) ??
+    {};
+
+  const toNumber = (value: any, fallback: number): number => {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string") {
+      const n = Number(value);
+      if (Number.isFinite(n)) return n;
+    }
+    return fallback;
+  };
+
+  // Contact / power from hitting tests
+  const contactRaw =
+    hittingTests.contact_score ??
     breakdown?.offense?.contact_score ??
-    breakdown?.contact_score ??
-    hittingScoreRaw ??
-    0;
+    breakdown?.contact_score;
 
-  const power =
-    breakdown?.hitting?.power_score ??
+  const powerRaw =
+    hittingTests.power_score ??
     breakdown?.offense?.power_score ??
-    breakdown?.power_score ??
-    hittingScoreRaw ??
-    0;
+    breakdown?.power_score;
 
-  const speed =
-    breakdown?.athletic?.tests?.speed_score ??
+  // Speed from athletic tests (11u+ template has speed_score here)
+  const speedRaw =
+    athleticTests.speed_score ??
+    breakdown?.hitting?.speed_score ??
     breakdown?.athletic?.speed_score ??
-    breakdown?.speed_score ??
     breakdown?.athlete?.speed_score ??
-    breakdown?.running?.speed_score ??
-    0;
+    breakdown?.running?.speed_score;
 
+  const contact = toNumber(contactRaw, hittingScoreRaw ?? 0);
+  const power = toNumber(powerRaw, hittingScoreRaw ?? 0);
+  const speed = toNumber(speedRaw, 0);
 
-  const hittingScore = typeof hittingScoreRaw === "number" ? hittingScoreRaw : 0;
-
-  // Strike chance: (1 - (contactScore/90)), as requested
-  const contactScore = Number(contact) || 0;
-  const powerScore = Number(power) || 0;
-  const speedScore = Number(speed) || 0;
-  const strikeChance = Math.max(0, Math.min(1, 1 - contactScore / 90));
+  // StrikeChance (hitter) = explicit percent if present, else derived from contact
+  const strikeChance =
+    typeof hittingTests.strike_chance_percent === "number"
+      ? hittingTests.strike_chance_percent / 100
+      : Math.max(0, Math.min(1, 1 - contact / 90));
 
   return {
     playerId,
-    hittingScore,
-    contactScore,
-    powerScore,
-    speedScore,
-    strikeChance,
+    hittingScore: toNumber(hittingScoreRaw, 0),
+    contactScore: contact,
+    powerScore: power,
+    speedScore: speed,
+    // keep 0–1, frontend multiplies by 100
+    strikeChance:
+      typeof strikeChance === "number" && Number.isFinite(strikeChance)
+        ? strikeChance
+        : 0,
   };
 }
+
+type OffenseSubmetricCode =
+  | "offense"
+  | "contact"
+  | "power"
+  | "speed"
+  | "strikechance"; // hitter StrikeChance (pitchers will use StrikeoutChance later)
+
+interface OffenseTestDef {
+  id: string; // internal id, e.g. "tee_ld_points"
+  group: OffenseSubmetricCode;
+  from: "hitting" | "athletic";
+  field: string; // property name inside .tests
+  label: string;
+  description?: string;
+}
+
+interface OffenseTestPlayerRow {
+  player_id: string;
+  player_name: string | null;
+  jersey_number: number | null;
+  value: number | null;
+}
+
+interface OffenseTestBreakdown {
+  id: string;
+  label: string;
+  description?: string | null;
+  submetric: OffenseSubmetricCode;
+  team_average: number | null;
+  player_count: number;
+  per_player: OffenseTestPlayerRow[];
+}
+
+interface OffenseDrilldownMetric {
+  code: OffenseSubmetricCode;
+  label: string;
+  team_average: number | null;
+  player_count: number;
+}
+
+interface OffenseDrilldownPlayerRow {
+  player_id: string;
+  player_name: string | null;
+  jersey_number: number | null;
+  hitting_score: number | null;
+  contact_score: number | null;
+  power_score: number | null;
+  speed_score: number | null;
+  strike_chance: number | null; // 0–1
+}
+
+interface TeamOffenseDrilldown {
+  team_id: string;
+  team_name: string | null;
+  metrics: OffenseDrilldownMetric[];
+  players: OffenseDrilldownPlayerRow[];
+  tests_by_metric: {
+    offense?: OffenseTestBreakdown[];
+    contact?: OffenseTestBreakdown[];
+    power?: OffenseTestBreakdown[];
+    speed?: OffenseTestBreakdown[];
+    strikechance?: OffenseTestBreakdown[];
+  };
+}
+
+const OFFENSE_TEST_DEFS: OffenseTestDef[] = [
+  // CONTACT
+  {
+    id: "tee_ld_points",
+    group: "contact",
+    from: "hitting",
+    field: "tee_ld_points",
+    label: "Tee line drive (10 swings) points",
+    description: "Quality of contact on the 10‑swing tee line‑drive test.",
+  },
+  {
+    id: "pitch_points",
+    group: "contact",
+    from: "hitting",
+    field: "pitch_points",
+    label: "Fastball quality (10 pitches) points",
+    description: "Quality of contact vs 10 fastballs in the hitting matrix.",
+  },
+  {
+    id: "curveball_points",
+    group: "contact",
+    from: "hitting",
+    field: "curveball_points",
+    label: "Curveball quality (5 pitches) points",
+    description: "Quality of contact vs breaking balls.",
+  },
+  {
+    id: "varied_speed_points",
+    group: "contact",
+    from: "hitting",
+    field: "varied_speed_points",
+    label: "Varied speed quality (5 pitches) points",
+    description: "Quality of contact vs mixed speeds.",
+  },
+  {
+    id: "contact_raw_points",
+    group: "contact",
+    from: "hitting",
+    field: "contact_raw_points",
+    label: "Contact raw score",
+    description: "Raw contact points across all live‑hitting tests.",
+  },
+
+  // POWER
+  {
+    id: "exit_velo_points",
+    group: "power",
+    from: "hitting",
+    field: "exit_velo_points",
+    label: "Max exit velo points",
+    description: "Rating points from max exit velocity off the tee.",
+  },
+  {
+    id: "bat_speed_points",
+    group: "power",
+    from: "hitting",
+    field: "bat_speed_points",
+    label: "Bat speed points",
+    description: "Rating points from the bat speed sensor.",
+  },
+  {
+    id: "power_raw_points",
+    group: "power",
+    from: "hitting",
+    field: "power_raw_points",
+    label: "Power raw score",
+    description: "Raw power points from bat speed & exit velo.",
+  },
+
+  // SPEED (from athletic block)
+  {
+    id: "run_1b_points",
+    group: "speed",
+    from: "athletic",
+    field: "run_1b_points",
+    label: "Home to 1B points",
+    description: "Speed points for the home‑to‑first sprint.",
+  },
+  {
+    id: "run_4b_points",
+    group: "speed",
+    from: "athletic",
+    field: "run_4b_points",
+    label: "Home to home points",
+    description: "Speed points for the home‑to‑home sprint.",
+  },
+  {
+    id: "speed_points_total",
+    group: "speed",
+    from: "athletic",
+    field: "speed_points_total",
+    label: "Speed raw score",
+    description: "Combined speed points from running tests.",
+  },
+];
+
+function buildOffenseTestBreakdownsForPlayers(
+  players: {
+    player_id: string;
+    player_name: string | null;
+    jersey_number: number | null;
+    ratingRow: any;
+  }[]
+): Record<OffenseSubmetricCode, OffenseTestBreakdown[]> {
+  const result: Record<OffenseSubmetricCode, OffenseTestBreakdown[]> = {
+    offense: [],
+    contact: [],
+    power: [],
+    speed: [],
+    strikechance: [],
+  };
+
+  const isNumber = (v: any): v is number =>
+    typeof v === "number" && Number.isFinite(v);
+
+  const avg = (values: (number | null | undefined)[]): number | null => {
+    const nums = values.filter(isNumber);
+    if (!nums.length) return null;
+    const sum = nums.reduce((acc, v) => acc + v, 0);
+    return sum / nums.length;
+  };
+
+  for (const def of OFFENSE_TEST_DEFS) {
+    const per_player: OffenseTestPlayerRow[] = players.map((p) => {
+      let breakdown: any = p.ratingRow?.breakdown ?? {};
+      if (typeof breakdown === "string") {
+        try {
+          breakdown = JSON.parse(breakdown);
+        } catch {
+          breakdown = {};
+        }
+      }
+
+      const testsSource =
+        def.from === "hitting"
+          ? breakdown?.hitting?.tests ?? breakdown?.hitting ?? {}
+          : breakdown?.athletic?.tests ??
+            breakdown?.athlete?.tests ??
+            breakdown?.athletic ??
+            breakdown?.athlete ??
+            {};
+
+      const raw = testsSource?.[def.field];
+      let value: number | null = null;
+
+      if (typeof raw === "number" && Number.isFinite(raw)) {
+        value = raw;
+      } else if (typeof raw === "string") {
+        const n = Number(raw);
+        value = Number.isFinite(n) ? n : null;
+      }
+
+      return {
+        player_id: p.player_id,
+        player_name: p.player_name,
+        jersey_number: p.jersey_number ?? null,
+        value,
+      };
+    });
+
+    const team_average = avg(per_player.map((row) => row.value));
+    const player_count = per_player.filter((p) => p.value != null).length;
+
+    const breakdown: OffenseTestBreakdown = {
+      id: def.id,
+      label: def.label,
+      description: def.description ?? null,
+      submetric: def.group,
+      team_average,
+      player_count,
+      per_player,
+    };
+
+    result[def.group].push(breakdown);
+  }
+
+  // Sort tests within each submetric by label for stable ordering
+  (Object.keys(result) as OffenseSubmetricCode[]).forEach((metric) => {
+    result[metric].sort((a, b) => a.label.localeCompare(b.label));
+  });
+
+  return result;
+}
+
 
 function computeSlotCompositeScore(
   metrics: BattingPlayerMetrics,
@@ -8458,6 +8763,297 @@ app.post(
     }
   }
 );
+
+app.get(
+  "/teams/:teamId/stats/offense-drilldown",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    const { teamId } = req.params;
+
+    const role = await assertTeamRoleOr403(
+      req,
+      res,
+      teamId,
+      COACH_AND_ASSISTANT
+    );
+    if (!role) return;
+
+    try {
+      const { data: team, error: teamError } = await supabase
+        .from("teams")
+        .select("id, name")
+        .eq("id", teamId)
+        .maybeSingle();
+
+      if (teamError) {
+        console.error("Error loading team for offense drilldown:", teamError);
+        return res.status(500).json({ error: "Failed to load team." });
+      }
+
+      if (!team) {
+        return res
+          .status(404)
+          .json({ error: "Team not found or no offense ratings." });
+      }
+
+      const { data: teamPlayers, error: teamPlayersError } = await supabase
+        .from("team_players")
+        .select("player_id, jersey_number")
+        .eq("team_id", teamId)
+        .eq("status", "active");
+
+      if (teamPlayersError) {
+        console.error(
+          "Error loading team_players for offense drilldown:",
+          teamPlayersError
+        );
+        return res
+          .status(500)
+          .json({ error: "Failed to load team players." });
+      }
+
+      if (!teamPlayers || teamPlayers.length === 0) {
+        const empty: TeamOffenseDrilldown = {
+          team_id: team.id,
+          team_name: team.name,
+          age_group_label: (team as any).age_group_label ?? null,
+          level: (team as any).level ?? null,
+          metrics: [],
+          players: [],
+          tests_by_metric: {},
+          };
+        return res.json(empty);
+      }
+
+      const playerIds = teamPlayers.map((tp) => tp.player_id);
+
+      const { data: profiles, error: profilesError } = await supabase
+        .from("profiles")
+        .select("id, display_name, first_name, last_name")
+        .in("id", playerIds);
+
+      if (profilesError) {
+        console.error(
+          "Error loading profiles for offense drilldown:",
+          profilesError
+        );
+        return res.status(500).json({ error: "Failed to load players." });
+      }
+
+      const nameById = new Map<string, string>();
+      profiles?.forEach((p: any) => {
+        const fullName = [p.first_name, p.last_name]
+          .filter(Boolean)
+          .join(" ")
+          .trim();
+        nameById.set(
+          p.id,
+          p.display_name || fullName || "Player"
+        );
+      });
+
+      const { data: ratings, error: ratingsError } = await supabase
+        .from("player_ratings")
+        .select("id, player_id, offense_score, breakdown, created_at, team_id")
+        .eq("team_id", teamId)
+        .in("player_id", playerIds);
+
+      if (ratingsError) {
+        console.error(
+          "Error loading player_ratings for offense drilldown:",
+          ratingsError
+        );
+        return res.status(500).json({ error: "Failed to load ratings." });
+      }
+
+      if (!ratings || ratings.length === 0) {
+        const empty: TeamOffenseDrilldown = {
+          team_id: team.id,
+          team_name: team.name,
+          age_group_label: (team as any).age_group_label ?? null,
+          level: (team as any).level ?? null,
+          metrics: [],
+          players: [],
+          tests_by_metric: {},
+        };
+        return res.json(empty);
+      }
+
+
+      // Latest rating per player
+      const latestByPlayer = new Map<string, any>();
+      for (const row of ratings) {
+        const pid = row.player_id as string;
+        const existing = latestByPlayer.get(pid);
+        if (!existing) {
+          latestByPlayer.set(pid, row);
+          continue;
+        }
+        const existingTime = new Date(existing.created_at).getTime();
+        const thisTime = new Date(row.created_at).getTime();
+        if (thisTime > existingTime) {
+          latestByPlayer.set(pid, row);
+        }
+      }
+
+      const playersWithRatings: {
+        player_id: string;
+        player_name: string | null;
+        jersey_number: number | null;
+        ratingRow: any;
+        metrics: BattingPlayerMetrics;
+      }[] = [];
+
+      for (const [playerId, ratingRow] of latestByPlayer.entries()) {
+        const metrics = getBattingMetricsFromRating(ratingRow);
+        if (!metrics) continue;
+
+        const teamPlayer = teamPlayers.find((tp) => tp.player_id === playerId);
+        playersWithRatings.push({
+          player_id: playerId,
+          player_name: nameById.get(playerId) ?? null,
+          jersey_number: teamPlayer?.jersey_number ?? null,
+          ratingRow,
+          metrics,
+        });
+      }
+
+      if (!playersWithRatings.length) {
+        const empty: TeamOffenseDrilldown = {
+          team_id: team.id,
+          team_name: team.name,
+          age_group_label: (team as any).age_group_label ?? null,
+          level: (team as any).level ?? null,
+          metrics: [],
+          players: [],
+          tests_by_metric: {},
+        };
+        return res.json(empty);
+      }
+
+
+
+      const isNumber = (v: any): v is number =>
+        typeof v === "number" && Number.isFinite(v);
+
+      const avg = (values: (number | null | undefined)[]): number | null => {
+        const nums = values.filter(isNumber);
+        if (!nums.length) return null;
+        const sum = nums.reduce((acc, v) => acc + v, 0);
+        return sum / nums.length;
+      };
+
+      const metrics: OffenseDrilldownMetric[] = [
+        {
+          code: "offense",
+          label: "Offense",
+          team_average: avg(
+            playersWithRatings.map((p) => p.metrics.hittingScore)
+          ),
+          player_count: playersWithRatings.length,
+        },
+        {
+          code: "contact",
+          label: "Contact score",
+          team_average: avg(
+            playersWithRatings.map((p) => p.metrics.contactScore)
+          ),
+          player_count: playersWithRatings.filter((p) =>
+            isNumber(p.metrics.contactScore)
+          ).length,
+        },
+        {
+          code: "power",
+          label: "Power score",
+          team_average: avg(
+            playersWithRatings.map((p) => p.metrics.powerScore)
+          ),
+          player_count: playersWithRatings.filter((p) =>
+            isNumber(p.metrics.powerScore)
+          ).length,
+        },
+        {
+          code: "speed",
+          label: "Speed score",
+          team_average: avg(
+            playersWithRatings.map((p) => p.metrics.speedScore)
+          ),
+          player_count: playersWithRatings.filter((p) =>
+            isNumber(p.metrics.speedScore)
+          ).length,
+        },
+        {
+          code: "strikechance",
+          label: "Strikeout chance (lower is better)",
+          team_average: avg(
+            playersWithRatings.map((p) =>
+              isNumber(p.metrics.strikeChance)
+                ? p.metrics.strikeChance * 100
+                : null
+            )
+          ),
+          player_count: playersWithRatings.filter((p) =>
+            isNumber(p.metrics.strikeChance)
+          ).length,
+        },
+      ];
+
+      // Sort players by offense/hitting score, leaderboard style
+      playersWithRatings.sort(
+        (a, b) =>
+          (b.metrics.hittingScore ?? 0) - (a.metrics.hittingScore ?? 0)
+      );
+
+      const players: OffenseDrilldownPlayerRow[] = playersWithRatings.map(
+        (p) => ({
+          player_id: p.player_id,
+          player_name: p.player_name,
+          jersey_number: p.jersey_number,
+          hitting_score: isNumber(p.metrics.hittingScore)
+            ? p.metrics.hittingScore
+            : null,
+          contact_score: isNumber(p.metrics.contactScore)
+            ? p.metrics.contactScore
+            : null,
+          power_score: isNumber(p.metrics.powerScore)
+            ? p.metrics.powerScore
+            : null,
+          speed_score: isNumber(p.metrics.speedScore)
+            ? p.metrics.speedScore
+            : null,
+          // keep StrikeChance as 0–1; frontend multiplies by 100
+          strike_chance: isNumber(p.metrics.strikeChance)
+            ? p.metrics.strikeChance
+            : null,
+        })
+      );
+
+      const tests_by_metric = buildOffenseTestBreakdownsForPlayers(
+        playersWithRatings
+      );
+
+      const payload: TeamOffenseDrilldown = {
+        team_id: team.id,
+        team_name: team.name,
+        age_group_label: (team as any).age_group_label ?? null,
+        level: (team as any).level ?? null,
+        metrics,
+        players,
+        tests_by_metric,
+      };
+      return res.json(payload);
+
+
+      return res.json(payload);
+    } catch (err) {
+      console.error("Unexpected error in offense drilldown:", err);
+      return res
+        .status(500)
+        .json({ error: "Failed to load team offense breakdown." });
+    }
+  }
+);
+
 
 app.post(
   "/teams/:teamId/trophies/recalculate",
