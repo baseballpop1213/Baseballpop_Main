@@ -1,9 +1,8 @@
 // src/api/types.ts
-
-export type Role = "coach" | "player" | "parent" | "assistant";
+export type Role = "coach" | "player" | "parent" | "assistant" | "admin";
 
 export interface Profile {
-  id: string;               // uuid from profiles.id
+  id: string; // uuid from profiles.id
   role: Role;
   display_name: string | null;
   first_name: string | null;
@@ -27,19 +26,19 @@ export interface TeamWithRole {
 }
 
 export interface Team {
-  id: string;               // uuid from teams.id
+  id: string; // uuid from teams.id
   name: string;
-  age_group: string;        // enum in DB, treat as string here (e.g. "10U")
-  level: string;            // enum in DB, treat as string (e.g. "MAJORS_TRAVEL")
+  age_group: string; // enum in DB, treat as string here (e.g. "10U")
+  level: string; // enum in DB, treat as string (e.g. "MAJORS_TRAVEL")
   logo_url: string | null;
   motto: string | null;
 }
 
 export interface TeamPlayer {
-  id: string;               // team_players.id (uuid)
+  id: string; // team_players.id (uuid)
   team_id: string;
   player_id: string;
-  status: string;           // enum in DB
+  status: string; // enum in DB
   jersey_number: number | null;
   is_primary_team?: boolean | null;
   created_at?: string;
@@ -56,6 +55,29 @@ export interface PlayerRating {
   offense_score: number | null;
   defense_score: number | null;
   pitching_score: number | null;
+  /**
+   * JSON breakdown from the rating engine.
+   * Example shape (partial):
+   * {
+   *   "hitting": {
+   *     "tests": {
+   *       "contact_score": number | null,
+   *       "power_score": number | null,
+   *       "strike_chance_percent": number | null,
+   *       ...
+   *     },
+   *     "max_points": number,
+   *     "total_points": number | null
+   *   },
+   *   "athletic": {
+   *     "tests": {
+   *       "speed_score": number | null,
+   *       ...
+   *     },
+   *     ...
+   *   }
+   * }
+   */
   breakdown: Record<string, unknown>;
   created_at: string;
 }
@@ -75,6 +97,156 @@ export interface TeamTrophy {
   team_id: string;
   awarded_at: string;
 }
+
+// --- Stats / ratings shared types ------------------------------
+
+export type CoreMetricCode =
+  | "bpoprating"
+  | "offense"
+  | "defense"
+  | "pitching"
+  | "athletic";
+
+export type TrophyTier = "bronze" | "silver" | "gold" | "platinum";
+
+export interface StatsMetricSummary {
+  code: CoreMetricCode;
+  /**
+   * Human label for display (“Offense Score”, etc.)
+   */
+  label: string;
+  /**
+   * Score on a 0–50 scale (team average for teams, personal for players).
+   */
+  score: number | null;
+  /**
+   * Percent on a 0–100 scale (normalized metric percent).
+   */
+  percent: number | null;
+  /**
+   * Number of underlying samples:
+   * - Team: players contributing to this metric
+   * - Player: 1 (or 0 if no data)
+   */
+  sample_size: number;
+}
+
+/**
+ * Team-level stats overview used on the Stats page (coach/admin view).
+ */
+export interface TeamStatsOverview {
+  team_id: string;
+  team_name: string | null;
+  age_group_label: string | null;
+  level: string | null;
+  metrics: StatsMetricSummary[];
+}
+
+/**
+ * Player-level stats overview used on the Stats page (player view).
+ */
+export interface PlayerStatsOverview {
+  player_id: string;
+  team_id: string | null;
+  age_group_label: string | null;
+  latest_assessment_id: number | null;
+  metrics: StatsMetricSummary[];
+}
+
+// --- Offense drilldown (Stats page Block 2A) -------------------
+
+export type OffenseSubMetricCode =
+  | "offense"
+  | "contact"
+  | "power"
+  | "speed"
+  | "strikechance";
+
+export interface OffenseDrilldownMetric {
+  code: OffenseSubMetricCode;
+  label: string;
+  team_average: number | null;
+}
+
+export interface OffenseDrilldownPlayerMetrics {
+  player_id: string;
+  player_name: string | null;
+  jersey_number: number | null;
+  hitting_score: number | null;
+  contact_score: number | null;
+  power_score: number | null;
+  speed_score: number | null;
+  /**
+   * Value from 0–1 (we'll display as a % on the frontend).
+   */
+  strike_chance: number | null;
+}
+
+export interface TeamOffenseDrilldown {
+  team_id: string;
+  team_name: string | null;
+  age_group_label: string | null;
+  level: string | null;
+  metrics: OffenseDrilldownMetric[];
+  players: OffenseDrilldownPlayerMetrics[];
+}
+
+/**
+ * Shape of a single team trophy as returned from /teams/:teamId/trophies.
+ * (Mirrors the backend TrophySummary type.)
+ */
+export interface TeamTrophyWithDefinition {
+  id: number;
+  trophy_id: number;
+  team_id: string;
+  awarded_at: string | null;
+  definition: {
+    id: number;
+    metric_code: string | null;
+    tier: TrophyTier;
+    name: string;
+    description: string | null;
+    icon_url: string | null;
+    age_group_label: string | null;
+  } | null;
+}
+
+/**
+ * Response from GET /teams/:teamId/trophies.
+ */
+export interface TeamTrophiesResponse {
+  team_id: string;
+  trophies: TeamTrophyWithDefinition[];
+}
+
+/**
+ * Shape of a player medal row as returned from /players/:playerId/medals.
+ * (We’ll lean on this more in Block 2.)
+ */
+export interface PlayerMedalWithDefinition {
+  id: number;
+  medal_id: number;
+  player_id: string;
+  player_assessment_id: number | null;
+  is_official: boolean;
+  awarded_at: string | null;
+  definition: {
+    id: number;
+    metric_code: string | null;
+    tier: TrophyTier;
+    name: string;
+    description: string | null;
+    icon_url: string | null;
+    age_group_label: string | null;
+    min_percent: number | null;
+  } | null;
+}
+
+export interface PlayerMedalsResponse {
+  player_id: string;
+  medals: PlayerMedalWithDefinition[];
+}
+
 
 // You can expand this file as we go:
 // - BattingOrder

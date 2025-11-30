@@ -679,41 +679,56 @@ export default function AssessmentSessionPage() {
     [groupedMetrics]
   );
   
-  // For Athletic Skills, Hitting, and First Base, show only the metrics for the active block/tab
+  // For Athletic Skills, Hitting, First Base, and Infield, show only the metrics
+  // for the active block/tab, while keeping all other eval types unchanged.
   const visibleGroupedMetrics = useMemo(() => {
+    // Clone so we can mutate safely
     let groups = groupedMetrics.map((g) => ({
       ...g,
       metrics: [...g.metrics],
     }));
 
+    // -------------------------------
+    // ATHLETIC SKILLS
+    // -------------------------------
     if (effectiveEvalType === "athletic") {
-      // For Athletic Skills, hide BASEDIST helper metrics and only show the active block
-      const speedKeys = new Set([
-        "m_10_30yd_dash",
-        "m_10_60yd_dash",
-        "m_10_home_to_1st",
+      // Metric keys used in each athletic block
+      const speedKeys = new Set<string>([
+        "timed_run_1b",
+        "timed_run_4b",
       ]);
 
-      const strengthKeys = new Set([
+      const strengthKeys = new Set<string>([
         "apush_60",
         "asit_60",
         "apush_30",
         "asit_30",
       ]);
 
-      const powerKeys = new Set([
-        "bs_swing_velocity",
-        "bs_medball_put",
-        "bs_medball_throw",
+      const powerKeys = new Set<string>([
+        "asp_jump_inches",
+        "aspscp_distance_ft",
+        "aspsup_distance_ft",
       ]);
 
-      const mobilityKeys = new Set([
-        "msr1",
-        "msr2",
-        "msr3",
+      const balanceKeys = new Set<string>([
+        "sls_eyes_open_right",
+        "sls_eyes_open_left",
+        "sls_eyes_closed_right",
+        "sls_eyes_closed_left",
+      ]);
+
+      const mobilityKeys = new Set<string>([
+        "msr_right",
+        "msr_left",
+        "toe_touch",
         "deep_squat",
-        "single_leg_squat_left",
-        "single_leg_squat_right",
+      ]);
+
+      // Helper metrics we don't want to show in the grid (hidden, driven by base_path, etc.)
+      const helperKeysToHide = new Set<string>([
+        "timed_run_1b_distance_ft",
+        "timed_run_4b_distance_ft",
       ]);
 
       groups = groups
@@ -722,26 +737,26 @@ export default function AssessmentSessionPage() {
             const metricKey = (m as any).metric_key as string | undefined;
             if (!metricKey) return true;
 
-            // Drop "BASEDIST" helper metrics from the UI
-            if (metricKey.toLowerCase().includes("basedist")) {
+            // Hide helper / behind‑the‑scenes metrics
+            if (helperKeysToHide.has(metricKey)) {
               return false;
             }
 
-            if (activeAthleticBlock === "speed") {
-              return speedKeys.has(metricKey);
+            // Show only metrics for the active Athletic section
+            switch (activeAthleticBlock) {
+              case "speed":
+                return speedKeys.has(metricKey);
+              case "strength":
+                return strengthKeys.has(metricKey);
+              case "power":
+                return powerKeys.has(metricKey);
+              case "balance":
+                return balanceKeys.has(metricKey);
+              case "mobility":
+                return mobilityKeys.has(metricKey);
+              default:
+                return true;
             }
-            if (activeAthleticBlock === "strength") {
-              return strengthKeys.has(metricKey);
-            }
-            if (activeAthleticBlock === "power") {
-              return powerKeys.has(metricKey);
-            }
-            if (activeAthleticBlock === "mobility") {
-              return mobilityKeys.has(metricKey);
-            }
-
-            // Fallback: include anything else
-            return true;
           });
 
           return {
@@ -750,8 +765,14 @@ export default function AssessmentSessionPage() {
           };
         })
         .filter((g) => g.metrics.length > 0);
-    } else if (effectiveEvalType === "hitting") {
-      // For Hitting, split metrics into Tee Work vs Live Pitching
+
+      return groups;
+    }
+
+    // -------------------------------
+    // HITTING – Tee vs Live tabs
+    // -------------------------------
+    if (effectiveEvalType === "hitting") {
       groups = groups
         .map((group) => {
           const isHittingGroupLocal =
@@ -765,7 +786,7 @@ export default function AssessmentSessionPage() {
             const inTee = HITTING_TEE_METRIC_KEYS.has(metricKey);
             const inLive = HITTING_LIVE_METRIC_KEYS.has(metricKey);
 
-            // If we haven't explicitly categorized the metric, show it on both tabs
+            // If we haven't explicitly categorized the metric, show on both tabs
             if (!inTee && !inLive) {
               return true;
             }
@@ -779,8 +800,14 @@ export default function AssessmentSessionPage() {
           };
         })
         .filter((g) => g.metrics.length > 0);
-    } else if (effectiveEvalType === "firstbase" && hasFirstBaseFieldingGroup) {
-      // For First Base evals that actually have Fielding metrics, split into "Catching" and "Fielding" tabs
+
+      return groups;
+    }
+
+    // -------------------------------
+    // FIRST BASE – Catching vs Fielding tabs
+    // -------------------------------
+    if (effectiveEvalType === "firstbase" && hasFirstBaseFieldingGroup) {
       const allowedLabels =
         activeFirstBaseSection === "catching"
           ? ["First Base – Catching"]
@@ -791,18 +818,29 @@ export default function AssessmentSessionPage() {
       groups = groups.filter((g) =>
         allowedLower.includes(g.label.toLowerCase())
       );
-    } else if (effectiveEvalType === "infield" && hasInfieldFieldingGroup) {
+
+      return groups;
+    }
+
+    // -------------------------------
+    // INFIELD – Fielding vs Catching tabs
+    // -------------------------------
+    if (effectiveEvalType === "infield" && hasInfieldFieldingGroup) {
       const allowedLabels =
         activeInfieldSection === "fielding"
           ? ["Infield – Fielding"]
           : ["Infield – Catching"];
 
       const allowedLower = allowedLabels.map((s) => s.toLowerCase());
+
       groups = groups.filter((g) =>
         allowedLower.includes(g.label.toLowerCase())
       );
+
+      return groups;
     }
 
+    // Any other eval type → show all groups as‑is
     return groups;
   }, [
     groupedMetrics,
@@ -815,6 +853,8 @@ export default function AssessmentSessionPage() {
     hasInfieldFieldingGroup,
   ]);
 
+
+  
 
   // Overall progress: how many metrics have at least one value for any player
   const metricsCompletion = useMemo(() => {

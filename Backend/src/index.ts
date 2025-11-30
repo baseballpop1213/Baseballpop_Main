@@ -100,6 +100,17 @@ function normalizeTrophyMetricCode(raw: string | null | undefined): string | nul
   return c;
 }
 
+// Helper to safely parse numeric scores that might be strings/null
+function parseScore(raw: any): number | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === "number") {
+    return Number.isFinite(raw) ? raw : null;
+  }
+  const n = Number.parseFloat(String(raw));
+  return Number.isFinite(n) ? n : null;
+}
+
+
 async function getMedalDefinitionsForAge(ageLabel: string): Promise<MedalDefinitionRow[]> {
   if (medalDefsCache.has(ageLabel)) {
     return medalDefsCache.get(ageLabel)!;
@@ -1858,6 +1869,709 @@ function ratioToScore(numerator: number, denominator: number): number {
   const ratio = Math.max(0, Math.min(1, numerator / denominator));
   return Math.round(ratio * 50 * 10) / 10; // 0–50, 1 decimal
 }
+
+type CoreMetricCode =
+  | "bpoprating"
+  | "offense"
+  | "defense"
+  | "pitching"
+  | "athletic";
+
+interface StatsMetricSummary {
+  code: CoreMetricCode;
+  label: string;
+  score: number | null; // 0–50 team avg
+  percent: number | null; // 0–100 team avg percent
+  sample_size: number; // players contributing
+}
+
+interface TeamStatsOverview {
+  team_id: string;
+  team_name: string | null;
+  age_group_label: string | null;
+  level: string | null;
+  metrics: StatsMetricSummary[];
+}
+
+interface PlayerStatsOverview {
+  player_id: string;
+  team_id: string | null;
+  age_group_label: string | null;
+  latest_assessment_id: number | null;
+  metrics: StatsMetricSummary[];
+}
+
+interface OffenseDrilldownMetric {
+  // Offense drilldown (hitters) – StrikeChance
+  code: "offense" | "contact" | "power" | "speed" | "strikechance";
+  label: string;
+  team_average: number | null;
+}
+
+
+interface OffenseDrilldownPlayerMetrics {
+  player_id: string;
+  player_name: string | null;
+  jersey_number: number | null;
+  hitting_score: number | null;
+  contact_score: number | null;
+  power_score: number | null;
+  speed_score: number | null;
+  strike_chance: number | null;
+}
+
+interface TeamOffenseDrilldown {
+  team_id: string;
+  team_name: string | null;
+  age_group_label: string | null;
+  level: string | null;
+  metrics: OffenseDrilldownMetric[];
+  players: OffenseDrilldownPlayerMetrics[];
+}
+
+
+// ---------------------------------------------------------------------------
+// Team stats overview (for StatsPage)
+// ---------------------------------------------------------------------------
+
+async function computeTeamStatsOverview(
+  teamId: string
+): Promise<TeamStatsOverview | null> {
+  // 1) Load the team – use age_group and alias it to age_group_label so
+  //    we don't rely on a non-existent age_group_label column.
+  const { data: teamRow, error: teamErr } = await supabase
+    .from("teams")
+    .select("id, name, age_group_label:age_group, level")
+    .eq("id", teamId)
+    .maybeSingle();
+
+  if (teamErr) {
+    console.error("Error fetching team for stats overview:", teamErr);
+    return null;
+  }
+  if (!teamRow) {
+    return null;
+  }
+
+  // 2) Load all ratings for this team
+  const { data: ratingRows, error: ratingErr } = await supabase
+    .from("player_ratings")
+    .select(
+      `
+      id,
+      player_id,
+      age_group_id,
+      overall_score,
+      offense_score,
+      defense_score,
+      pitching_score,
+      created_at,
+      breakdown
+    `
+    )
+    .eq("team_id", teamId)
+    .order("created_at", { ascending: false });
+
+  if (ratingErr) {
+    console.error("Error fetching player_ratings for team stats:", ratingErr);
+    return null;
+  }
+
+  if (!ratingRows || ratingRows.length === 0) {
+    // No ratings yet – return an empty metrics array so the frontend can
+    // render a "no data" state rather than blowing up.
+    return {
+      team_id: teamRow.id,
+      team_name: teamRow.name ?? null,
+      age_group_label: (teamRow as any).age_group_label ?? null,
+      level: (teamRow as any).level ?? null,
+      metrics: [],
+    };
+  }
+
+  // 3) Optionally filter to a single age_group_id if present on the rows.
+  //    (We no longer depend on a team-level age_group_id column.)
+  let filteredRows = ratingRows as any[];
+
+  const distinctAgeGroupIds = Array.from(
+    new Set(
+      filteredRows
+        .map((r) => r.age_group_id)
+        .filter((v) => v !== null && v !== undefined)
+        .map((v) => String(v))
+    )
+  );
+
+  const ageGroupId =
+    distinctAgeGroupIds.length === 1 ? distinctAgeGroupIds[0] : null;
+
+  if (ageGroupId) {
+    filteredRows = filteredRows.filter(
+      (row) => String(row.age_group_id) === ageGroupId
+    );
+  }
+
+  if (!filteredRows.length) {
+    return {
+      team_id: teamRow.id,
+      team_name: teamRow.name ?? null,
+      age_group_label: (teamRow as any).age_group_label ?? null,
+      level: (teamRow as any).level ?? null,
+      metrics: [],
+    };
+  }
+
+  // 4) For each player, keep only their latest rating row
+  type RatingRow = {
+    id: number;
+    player_id: string;
+    age_group_id: number | string | null;
+    overall_score: string | number | null;
+    offense_score: string | number | null;
+    defense_score: string | number | null;
+    pitching_score: string | number | null;
+    created_at: string | null;
+    breakdown: any;
+  };
+
+  const latestByPlayer = new Map<string, RatingRow>();
+
+  for (const row of filteredRows as RatingRow[]) {
+    const playerId = row.player_id;
+    const existing = latestByPlayer.get(playerId);
+
+    if (!existing) {
+      latestByPlayer.set(playerId, row);
+      continue;
+    }
+
+    const existingTime = existing.created_at
+      ? new Date(existing.created_at).getTime()
+      : 0;
+    const rowTime = row.created_at ? new Date(row.created_at).getTime() : 0;
+
+    if (rowTime > existingTime) {
+      latestByPlayer.set(playerId, row);
+    }
+  }
+
+  if (latestByPlayer.size === 0) {
+    return {
+      team_id: teamRow.id,
+      team_name: teamRow.name ?? null,
+      age_group_label: (teamRow as any).age_group_label ?? null,
+      level: (teamRow as any).level ?? null,
+      metrics: [],
+    };
+  }
+
+  // 5) Build metrics (BPOP rating + offense/defense/pitching/athletic)
+
+  const rows = Array.from(latestByPlayer.values());
+
+  const metricDefs: { code: CoreMetricCode; label: string }[] = [
+    { code: "bpoprating", label: "BPOP Rating" },
+    { code: "offense", label: "Offense" },
+    { code: "defense", label: "Defense" },
+    { code: "pitching", label: "Pitching" },
+    { code: "athletic", label: "Athletic" },
+  ];
+
+  const metrics: StatsMetricSummary[] = metricDefs.map((def) => {
+    let values: number[] = [];
+    let percents: (number | null)[] = [];
+
+    const ratingLikeRows: RatingResult[] = rows.map((row) => ({
+      age_group_id: row.age_group_id,
+      overall_score: parseScore(row.overall_score),
+      offense_score: parseScore(row.offense_score),
+      defense_score: parseScore(row.defense_score),
+      pitching_score: parseScore(row.pitching_score),
+      breakdown: row.breakdown || null,
+    }));
+
+    switch (def.code) {
+      case "bpoprating": {
+        values = ratingLikeRows
+          .map((r) => r.overall_score)
+          .filter((v): v is number => v != null && !Number.isNaN(v));
+
+        const avgScore = averageNonNull(values);
+        const percent =
+          avgScore != null ? Math.round((avgScore / 50) * 100) : null;
+
+        return {
+          code: def.code,
+          label: def.label,
+          score: avgScore != null ? Number(avgScore.toFixed(1)) : null,
+          percent,
+          sample_size: values.length,
+        };
+      }
+
+      case "offense": {
+        const offenseScores = ratingLikeRows
+          .map((r) => r.offense_score)
+          .filter((v): v is number => v != null && !Number.isNaN(v));
+
+        const avgScore = averageNonNull(offenseScores);
+
+        const offensePercents = ratingLikeRows.map((r) =>
+          getMetricPercentFromRatings("offense", r)
+        );
+        const avgPercent = averageNonNull(
+          offensePercents.filter(
+            (p): p is number => p != null && !Number.isNaN(p)
+          )
+        );
+
+        return {
+          code: def.code,
+          label: def.label,
+          score: avgScore != null ? Number(avgScore.toFixed(1)) : null,
+          percent: avgPercent != null ? Math.round(avgPercent) : null,
+          sample_size: offenseScores.length,
+        };
+      }
+
+      case "defense": {
+        const defenseScores = ratingLikeRows
+          .map((r) => r.defense_score)
+          .filter((v): v is number => v != null && !Number.isNaN(v));
+
+        const avgScore = averageNonNull(defenseScores);
+
+        const defensePercents = ratingLikeRows.map((r) =>
+          getMetricPercentFromRatings("defense", r)
+        );
+        const avgPercent = averageNonNull(
+          defensePercents.filter(
+            (p): p is number => p != null && !Number.isNaN(p)
+          )
+        );
+
+        return {
+          code: def.code,
+          label: def.label,
+          score: avgScore != null ? Number(avgScore.toFixed(1)) : null,
+          percent: avgPercent != null ? Math.round(avgPercent) : null,
+          sample_size: defenseScores.length,
+        };
+      }
+
+      case "pitching": {
+        const pitchingScores = ratingLikeRows
+          .map((r) => r.pitching_score)
+          .filter((v): v is number => v != null && !Number.isNaN(v));
+
+        const avgScore = averageNonNull(pitchingScores);
+
+        const pitchingPercents = ratingLikeRows.map((r) =>
+          getMetricPercentFromRatings("pitching", r)
+        );
+        const avgPercent = averageNonNull(
+          pitchingPercents.filter(
+            (p): p is number => p != null && !Number.isNaN(p)
+          )
+        );
+
+        return {
+          code: def.code,
+          label: def.label,
+          score: avgScore != null ? Number(avgScore.toFixed(1)) : null,
+          percent: avgPercent != null ? Math.round(avgPercent) : null,
+          sample_size: pitchingScores.length,
+        };
+      }
+
+      case "athletic": {
+        const athleticPercents = ratingLikeRows.map((r) =>
+          getMetricPercentFromRatings("athletic", r)
+        );
+
+        const avgPercent = averageNonNull(
+          athleticPercents.filter(
+            (p): p is number => p != null && !Number.isNaN(p)
+          )
+        );
+
+        const avgScore =
+          avgPercent != null ? (avgPercent / 100) * 50 : null;
+
+        return {
+          code: def.code,
+          label: def.label,
+          score: avgScore != null ? Number(avgScore.toFixed(1)) : null,
+          percent: avgPercent != null ? Math.round(avgPercent) : null,
+          sample_size: athleticPercents.filter(
+            (p): p is number => p != null && !Number.isNaN(p)
+          ).length,
+        };
+      }
+
+      default:
+        return {
+          code: def.code,
+          label: def.label,
+          score: null,
+          percent: null,
+          sample_size: 0,
+        };
+    }
+  });
+
+  return {
+    team_id: teamRow.id,
+    team_name: teamRow.name ?? null,
+    age_group_label: (teamRow as any).age_group_label ?? null,
+    level: (teamRow as any).level ?? null,
+    metrics,
+  };
+}
+
+async function computeTeamOffenseDrilldown(
+  teamId: string
+): Promise<TeamOffenseDrilldown | null> {
+  // 1) Load team for name / age / level
+  const { data: teamRow, error: teamError } = await supabase
+    .from("teams")
+    // NOTE: age_group_label is an alias of the existing age_group column.
+    .select("id, name, age_group_label:age_group, level")
+    .eq("id", teamId)
+    .maybeSingle();
+
+  if (teamError) {
+    console.error(
+      "computeTeamOffenseDrilldown: error loading team:",
+      teamError
+    );
+    return null;
+  }
+
+  if (!teamRow) {
+    return null;
+  }
+
+  // 2) Load all player_ratings rows for this team (we'll pick latest per player)
+  const { data: ratingRows, error: ratingsError } = await supabase
+    .from("player_ratings")
+    .select(
+      "id, player_id, team_id, age_group_id, assessment_id, created_at, offense_score, breakdown"
+    )
+    .eq("team_id", teamId)
+    .order("created_at", { ascending: false });
+
+  if (ratingsError) {
+    console.error(
+      "computeTeamOffenseDrilldown: error loading player_ratings:",
+      ratingsError
+    );
+    return null;
+  }
+
+  // If literally no ratings, return an empty-but-valid payload
+  if (!ratingRows || ratingRows.length === 0) {
+    return {
+      team_id: teamRow.id,
+      team_name: teamRow.name ?? null,
+      age_group_label: (teamRow as any).age_group_label ?? null,
+      level: (teamRow as any).level ?? null,
+      metrics: [],
+      players: [],
+    };
+  }
+
+  // 3) Latest rating per player (no age-group filtering here; we only care about latest)
+  type RatingRow = {
+    id: number;
+    player_id: string | null;
+    created_at: string | null;
+    offense_score: number | null;
+    breakdown: any;
+  };
+
+  const latestByPlayer = new Map<string, RatingRow>();
+
+  for (const raw of ratingRows as RatingRow[]) {
+    const playerId = raw.player_id;
+    if (!playerId) continue;
+
+    const existing = latestByPlayer.get(playerId);
+    if (!existing) {
+      latestByPlayer.set(playerId, raw);
+      continue;
+    }
+
+    const existingCreated = existing.created_at
+      ? new Date(existing.created_at).getTime()
+      : 0;
+    const rowCreated = raw.created_at
+      ? new Date(raw.created_at).getTime()
+      : 0;
+
+    if (rowCreated > existingCreated) {
+      latestByPlayer.set(playerId, raw);
+    }
+  }
+
+  if (!latestByPlayer.size) {
+    return {
+      team_id: teamRow.id,
+      team_name: teamRow.name ?? null,
+      age_group_label: (teamRow as any).age_group_label ?? null,
+      level: (teamRow as any).level ?? null,
+      metrics: [],
+      players: [],
+    };
+  }
+
+  // 4) Convert ratings → batting metrics
+  const battingMetrics: BattingPlayerMetrics[] = [];
+  for (const ratingRow of latestByPlayer.values()) {
+    const metrics = getBattingMetricsFromRating(ratingRow);
+    if (metrics) {
+      battingMetrics.push(metrics);
+    }
+  }
+
+  if (!battingMetrics.length) {
+    return {
+      team_id: teamRow.id,
+      team_name: teamRow.name ?? null,
+      age_group_label: (teamRow as any).age_group_label ?? null,
+      level: (teamRow as any).level ?? null,
+      metrics: [],
+      players: [],
+    };
+  }
+
+  // 5) Load player names / jersey numbers for the players we actually have metrics for
+  const playerIds = Array.from(
+    new Set(battingMetrics.map((m) => m.playerId).filter(Boolean))
+  );
+
+  let jerseyByPlayer: Record<string, number | null> = {};
+  let nameByPlayer: Record<string, string | null> = {};
+
+  if (playerIds.length > 0) {
+    const { data: playerRows, error: playersError } = await supabase
+      .from("players")
+      .select("id, full_name, jersey_number")
+      .in("id", playerIds);
+
+    if (playersError) {
+      console.error(
+        "computeTeamOffenseDrilldown: error loading players:",
+        playersError
+      );
+    } else if (playerRows) {
+      for (const row of playerRows) {
+        const pid = row.id as string;
+        jerseyByPlayer[pid] =
+          row.jersey_number != null ? Number(row.jersey_number) : null;
+        nameByPlayer[pid] = (row.full_name as string) ?? null;
+      }
+    }
+  }
+
+  const toFixedOrNull = (val: number | null, decimals = 1): number | null => {
+    if (val === null || Number.isNaN(val)) return null;
+    return Number(val.toFixed(decimals));
+  };
+
+  const players: OffenseDrilldownPlayerMetrics[] = battingMetrics.map(
+    (m) => {
+      const displayName =
+        nameByPlayer[m.playerId] ??
+        `Player ${m.playerId.slice(0, 8)}…`;
+      const jersey = jerseyByPlayer[m.playerId] ?? null;
+
+      return {
+        player_id: m.playerId,
+        player_name: displayName,
+        jersey_number: jersey,
+        hitting_score: toFixedOrNull(m.hittingScore, 1),
+        contact_score: toFixedOrNull(m.contactScore, 1),
+        power_score: toFixedOrNull(m.powerScore, 1),
+        speed_score: toFixedOrNull(m.speedScore, 1),
+        // Stored as 0–1; frontend shows percent.
+        strike_chance: toFixedOrNull(m.strikeChance, 3),
+      };
+    }
+  );
+
+  const avg = (values: number[]): number | null => {
+    if (!values.length) return null;
+    const sum = values.reduce((acc, v) => acc + v, 0);
+    return Number((sum / values.length).toFixed(1));
+  };
+
+  const offenseAvg = avg(battingMetrics.map((m) => m.hittingScore));
+  const contactAvg = avg(battingMetrics.map((m) => m.contactScore));
+  const powerAvg = avg(battingMetrics.map((m) => m.powerScore));
+  const speedAvg = avg(battingMetrics.map((m) => m.speedScore));
+
+  let strikeAvg: number | null = null;
+  if (battingMetrics.length) {
+    const total = battingMetrics.reduce(
+      (sum, m) => sum + m.strikeChance,
+      0
+    );
+    strikeAvg = Number((total / battingMetrics.length).toFixed(3));
+  }
+
+  const metrics: OffenseDrilldownMetric[] = [
+    {
+      code: "offense",
+      label: "Offense score",
+      team_average: offenseAvg,
+    },
+    {
+      code: "contact",
+      label: "Contact score",
+      team_average: contactAvg,
+    },
+    {
+      code: "power",
+      label: "Power score",
+      team_average: powerAvg,
+    },
+    {
+      code: "speed",
+      label: "Speed score",
+      team_average: speedAvg,
+    },
+    {
+      // 🔁 NOTE: offense uses StrikeChance (hitters),
+      // pitching will use StrikeoutChance later.
+      code: "strikechance",
+      label: "Strikeout chance (K%)",
+      team_average: strikeAvg,
+    },
+  ];
+
+  return {
+    team_id: teamRow.id,
+    team_name: teamRow.name ?? null,
+    age_group_label: (teamRow as any).age_group_label ?? null,
+    level: (teamRow as any).level ?? null,
+    metrics,
+    players,
+  };
+}
+
+
+
+async function computePlayerStatsOverview(
+  playerId: string
+): Promise<PlayerStatsOverview | null> {
+  const { data: rows, error } = await supabase
+    .from("player_ratings")
+    .select(
+      "id, player_id, team_id, age_group_id, assessment_id, created_at, overall_score, offense_score, defense_score, pitching_score, breakdown"
+    )
+    .eq("player_id", playerId)
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  if (error) {
+    console.error("computePlayerStatsOverview: error loading ratings:", error);
+    return null;
+  }
+
+  const row = rows && rows[0];
+  if (!row) {
+    return {
+      player_id: playerId,
+      team_id: null,
+      age_group_label: null,
+      latest_assessment_id: null,
+      metrics: [],
+    };
+  }
+
+  // If you want to join age_groups for label, do it here; for now we leave null.
+  const overall = parseScore(row.overall_score);
+  const offense = parseScore(row.offense_score);
+  const defense = parseScore(row.defense_score);
+  const pitching = parseScore(row.pitching_score);
+  const breakdown = (row as any).breakdown ?? null;
+
+  const ratingLike: RatingResult = {
+    overall_score: overall,
+    offense_score: offense,
+    defense_score: defense,
+    pitching_score: pitching,
+    breakdown,
+  };
+
+  const metricDefs: { code: CoreMetricCode; label: string }[] = [
+    { code: "bpoprating", label: "BPOP Rating" },
+    { code: "offense", label: "Offense Score" },
+    { code: "defense", label: "Defense Score" },
+    { code: "pitching", label: "Pitching Score" },
+    { code: "athletic", label: "Athletic Score" },
+  ];
+
+  const metrics: StatsMetricSummary[] = [];
+
+  for (const def of metricDefs) {
+    let score: number | null = null;
+    let percent: number | null = null;
+
+    switch (def.code) {
+      case "bpoprating":
+        score = overall;
+        percent =
+          overall !== null && overall !== undefined
+            ? (overall / 50) * 100
+            : null;
+        break;
+      case "offense":
+        score = offense;
+        percent = getMetricPercentFromRatings("offense", ratingLike);
+        break;
+      case "defense":
+        score = defense;
+        percent = getMetricPercentFromRatings("defense", ratingLike);
+        break;
+      case "pitching":
+        score = pitching;
+        percent = getMetricPercentFromRatings("pitching", ratingLike);
+        break;
+      case "athletic":
+        percent = getMetricPercentFromRatings("athletic", ratingLike);
+        score =
+          percent !== null && percent !== undefined
+            ? (percent / 100) * 50
+            : null;
+        break;
+    }
+
+    metrics.push({
+      code: def.code,
+      label: def.label,
+      score:
+        score !== null && score !== undefined && !Number.isNaN(score)
+          ? Number(score.toFixed(1))
+          : null,
+      percent:
+        percent !== null && percent !== undefined && !Number.isNaN(percent)
+          ? Number(percent.toFixed(1))
+          : null,
+      sample_size: score !== null || percent !== null ? 1 : 0,
+    });
+  }
+
+  return {
+    player_id: playerId,
+    team_id: row.team_id as string | null,
+    age_group_label: null, // can be populated via join later if desired
+    latest_assessment_id: row.assessment_id ?? null,
+    metrics,
+  };
+}
+
 
 /**
  * Get the latest assessment + rating for a player for a given template name.
@@ -4244,10 +4958,13 @@ function getBattingMetricsFromRating(ratingRow: any): BattingPlayerMetrics | nul
     0;
 
   const speed =
+    breakdown?.athletic?.tests?.speed_score ??
+    breakdown?.athletic?.speed_score ??
     breakdown?.speed_score ??
     breakdown?.athlete?.speed_score ??
     breakdown?.running?.speed_score ??
     0;
+
 
   const hittingScore = typeof hittingScoreRaw === "number" ? hittingScoreRaw : 0;
 
@@ -6894,6 +7611,94 @@ app.get("/players/:id/evals/pro-full", async (req, res) => {
   } catch (err) {
     console.error("Error building Pro full eval:", err);
     return res.status(500).json({ error: "Failed to build Pro full eval" });
+  }
+});
+
+// Team stats overview
+app.get("/teams/:teamId/stats/overview", async (req, res) => {
+  const teamId = req.params.teamId;
+
+  if (!teamId) {
+    return res.status(400).json({ error: "Missing teamId" });
+  }
+
+  try {
+    const overview = await computeTeamStatsOverview(teamId);
+    if (!overview) {
+      return res.status(404).json({ error: "Team not found or no ratings." });
+    }
+    return res.status(200).json(overview);
+  } catch (err) {
+    console.error(
+      "Unexpected error in GET /teams/:teamId/stats/overview:",
+      err
+    );
+    return res.status(500).json({ error: "Failed to load team stats." });
+  }
+});
+
+app.get(
+  "/teams/:teamId/stats/offense",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    const { teamId } = req.params;
+
+    if (!teamId) {
+      return res.status(400).json({ error: "Missing teamId" });
+    }
+
+    const role = await assertTeamRoleOr403(
+      req,
+      res,
+      teamId,
+      COACH_AND_ASSISTANT
+    );
+    if (!role) return;
+
+    try {
+      const drilldown = await computeTeamOffenseDrilldown(teamId);
+      if (!drilldown) {
+        return res
+          .status(404)
+          .json({ error: "Team not found or no offense ratings." });
+      }
+
+      return res.status(200).json(drilldown);
+    } catch (err) {
+      console.error(
+        "Unexpected error in GET /teams/:teamId/stats/offense:",
+        err
+      );
+      return res
+        .status(500)
+        .json({ error: "Failed to load offense drilldown for team." });
+    }
+  }
+);
+
+
+// Player stats overview
+app.get("/players/:playerId/stats/overview", async (req, res) => {
+  const playerId = req.params.playerId;
+
+  if (!playerId) {
+    return res.status(400).json({ error: "Missing playerId" });
+  }
+
+  try {
+    const overview = await computePlayerStatsOverview(playerId);
+    if (!overview) {
+      return res
+        .status(404)
+        .json({ error: "Player not found or no ratings." });
+    }
+    return res.status(200).json(overview);
+  } catch (err) {
+    console.error(
+      "Unexpected error in GET /players/:playerId/stats/overview:",
+      err
+    );
+    return res.status(500).json({ error: "Failed to load player stats." });
   }
 });
 
