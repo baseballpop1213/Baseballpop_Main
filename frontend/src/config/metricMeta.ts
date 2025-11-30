@@ -83,7 +83,7 @@ const METRIC_META: Record<string, MetricMeta> = {
   timed_run_4b: {
     code: "4BSPEED",
     group: "Speed",
-    shortLabel: "4B Time",
+    shortLabel: "4B Speed",
     displayName: "Timed Run 4 Bases (time)",
     instructions:
       "Have the player run home-to-home around all four bases. Enter the total time in seconds.",

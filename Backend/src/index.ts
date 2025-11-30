@@ -8988,7 +8988,7 @@ app.get(
           team_average: avg(
             playersWithRatings.map((p) =>
               isNumber(p.metrics.strikeChance)
-                ? p.metrics.strikeChance * 100
+                ? p.metrics.strikeChance // keep 0–1; frontend shows %
                 : null
             )
           ),
