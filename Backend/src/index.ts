@@ -1942,17 +1942,48 @@ interface OffenseTestPlayerRow {
   player_id: string;
   player_name: string | null;
   jersey_number: number | null;
+
+  /**
+   * Primary numeric value used for charts / tables:
+   *  - contact tests → points
+   *  - power tests   → mph
+   *  - speed tests   → feet per second
+   */
   value: number | null;
+
+  /**
+   * Extra raw data for speed tests only (run_1b / run_4b).
+   * These stay undefined for non‑speed tests.
+   */
+  raw_seconds?: number | null;
+  raw_distance_ft?: number | null;
 }
 
 interface OffenseTestBreakdown {
   id: string;            // e.g. "tee_ld_points"
   label: string;         // will be humanized on the frontend via metricMeta
   submetric: OffenseMetricCode;
+
+  /**
+   * Average of per_player[*].value on the same scale as that value:
+   *  - contact tests → points
+   *  - power tests   → mph
+   *  - speed tests   → feet per second
+   */
   team_average: number | null;
+
   player_count: number;
   per_player: OffenseTestPlayerRow[];
+
+  /**
+   * Additional aggregates for speed tests (1B / 4B).
+   * Left undefined for other tests.
+   */
+  team_avg_seconds?: number | null;
+  team_avg_feet_per_second?: number | null;
+  base_path_feet?: number | null;
 }
+
 
 type OffenseTestsByMetric = Record<OffenseMetricCode, OffenseTestBreakdown[]>;
 

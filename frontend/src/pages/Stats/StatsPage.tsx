@@ -88,6 +88,33 @@ function formatStrikePercent(
   return `${val.toFixed(decimals)}%`;
 }
 
+// Convert a 0–50 contact score into a realistic StrikeChance %, using:
+//   SC% = (1 - (ContactPercent / 90)) * 100
+// where ContactPercent is the contact score converted from 0–50 to 0–100.
+function computeStrikePercentFromContactScore(
+  contactScore50: number | null | undefined
+): number | null {
+  if (
+    contactScore50 === null ||
+    contactScore50 === undefined ||
+    !Number.isFinite(contactScore50)
+  ) {
+    return null;
+  }
+
+  // First convert the 0–50 normalized score into a 0–100 percent.
+  const contactPercent = (Number(contactScore50) / 50) * 100;
+
+  // Apply the formula you provided.
+  const raw = (1 - contactPercent / 90) * 100;
+
+  // Clamp to a sensible 0–100 range.
+  const clamped = Math.max(0, Math.min(100, raw));
+  return clamped;
+}
+
+
+
 function pickBestTrophyForMetric(
   metric: CoreMetricCode,
   trophies: TeamTrophyWithDefinition[]
@@ -301,34 +328,54 @@ function MetricCard({
   );
 }
 
-/**
- * Map backend test fields → assessment_metrics.metric_key for metricMeta.
- * We key this primarily by the backend `field` we set in the drilldown.
- */
+// Map backend offense test IDs → canonical metric keys in metricMeta.
+// The backend OffenseTestBreakdown.id is still the internal test id
+// (tee_ld_points, pitch_points, bat_speed_points, run_1b_points, etc.)
 const OFFENSE_TEST_FIELD_TO_METRIC_KEY: Record<string, string> = {
-  // Contact – tee & matrix
+  // Contact – quality of contact points
   tee_ld_points: "tee_line_drive_test_10",
   pitch_points: "m_10_fastball_quality",
-  varied_speed_points: "m_5_varied_speed_quality",
   curveball_points: "m_5_curveball_quality",
+  varied_speed_points: "m_5_varied_speed_quality",
 
-  // Power
-  exit_velo_points: "max_exit_velo_tee",
+  // Power – we’ll show MPH for these
   bat_speed_points: "max_bat_speed",
+  exit_velo_points: "max_exit_velo_tee",
 
-  // Speed – use the timed run tests, not the distance
+  // Speed – timed runs; we’ll use secs + ft/s (value will be ft/s)
   run_1b_points: "timed_run_1b",
   run_4b_points: "timed_run_4b",
 };
 
+// Tiny helpers to detect “special” tests by id/metric key
+const POWER_TEST_IDS = new Set<string>(["bat_speed_points", "exit_velo_points"]);
+const SPEED_TEST_IDS = new Set<string>(["run_1b_points", "run_4b_points"]);
+
+function isPowerTest(testId: string, metricKey?: string | null) {
+  return (
+    POWER_TEST_IDS.has(testId) ||
+    metricKey === "max_bat_speed" ||
+    metricKey === "max_exit_velo_tee"
+  );
+}
+
+function isSpeedTest(testId: string, metricKey?: string | null) {
+  return (
+    SPEED_TEST_IDS.has(testId) ||
+    metricKey === "timed_run_1b" ||
+    metricKey === "timed_run_4b"
+  );
+}
+
 function getHumanizedTestMeta(
   test: OffenseTestBreakdown
-): { label: string } {
-  // Backend OffenseTestBreakdown.id is the internal test id
-  // (tee_ld_points, pitch_points, run_1b_points, etc.)
+): {
+  label: string;
+  metricKey?: string;
+  unit?: string | null;
+} {
   const metricKey = OFFENSE_TEST_FIELD_TO_METRIC_KEY[test.id];
-
-  const meta = metricKey ? getMetricMeta(metricKey) : undefined;
+  const meta = metricKey ? (getMetricMeta(metricKey) as any) : undefined;
 
   // Priority: shortLabel → displayName → backend label
   const label =
@@ -336,8 +383,13 @@ function getHumanizedTestMeta(
     meta?.displayName ??
     test.label;
 
-  return { label };
+  return {
+    label,
+    metricKey,
+    unit: meta?.unit ?? null,
+  };
 }
+
 
 
 type OffenseDrilldownViewMode = "team" | "players";
@@ -351,6 +403,11 @@ interface OffenseTestsForMetricProps {
 /**
  * Per‑metric test breakdown chip list + per‑test leaderboards.
  * Uses TeamOffenseDrilldown.tests_by_metric.
+ *
+ * Special handling:
+ *  - Contact tests: show points as "Score"
+ *  - Power tests (bat speed / exit velo): show MPH
+ *  - Speed tests (1B / 4B): show Time (s), Speed (ft/s), Base (ft)
  */
 function OffenseTestsForMetric({
   metricCode,
@@ -364,7 +421,7 @@ function OffenseTestsForMetric({
       metricCode
     ] as OffenseTestBreakdown[] | undefined) ?? [];
 
-  // Filter out "raw score" helpers (Contact Raw Score, Power Raw Score, Speed Raw Score)
+  // Filter out "raw score" helpers (Contact Raw Score, Power Raw Score, Speed Raw Score, etc.)
   const tests = rawTests.filter((t) => {
     const label = (t.label || "").toLowerCase();
     if (label.includes("raw score")) return false;
@@ -383,6 +440,9 @@ function OffenseTestsForMetric({
 
   const metricLabel = metricLabelMap[metricCode];
 
+  const parseNum = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) ? v : null;
+
   // TEAM VIEW: test tiles with team averages
   if (viewMode === "team") {
     return (
@@ -392,30 +452,70 @@ function OffenseTestsForMetric({
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {tests.map((test) => {
-            const { label } = getHumanizedTestMeta(test);
+            const { label, metricKey } = getHumanizedTestMeta(test);
 
-            // Prefer backend team_average; if missing, compute from per_player
-            let teamAvg = test.team_average;
-            if (teamAvg === null || teamAvg === undefined) {
-              const numericValues = (test.per_player || [])
-                .map((p) =>
-                  typeof p.value === "number" && Number.isFinite(p.value)
-                    ? p.value
-                    : null
-                )
-                .filter((v): v is number => v !== null);
-              if (numericValues.length > 0) {
-                const sum = numericValues.reduce((acc, v) => acc + v, 0);
-                teamAvg = sum / numericValues.length;
-              }
+            const powerTest = isPowerTest(test.id, metricKey);
+            const speedTest = isSpeedTest(test.id, metricKey);
+
+            // Collect numeric values from players
+            const numericValues = (test.per_player || [])
+              .map((p) =>
+                typeof p.value === "number" && !Number.isNaN(p.value)
+                  ? p.value
+                  : null
+              )
+              .filter((v): v is number => v !== null);
+
+            const rawAvg =
+              test.team_average !== null &&
+              test.team_average !== undefined &&
+              !Number.isNaN(test.team_average)
+                ? test.team_average
+                : numericValues.length
+                ? numericValues.reduce((sum, v) => sum + v, 0) /
+                  numericValues.length
+                : null;
+
+            // How we display the team average number
+            let avgDisplay: string;
+
+            if (test.submetric === "strikechance") {
+              avgDisplay = formatStrikePercent(rawAvg);
+            } else if (powerTest) {
+              // Power tests → show MPH
+              avgDisplay =
+                rawAvg === null ? "—" : `${rawAvg.toFixed(1)} mph`;
+            } else {
+              avgDisplay = rawAvg === null ? "—" : rawAvg.toFixed(1);
             }
 
-            const avgDisplay =
-              metricCode === "strikechance"
-                ? formatStrikePercent(teamAvg)
-                : teamAvg === null || teamAvg === undefined
-                ? "—"
-                : teamAvg.toFixed(1);
+            // Optional extra aggregates for speed tests
+            // These will be wired from the backend later.
+            let avgSeconds: number | null = null;
+            let avgFeetPerSecond: number | null = null;
+            let basePathFeet: number | null = null;
+
+            if (speedTest) {
+              const t = test as any;
+              avgSeconds = parseNum(
+                t.team_avg_seconds ?? t.avg_seconds ?? null
+              );
+              avgFeetPerSecond = parseNum(
+                t.team_avg_feet_per_second ??
+                  t.avg_feet_per_second ??
+                  rawAvg
+              );
+              basePathFeet = parseNum(
+                t.base_path_feet ?? t.base_feet ?? null
+              );
+            }
+
+            // Mini rubric: use the underlying 0–50-style score.
+            // RubricBar already clamps 0–50.
+            const rubricScore =
+              test.submetric === "strikechance" || rawAvg == null
+                ? null
+                : rawAvg;
 
             return (
               <div
@@ -425,6 +525,40 @@ function OffenseTestsForMetric({
                 <div className="text-sm font-medium text-slate-100">
                   {label}
                 </div>
+
+                {/* Speed-only line: avg time / speed / base (team level) */}
+                {speedTest &&
+                  (avgSeconds !== null ||
+                    avgFeetPerSecond !== null ||
+                    basePathFeet !== null) && (
+                    <div className="mt-0.5 text-[11px] text-slate-400 space-x-2">
+                      {avgSeconds !== null && (
+                        <span>
+                          Avg time:{" "}
+                          <span className="font-mono text-slate-50">
+                            {avgSeconds.toFixed(2)}s
+                          </span>
+                        </span>
+                      )}
+                      {avgFeetPerSecond !== null && (
+                        <span>
+                          Avg speed:{" "}
+                          <span className="font-mono text-slate-50">
+                            {avgFeetPerSecond.toFixed(2)} ft/s
+                          </span>
+                        </span>
+                      )}
+                      {basePathFeet !== null && (
+                        <span>
+                          Base:{" "}
+                          <span className="font-mono text-slate-50">
+                            {basePathFeet.toFixed(0)} ft
+                          </span>
+                        </span>
+                      )}
+                    </div>
+                  )}
+
                 <div className="mt-1 text-xs text-slate-300 flex items-center justify-between">
                   <span>
                     Team avg:{" "}
@@ -436,6 +570,13 @@ function OffenseTestsForMetric({
                     n={test.player_count}
                   </span>
                 </div>
+
+                {/* Mini rubric bar for this test */}
+                {rubricScore !== null && (
+                  <div className="mt-1 max-w-[140px]">
+                    <RubricBar score={rubricScore} showLabels={false} />
+                  </div>
+                )}
               </div>
             );
           })}
@@ -444,125 +585,154 @@ function OffenseTestsForMetric({
     );
   }
 
-  // PLAYERS VIEW: per‑test mini leaderboards
+
+  // PLAYERS VIEW: per‑test leaderboards
   return (
-    <div className="mt-4 space-y-4">
-      {tests.map((test) => {
-        const { label } = getHumanizedTestMeta(test);
+    <div className="mt-3">
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">
+        {metricLabel}
+      </div>
+      <div className="space-y-3">
+        {tests.map((test) => {
+          const { label, metricKey } = getHumanizedTestMeta(test);
+          const perPlayer = [...(test.per_player ?? [])];
 
-        // For strikechance, lower value is better → sort ascending
-        const sorted = [...(test.per_player || [])].sort((a, b) => {
-          const av =
-            a.value ?? (metricCode === "strikechance" ? Infinity : -Infinity);
-          const bv =
-            b.value ?? (metricCode === "strikechance" ? Infinity : -Infinity);
+          const powerTest = isPowerTest(test.id, metricKey);
+          const speedTest = isSpeedTest(test.id, metricKey);
 
-          if (metricCode === "strikechance") {
-            return av - bv;
-          }
-          return bv - av;
-        });
+          // Sort “best first”
+          perPlayer.sort((a, b) => {
+            const va = parseNum(a.value) ?? 0;
+            const vb = parseNum(b.value) ?? 0;
+            if (metricCode === "strikechance") {
+              // Lower K% is better
+              return va - vb;
+            }
+            // Otherwise higher is better
+            return vb - va;
+          });
 
-        let teamAvg = test.team_average;
-        if (teamAvg === null || teamAvg === undefined) {
-          const numericValues = (test.per_player || [])
-            .map((p) =>
-              typeof p.value === "number" && Number.isFinite(p.value)
-                ? p.value
-                : null
-            )
-            .filter((v): v is number => v !== null);
-          if (numericValues.length > 0) {
-            const sum = numericValues.reduce((acc, v) => acc + v, 0);
-            teamAvg = sum / numericValues.length;
-          }
-        }
-
-        const teamAvgDisplay =
-          metricCode === "strikechance"
-            ? formatStrikePercent(teamAvg)
-            : teamAvg == null
-            ? "—"
-            : teamAvg.toFixed(1);
-
-        return (
-          <div
-            key={test.id}
-            className="border border-slate-700 rounded-lg bg-slate-950/60"
-          >
-            <div className="px-3 py-2 border-b border-slate-800 flex items-center justify-between">
-              <div>
-                <div className="text-sm font-medium text-slate-100">
-                  {label}
-                </div>
+          return (
+            <div
+              key={test.id}
+              className="rounded-lg bg-slate-950/40 border border-slate-800 p-3"
+            >
+              <div className="text-xs font-semibold text-slate-200 mb-2">
+                {label}
               </div>
-              <div className="text-[11px] text-slate-400 text-right">
-                Team avg:{" "}
-                <span className="font-mono text-slate-50">
-                  {teamAvgDisplay}
-                </span>
-                <div>n={test.player_count}</div>
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-xs">
+                  <thead>
+                    <tr className="text-slate-400">
+                      <th className="text-left py-1 pr-2">Player</th>
+                      {speedTest ? (
+                        <>
+                          <th className="text-right py-1 px-2">Time (s)</th>
+                          <th className="text-right py-1 px-2">
+                            Speed (ft/s)
+                          </th>
+                          <th className="text-right py-1 pl-2">Base (ft)</th>
+                        </>
+                      ) : (
+                        <th className="text-right py-1 pl-2">
+                          {metricCode === "strikechance"
+                            ? "K%"
+                            : powerTest
+                            ? "MPH"
+                            : "Score"}
+                        </th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {perPlayer.map((row) => {
+                      const displayName =
+                        row.player_name ??
+                        `Player ${row.player_id.slice(0, 8)}…`;
+                      const jersey =
+                        row.jersey_number != null
+                          ? `#${row.jersey_number} `
+                          : "";
+
+                      if (speedTest) {
+                        const seconds = parseNum(
+                          (row as any).raw_seconds
+                        );
+                        const fps = parseNum(row.value);
+                        const dist = parseNum(
+                          (row as any).raw_distance_ft
+                        );
+
+                        return (
+                          <tr
+                            key={row.player_id}
+                            className="border-t border-slate-800"
+                          >
+                            <td className="py-1 pr-2">
+                              <span className="font-medium text-slate-100">
+                                {jersey}
+                                {displayName}
+                              </span>
+                            </td>
+                            <td className="py-1 px-2 text-right">
+                              {seconds != null
+                                ? seconds.toFixed(2)
+                                : "—"}
+                            </td>
+                            <td className="py-1 px-2 text-right">
+                              {fps != null ? fps.toFixed(2) : "—"}
+                            </td>
+                            <td className="py-1 pl-2 text-right">
+                              {dist != null ? dist.toFixed(0) : "—"}
+                            </td>
+                          </tr>
+                        );
+                      }
+
+                      let valueDisplay = "—";
+
+                      if (metricCode === "strikechance") {
+                        valueDisplay = formatStrikePercent(row.value);
+                      } else if (powerTest) {
+                        const mph = parseNum(row.value);
+                        valueDisplay =
+                          mph != null ? `${mph.toFixed(1)} mph` : "—";
+                      } else {
+                        const v = parseNum(row.value);
+                        valueDisplay =
+                          v != null ? v.toFixed(1) : "—";
+                      }
+
+                      return (
+                        <tr
+                          key={row.player_id}
+                          className="border-t border-slate-800"
+                        >
+                          <td className="py-1 pr-2">
+                            <span className="font-medium text-slate-100">
+                              {jersey}
+                              {displayName}
+                            </span>
+                          </td>
+                          <td className="py-1 pl-2 text-right">
+                            {valueDisplay}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             </div>
-
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-xs">
-                <thead className="bg-slate-900/60 text-slate-400">
-                  <tr>
-                    <th className="px-3 py-1.5 text-left font-medium">#</th>
-                    <th className="px-3 py-1.5 text-left font-medium">
-                      Player
-                    </th>
-                    <th className="px-3 py-1.5 text-right font-medium">
-                      {metricCode === "strikechance"
-                        ? "K% (lower is better)"
-                        : "Score"}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sorted.map((row, idx) => {
-                    const raw = row.value;
-                    const display =
-                      raw == null
-                        ? "—"
-                        : metricCode === "strikechance"
-                        ? formatStrikePercent(raw)
-                        : raw.toFixed(1);
-
-                    return (
-                      <tr
-                        key={row.player_id}
-                        className={
-                          idx % 2 === 0 ? "bg-slate-950" : "bg-slate-950/60"
-                        }
-                      >
-                        <td className="px-3 py-1.5 text-slate-400">
-                          {row.jersey_number ?? ""}
-                        </td>
-                        <td className="px-3 py-1.5 text-slate-100">
-                          {row.player_name ?? "Player"}
-                        </td>
-                        <td className="px-3 py-1.5 text-right font-mono text-slate-50">
-                          {display}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }
 
-/**
- * Player leaderboard for a specific offense metric.
- * Uses the TeamOffenseDrilldown players array and sorts by the chosen metric.
- */
+
+
 function PlayerGridForMetric({
   code,
   drilldown,
@@ -580,18 +750,20 @@ function PlayerGridForMetric({
 
   const players = [...(drilldown.players ?? [])];
 
+  // Use 0–150 visual scores for offense/contact/power/speed
+  // and the derived StrikeChance% from contact for K%.
   const getMetricValue = (p: (typeof drilldown.players)[number]) => {
     switch (code) {
       case "offense":
-        return p.hitting_score ?? null;
+        return p.hitting_score != null ? p.hitting_score * 3 : null; // 0–150
       case "contact":
-        return p.contact_score ?? null;
+        return p.contact_score != null ? p.contact_score * 3 : null; // 0–150
       case "power":
-        return p.power_score ?? null;
+        return p.power_score != null ? p.power_score * 3 : null; // 0–150
       case "speed":
-        return p.speed_score ?? null;
+        return p.speed_score != null ? p.speed_score * 3 : null; // 0–150
       case "strikechance":
-        return p.strike_chance ?? null;
+        return computeStrikePercentFromContactScore(p.contact_score);
       default:
         return null;
     }
@@ -629,7 +801,7 @@ function PlayerGridForMetric({
         <div className="text-[10px] text-slate-400">
           {code === "strikechance"
             ? "Lower K% is better."
-            : "Higher score is better."}
+            : "Higher score (0–150) is better."}
         </div>
       </div>
       <div className="overflow-x-auto">
@@ -647,8 +819,14 @@ function PlayerGridForMetric({
           </thead>
           <tbody>
             {players.map((p) => {
-              const rawStrike = p.strike_chance ?? null;
-              const kPercent = formatStrikePercent(rawStrike, 1);
+              // Derive StrikeChance from this player's contact score.
+              const strikePercent = computeStrikePercentFromContactScore(
+                p.contact_score
+              );
+              const kPercent =
+                strikePercent == null
+                  ? "—"
+                  : `${strikePercent.toFixed(1)}%`;
 
               const name =
                 p.player_name ?? `Player ${p.jersey_number ?? ""}`.trim();
@@ -669,7 +847,10 @@ function PlayerGridForMetric({
                       highlightClass("offense"),
                     ].join(" ")}
                   >
-                    {formatNumber(p.hitting_score)}
+                    {formatNumber(
+                      p.hitting_score != null ? p.hitting_score * 3 : null,
+                      0
+                    )}
                   </td>
                   <td
                     className={[
@@ -677,7 +858,10 @@ function PlayerGridForMetric({
                       highlightClass("contact"),
                     ].join(" ")}
                   >
-                    {formatNumber(p.contact_score)}
+                    {formatNumber(
+                      p.contact_score != null ? p.contact_score * 3 : null,
+                      0
+                    )}
                   </td>
                   <td
                     className={[
@@ -685,7 +869,10 @@ function PlayerGridForMetric({
                       highlightClass("power"),
                     ].join(" ")}
                   >
-                    {formatNumber(p.power_score)}
+                    {formatNumber(
+                      p.power_score != null ? p.power_score * 3 : null,
+                      0
+                    )}
                   </td>
                   <td
                     className={[
@@ -693,7 +880,10 @@ function PlayerGridForMetric({
                       highlightClass("speed"),
                     ].join(" ")}
                   >
-                    {formatNumber(p.speed_score)}
+                    {formatNumber(
+                      p.speed_score != null ? p.speed_score * 3 : null,
+                      0
+                    )}
                   </td>
                   <td
                     className={[
@@ -712,6 +902,7 @@ function PlayerGridForMetric({
     </div>
   );
 }
+
 
 /**
  * Offense drilldown section – no accordion.
@@ -743,6 +934,7 @@ function OffenseDrilldownSection({
       OffenseMetricCode,
       { label: string; value: number | null }
     >();
+
     if (drilldown?.metrics) {
       for (const m of drilldown.metrics as any[]) {
         const code = m.code as OffenseMetricCode;
@@ -750,8 +942,22 @@ function OffenseDrilldownSection({
         map.set(code, { label: m.label, value: m.team_average ?? null });
       }
     }
+
+    // Derive StrikeChance from the contact score, using the 0–50 normalized contact value.
+    const contactMetric = map.get("contact");
+    if (contactMetric) {
+      const strikePercent = computeStrikePercentFromContactScore(
+        contactMetric.value
+      );
+      map.set("strikechance", {
+        label: "Strikeout chance (lower is better)",
+        value: strikePercent,
+      });
+    }
+
     return map;
   }, [drilldown]);
+
 
   const hasAnyData =
     !!drilldown && !!drilldown.metrics && drilldown.metrics.length > 0;
@@ -837,13 +1043,19 @@ function OffenseDrilldownSection({
                   if (!m) return null;
 
                   const isStrike = code === "strikechance";
-                  const raw = m.value;
-                  const display =
-                    raw === null || raw === undefined
-                      ? "—"
-                      : isStrike
-                      ? formatStrikePercent(raw)
-                      : formatNumber(raw, 1);
+                  const rawValue = m.value;
+
+                  let displayMain = "—";
+                  if (rawValue !== null && rawValue !== undefined) {
+                    if (isStrike) {
+                      // rawValue is already a 0–100 StrikeChance %
+                      displayMain = formatStrikePercent(rawValue, 1);
+                    } else {
+                      // Visual 0–150 scale for the 0–50 score.
+                      const scaled = rawValue * 3;
+                      displayMain = formatNumber(scaled, 0);
+                    }
+                  }
 
                   const isActive = activeMetrics.includes(code);
 
@@ -863,8 +1075,16 @@ function OffenseDrilldownSection({
                         {m.label}
                       </div>
                       <div className="mt-1 text-lg font-semibold text-slate-50">
-                        {display}
+                        {displayMain}
                       </div>
+
+                      {/* Small rubric strip for non-percent metrics */}
+                      {!isStrike && (
+                        <div className="mt-1">
+                          <RubricBar score={rawValue} showLabels={false} />
+                        </div>
+                      )}
+
                       <div className="mt-0.5 text-[10px] text-slate-500">
                         {isActive
                           ? "Showing breakdown"
@@ -875,6 +1095,7 @@ function OffenseDrilldownSection({
                 })}
               </div>
 
+
               {/* Detail area */}
               {viewMode === "team" ? (
                 <div className="space-y-4">
@@ -883,13 +1104,17 @@ function OffenseDrilldownSection({
                     if (!m) return null;
 
                     const isStrike = code === "strikechance";
-                    const raw = m.value;
-                    const display =
-                      raw === null || raw === undefined
-                        ? "—"
-                        : isStrike
-                        ? formatStrikePercent(raw)
-                        : formatNumber(raw, 1);
+                    const rawValue = m.value;
+
+                    let displayMain = "—";
+                    if (rawValue !== null && rawValue !== undefined) {
+                      if (isStrike) {
+                        displayMain = formatStrikePercent(rawValue, 1);
+                      } else {
+                        const scaled = rawValue * 3;
+                        displayMain = formatNumber(scaled, 0);
+                      }
+                    }
 
                     return (
                       <div
@@ -903,10 +1128,15 @@ function OffenseDrilldownSection({
                           <div className="text-xs text-slate-300">
                             Team average:{" "}
                             <span className="font-semibold text-slate-50">
-                              {display}
+                              {displayMain}
                             </span>
                           </div>
                         </div>
+
+                        {!isStrike && (
+                          <div className="mt-2">
+                          </div>
+                        )}
 
                         {/* Test‑level tiles for this metric */}
                         <OffenseTestsForMetric
@@ -919,6 +1149,7 @@ function OffenseDrilldownSection({
                   })}
                 </div>
               ) : (
+
                 <div className="space-y-6">
                   {activeMetrics.map((code) => (
                     <div key={code} className="space-y-3">
@@ -1154,17 +1385,21 @@ export default function StatsPage() {
       CoreMetricCode,
       { label: string; score: number | null; percent: number | null }
     >();
+
     if (teamStats?.metrics) {
       for (const metric of teamStats.metrics) {
         map.set(metric.code, {
           label: metric.label,
-          score: metric.score,
+          // Frontend‑only scaling: show scores on a 0–150 scale instead of 0–50
+          score: metric.score != null ? metric.score * 3 : null,
           percent: metric.percent,
         });
       }
     }
+
     return map;
   }, [teamStats]);
+
 
   const bestTrophiesByMetric = useMemo(() => {
     const result: Partial<
@@ -1431,13 +1666,14 @@ export default function StatsPage() {
                         <div className="text-xs uppercase tracking-wide text-slate-400">
                           {metric.label}
                         </div>
-                        <div className="flex items-baseline gap-2 mt-1">
+                        <div className="mt-1 flex items-baseline gap-2">
                           <div className="text-2xl font-semibold text-slate-50">
-                            {formatNumber(metric.score)}
+                            {formatNumber(
+                              metric.score != null ? metric.score * 3 : null
+                            )}
                           </div>
                           <div className="text-xs text-slate-400">
-                            {metric.percent !== null &&
-                            metric.percent !== undefined
+                            {metric.percent !== null && metric.percent !== undefined
                               ? `${formatNumber(metric.percent, 0)}%`
                               : "—"}
                           </div>

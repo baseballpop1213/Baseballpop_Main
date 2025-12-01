@@ -265,8 +265,29 @@ export interface OffenseTestPlayerRow {
   player_id: string;
   player_name: string | null;
   jersey_number: number | null;
+
+  /**
+   * Main numeric value for this test.
+   *
+   * - Contact tests: quality points (higher is better)
+   * - Power tests: bat speed / exit velo in MPH (once backend is updated)
+   * - Speed tests: feet per second (ft/s) for the run (once backend is updated)
+   */
   value: number | null;
+
+  /**
+   * Optional raw time in seconds for timed‑run tests.
+   * (Filled for timed_run_1b / timed_run_4b once backend is updated.)
+   */
+  raw_seconds?: number | null;
+
+  /**
+   * Optional basepath distance in feet for timed‑run tests.
+   * (e.g. 60/70/90 ft; we can default to the longest in multi‑eval scenarios.)
+   */
+  raw_distance_ft?: number | null;
 }
+
 
 export interface OffenseTestBreakdown {
   id: string;
