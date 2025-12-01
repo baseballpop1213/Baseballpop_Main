@@ -404,10 +404,29 @@ interface OffenseTestsForMetricProps {
  * Per‑metric test breakdown chip list + per‑test leaderboards.
  * Uses TeamOffenseDrilldown.tests_by_metric.
  *
- * Special handling:
- *  - Contact tests: show points as "Score"
- *  - Power tests (bat speed / exit velo): show MPH
- *  - Speed tests (1B / 4B): show Time (s), Speed (ft/s), Base (ft)
+ * Backend contract (per OffenseTestBreakdown):
+ *
+ *  - For ALL non‑strike tests:
+ *      - test.team_average = 0–50 normalized "score" (used for rubrics)
+ *      - per_player[].value = 0–50 normalized "score"
+ *
+ *  - Power tests (bat speed / exit velo):
+ *      - test.team_avg_mph: number | null  // NEW – avg raw MPH for the team
+ *      - per_player[].raw_mph: number | null  // NEW – raw MPH for this player
+ *
+ *  - Speed tests (1B / 4B):
+ *      - test.team_avg_seconds: number | null          // NEW – avg time (s)
+ *      - test.base_path_feet: number | null            // NEW – max/base distance (ft)
+ *      - test.team_avg_feet_per_second?: number | null // optional – avg ft/s
+ *
+ *      - per_player[].raw_seconds: number | null       // NEW – raw time in seconds
+ *      - per_player[].raw_distance_ft: number | null   // NEW – base path for that run
+ *      - per_player[].feet_per_second?: number | null  // optional – ft/s for that player
+ *
+ *  - Strikechance tests:
+ *      - test.submetric === "strikechance"
+ *      - test.team_average + per_player[].value contain the raw K%ish value
+ *        (0–1 or 0–100; frontend normalizes either way).
  */
 function OffenseTestsForMetric({
   metricCode,
@@ -421,11 +440,10 @@ function OffenseTestsForMetric({
       metricCode
     ] as OffenseTestBreakdown[] | undefined) ?? [];
 
-  // Filter out "raw score" helpers (Contact Raw Score, Power Raw Score, Speed Raw Score, etc.)
+  // Filter out synthetic “Raw Score” helper rows
   const tests = rawTests.filter((t) => {
     const label = (t.label || "").toLowerCase();
-    if (label.includes("raw score")) return false;
-    return true;
+    return !label.includes("raw score");
   });
 
   if (!tests.length) return null;
@@ -443,7 +461,7 @@ function OffenseTestsForMetric({
   const parseNum = (v: unknown): number | null =>
     typeof v === "number" && Number.isFinite(v) ? v : null;
 
-  // TEAM VIEW: test tiles with team averages
+  // ---------------- TEAM VIEW ----------------
   if (viewMode === "team") {
     return (
       <div className="mt-3">
@@ -456,66 +474,85 @@ function OffenseTestsForMetric({
 
             const powerTest = isPowerTest(test.id, metricKey);
             const speedTest = isSpeedTest(test.id, metricKey);
+            const strikeTest = test.submetric === "strikechance";
 
-            // Collect numeric values from players
-            const numericValues = (test.per_player || [])
-              .map((p) =>
-                typeof p.value === "number" && !Number.isNaN(p.value)
-                  ? p.value
-                  : null
-              )
+            // 0–50 normalized score, used for rubrics and as a fallback display
+            const teamScore50 = parseNum(test.team_average);
+
+            const perPlayerRows = test.per_player ?? [];
+            const scoreValues = perPlayerRows
+              .map((p: any) => parseNum(p.value))
               .filter((v): v is number => v !== null);
 
-            const rawAvg =
-              test.team_average !== null &&
-              test.team_average !== undefined &&
-              !Number.isNaN(test.team_average)
-                ? test.team_average
-                : numericValues.length
-                ? numericValues.reduce((sum, v) => sum + v, 0) /
-                  numericValues.length
+            const scoreFallback =
+              teamScore50 !== null
+                ? teamScore50
+                : scoreValues.length
+                ? scoreValues.reduce((sum, v) => sum + v, 0) /
+                  scoreValues.length
                 : null;
 
-            // How we display the team average number
-            let avgDisplay: string;
+            // What we actually DISPLAY as the big number on the tile
+            let displayMain = "—";
 
-            if (test.submetric === "strikechance") {
-              avgDisplay = formatStrikePercent(rawAvg);
-            } else if (powerTest) {
-              // Power tests → show MPH
-              avgDisplay =
-                rawAvg === null ? "—" : `${rawAvg.toFixed(1)} mph`;
-            } else {
-              avgDisplay = rawAvg === null ? "—" : rawAvg.toFixed(1);
-            }
-
-            // Optional extra aggregates for speed tests
-            // These will be wired from the backend later.
+            // Speed‑specific aggregates
             let avgSeconds: number | null = null;
             let avgFeetPerSecond: number | null = null;
             let basePathFeet: number | null = null;
 
-            if (speedTest) {
-              const t = test as any;
+            if (strikeTest) {
+              // Strikechance: treat team_average as the raw value and format as %
+              displayMain = formatStrikePercent(test.team_average);
+            } else if (powerTest) {
+              // Power: show raw MPH from backend (team_avg_mph), keep score50 for the rubric
+              const mphAvg = parseNum((test as any).team_avg_mph);
+              if (mphAvg !== null) {
+                displayMain = `${mphAvg.toFixed(1)} mph`;
+              } else if (scoreFallback !== null) {
+                // Fallback: still show *something* instead of blank
+                displayMain = scoreFallback.toFixed(1);
+              }
+            } else if (speedTest) {
+              const tAny = test as any;
               avgSeconds = parseNum(
-                t.team_avg_seconds ?? t.avg_seconds ?? null
+                tAny.team_avg_seconds ?? tAny.avg_seconds ?? null
               );
-              avgFeetPerSecond = parseNum(
-                t.team_avg_feet_per_second ??
-                  t.avg_feet_per_second ??
-                  rawAvg
-              );
+
               basePathFeet = parseNum(
-                t.base_path_feet ?? t.base_feet ?? null
+                tAny.base_path_feet ?? tAny.base_feet ?? null
               );
+
+              const explicitFps = parseNum(
+                tAny.team_avg_feet_per_second ??
+                  tAny.avg_feet_per_second ??
+                  null
+              );
+
+              if (explicitFps !== null) {
+                avgFeetPerSecond = explicitFps;
+              } else if (
+                avgSeconds !== null &&
+                basePathFeet !== null &&
+                avgSeconds > 0
+              ) {
+                avgFeetPerSecond = basePathFeet / avgSeconds;
+              }
+
+              if (avgFeetPerSecond !== null) {
+                displayMain = `${avgFeetPerSecond.toFixed(2)} ft/s`;
+              } else if (scoreFallback !== null) {
+                displayMain = scoreFallback.toFixed(1);
+              }
+            } else {
+              // Contact / offense / speed score tiles: show the 0–50 score
+              if (scoreFallback !== null) {
+                displayMain = scoreFallback.toFixed(1);
+              }
             }
 
-            // Mini rubric: use the underlying 0–50-style score.
-            // RubricBar already clamps 0–50.
+            // Rubric should ALWAYS use the normalized 0–50 score, never MPH/ft/s.
             const rubricScore =
-              test.submetric === "strikechance" || rawAvg == null
-                ? null
-                : rawAvg;
+              strikeTest || scoreFallback === null ? null : scoreFallback;
 
             return (
               <div
@@ -563,7 +600,7 @@ function OffenseTestsForMetric({
                   <span>
                     Team avg:{" "}
                     <span className="font-mono text-slate-50">
-                      {avgDisplay}
+                      {displayMain}
                     </span>
                   </span>
                   <span className="text-[10px] text-slate-500">
@@ -571,7 +608,7 @@ function OffenseTestsForMetric({
                   </span>
                 </div>
 
-                {/* Mini rubric bar for this test */}
+                {/* Mini rubric bar using 0–50 score */}
                 {rubricScore !== null && (
                   <div className="mt-1 max-w-[140px]">
                     <RubricBar score={rubricScore} showLabels={false} />
@@ -585,8 +622,7 @@ function OffenseTestsForMetric({
     );
   }
 
-
-  // PLAYERS VIEW: per‑test leaderboards
+  // ---------------- PLAYERS VIEW ----------------
   return (
     <div className="mt-3">
       <div className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">
@@ -595,20 +631,49 @@ function OffenseTestsForMetric({
       <div className="space-y-3">
         {tests.map((test) => {
           const { label, metricKey } = getHumanizedTestMeta(test);
-          const perPlayer = [...(test.per_player ?? [])];
-
           const powerTest = isPowerTest(test.id, metricKey);
           const speedTest = isSpeedTest(test.id, metricKey);
 
-          // Sort “best first”
+          const perPlayer = [...(test.per_player ?? [])];
+
+          // Helper: which value do we sort by?
+          const getSortValue = (row: any): number => {
+            if (metricCode === "strikechance") {
+              const v = normalizeStrikeChanceValue(row.value);
+              return v ?? Infinity; // lower is better
+            }
+
+            if (powerTest) {
+              const mph = parseNum(row.raw_mph);
+              const score50 = parseNum(row.value);
+              return mph ?? score50 ?? -Infinity;
+            }
+
+            if (speedTest) {
+              const fps = parseNum(row.feet_per_second);
+              const seconds = parseNum(row.raw_seconds);
+              if (fps !== null) return fps; // higher is better
+              if (seconds !== null && seconds > 0) {
+                return 1 / seconds; // shorter time → bigger score
+              }
+              return -Infinity;
+            }
+
+            // Default: normalized 0–50 score
+            const score50 = parseNum(row.value);
+            return score50 ?? -Infinity;
+          };
+
           perPlayer.sort((a, b) => {
-            const va = parseNum(a.value) ?? 0;
-            const vb = parseNum(b.value) ?? 0;
+            const va = getSortValue(a);
+            const vb = getSortValue(b);
+
             if (metricCode === "strikechance") {
               // Lower K% is better
               return va - vb;
             }
-            // Otherwise higher is better
+
+            // Higher is better for everything else
             return vb - va;
           });
 
@@ -645,7 +710,7 @@ function OffenseTestsForMetric({
                     </tr>
                   </thead>
                   <tbody>
-                    {perPlayer.map((row) => {
+                    {perPlayer.map((row: any) => {
                       const displayName =
                         row.player_name ??
                         `Player ${row.player_id.slice(0, 8)}…`;
@@ -655,13 +720,18 @@ function OffenseTestsForMetric({
                           : "";
 
                       if (speedTest) {
-                        const seconds = parseNum(
-                          (row as any).raw_seconds
-                        );
-                        const fps = parseNum(row.value);
-                        const dist = parseNum(
-                          (row as any).raw_distance_ft
-                        );
+                        const seconds = parseNum(row.raw_seconds);
+                        const dist = parseNum(row.raw_distance_ft);
+                        let fps = parseNum(row.feet_per_second);
+
+                        if (
+                          fps === null &&
+                          seconds !== null &&
+                          dist !== null &&
+                          seconds > 0
+                        ) {
+                          fps = dist / seconds;
+                        }
 
                         return (
                           <tr
@@ -689,12 +759,13 @@ function OffenseTestsForMetric({
                         );
                       }
 
+                      // Non‑speed tests: single value column
                       let valueDisplay = "—";
 
                       if (metricCode === "strikechance") {
                         valueDisplay = formatStrikePercent(row.value);
                       } else if (powerTest) {
-                        const mph = parseNum(row.value);
+                        const mph = parseNum(row.raw_mph);
                         valueDisplay =
                           mph != null ? `${mph.toFixed(1)} mph` : "—";
                       } else {

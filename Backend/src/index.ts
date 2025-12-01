@@ -2012,13 +2012,23 @@ interface OffenseTestDef {
   id: string;                 // internal id, matches StatsPage mapping keys
   submetric: OffenseMetricCode;
   source: "hitting" | "athletic";
-  field: string;              // key inside `tests`
+  field: string;              // key inside `tests` for the points-based score
   label: string;
+  /**
+   * For power tests: metric_key for the raw MPH metric in assessment_metrics /
+   * player_assessment_values (e.g. "max_bat_speed").
+   */
+  raw_metric_key?: string;
+  /**
+   * For speed tests: metric_keys for raw time (seconds) and distance (feet).
+   */
+  time_metric_key?: string;
+  distance_metric_key?: string;
 }
 
 // We deliberately omit raw "speed_points_total" / "contact_raw_points" etc.
 const OFFENSE_TEST_DEFS: OffenseTestDef[] = [
-  // CONTACT – from breakdown.hitting.tests
+  // CONTACT – from breakdown.hitting.tests (points only)
   {
     id: "tee_ld_points",
     submetric: "contact",
@@ -2048,38 +2058,45 @@ const OFFENSE_TEST_DEFS: OffenseTestDef[] = [
     label: "Varied speed quality (5 pitches) points",
   },
 
-  // POWER – from breakdown.hitting.tests
+  // POWER – points live in breakdown.hitting.tests.*, but value should be MPH
   {
     id: "bat_speed_points",
     submetric: "power",
     source: "hitting",
     field: "bat_speed_points",
-    label: "Bat speed points",
+    label: "Max bat speed (MPH)",
+    raw_metric_key: "max_bat_speed",
   },
   {
     id: "exit_velo_points",
     submetric: "power",
     source: "hitting",
     field: "exit_velo_points",
-    label: "Max exit velo points",
+    label: "Max exit velo (MPH, tee)",
+    raw_metric_key: "max_exit_velo_tee",
   },
 
-  // SPEED – from breakdown.athletic.tests (or breakdown.athlete.tests)
+  // SPEED – points in breakdown.athletic.tests.*, raw time/distance from metrics
   {
     id: "run_1b_points",
     submetric: "speed",
     source: "athletic",
     field: "run_1b_points",
-    label: "Home to 1B points",
+    label: "Home to 1B",
+    time_metric_key: "timed_run_1b",
+    distance_metric_key: "timed_run_1b_distance_ft",
   },
   {
     id: "run_4b_points",
     submetric: "speed",
     source: "athletic",
     field: "run_4b_points",
-    label: "Home to home points",
+    label: "Home to home",
+    time_metric_key: "timed_run_4b",
+    distance_metric_key: "timed_run_4b_distance_ft",
   },
 ];
+
 
 interface PlayerForOffenseTests {
   player_id: string;
@@ -2087,11 +2104,28 @@ interface PlayerForOffenseTests {
   jersey_number: number | null;
   hitting: any | null;
   athletic: any | null;
+  /**
+   * Raw assessment metrics merged from the underlying hitting / athletic
+   * assessment rows for this player. Keys are metric_key values from
+   * assessment_metrics (e.g. "max_bat_speed", "timed_run_1b").
+   */
+  rawMetrics?: Record<string, number> | null;
 }
+
 
 /**
  * Build test‑level breakdowns (contact / power / speed) for a team
  * from the raw player_ratings rows plus basic player identity info.
+ *
+ * ratingRows should be the raw rows from player_ratings for this team
+ * (we'll internally pick the latest row per player that actually has
+ * hitting / athletic tests).
+ *
+ * rawMetricsByAssessmentId is optional; when provided, it should map a
+ * player_assessment_id to a map of metric_key → numeric value. This lets
+ * us surface:
+ *   - Power tests as MPH (max_bat_speed / max_exit_velo_tee)
+ *   - Speed tests as ft/s + underlying seconds / basepath
  */
 function buildOffenseTestBreakdownsForTeam(
   ratingRows: any[],
@@ -2099,7 +2133,8 @@ function buildOffenseTestBreakdownsForTeam(
     player_id: string;
     player_name: string | null;
     jersey_number: number | null;
-  }[]
+  }[],
+  rawMetricsByAssessmentId?: Map<number, Record<string, number>>
 ): OffenseTestsByMetric {
   const result: OffenseTestsByMetric = {
     offense: [],
@@ -2119,6 +2154,15 @@ function buildOffenseTestBreakdownsForTeam(
     return sum / nums.length;
   };
 
+  const coerceNumber = (raw: any): number | null => {
+    if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+    if (typeof raw === "string") {
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : null;
+    }
+    return null;
+  };
+
   const parseBreakdown = (row: any): any => {
     let b = row?.breakdown;
     if (!b) return {};
@@ -2132,17 +2176,19 @@ function buildOffenseTestBreakdownsForTeam(
     return b && typeof b === "object" ? b : {};
   };
 
-  // Latest hitting / athletic breakdown per player
+  // Latest hitting / athletic breakdown per player (by created_at),
+  // keeping track of which player_assessment_id they came from so we
+  // can look up raw metrics (mph, seconds, distance) later.
   const hittingByPlayer = new Map<
     string,
-    { created_at: string | null; breakdown: any }
+    { created_at: string | null; breakdown: any; assessment_id: number | null }
   >();
   const athleticByPlayer = new Map<
     string,
-    { created_at: string | null; breakdown: any }
+    { created_at: string | null; breakdown: any; assessment_id: number | null }
   >();
 
-  for (const row of ratingRows) {
+  for (const row of ratingRows ?? []) {
     const playerId = row.player_id as string | null;
     if (!playerId) continue;
 
@@ -2154,6 +2200,10 @@ function buildOffenseTestBreakdownsForTeam(
     const hasHittingTest = Object.values(hittingTests).some(isNumber);
     const hasSpeedTest = Object.values(athleticTests).some(isNumber);
     const createdAt = row.created_at as string | null;
+    const assessmentId =
+      (row as any).assessment_id != null
+        ? Number((row as any).assessment_id)
+        : null;
 
     if (hasHittingTest) {
       const existing = hittingByPlayer.get(playerId);
@@ -2164,7 +2214,11 @@ function buildOffenseTestBreakdownsForTeam(
             new Date(createdAt).getTime() >
               new Date(existing.created_at).getTime()))
       ) {
-        hittingByPlayer.set(playerId, { created_at: createdAt, breakdown });
+        hittingByPlayer.set(playerId, {
+          created_at: createdAt,
+          breakdown,
+          assessment_id: assessmentId,
+        });
       }
     }
 
@@ -2177,7 +2231,11 @@ function buildOffenseTestBreakdownsForTeam(
             new Date(createdAt).getTime() >
               new Date(existing.created_at).getTime()))
       ) {
-        athleticByPlayer.set(playerId, { created_at: createdAt, breakdown });
+        athleticByPlayer.set(playerId, {
+          created_at: createdAt,
+          breakdown,
+          assessment_id: assessmentId,
+        });
       }
     }
   }
@@ -2189,8 +2247,33 @@ function buildOffenseTestBreakdownsForTeam(
     const athleticSource = athleticByPlayer.get(pb.player_id);
 
     if (!hittingSource && !athleticSource) {
-      continue; // no test data at all
+      continue; // no test data at all for this player
     }
+
+    // Merge raw metrics from the underlying assessment rows for this player.
+    let mergedRaw: Record<string, number> | null = null;
+
+    const mergeFromAssessment = (assessmentId: number | null | undefined) => {
+      if (!rawMetricsByAssessmentId || assessmentId == null) return;
+      const bucket = rawMetricsByAssessmentId.get(assessmentId);
+      if (!bucket) return;
+      if (!mergedRaw) {
+        mergedRaw = { ...bucket };
+      } else {
+        for (const [key, value] of Object.entries(bucket)) {
+          if (
+            typeof value === "number" &&
+            Number.isFinite(value) &&
+            !(key in mergedRaw)
+          ) {
+            mergedRaw[key] = value;
+          }
+        }
+      }
+    };
+
+    mergeFromAssessment(hittingSource?.assessment_id ?? null);
+    mergeFromAssessment(athleticSource?.assessment_id ?? null);
 
     playersForTests.push({
       player_id: pb.player_id,
@@ -2201,6 +2284,7 @@ function buildOffenseTestBreakdownsForTeam(
         athleticSource?.breakdown?.athletic ??
         athleticSource?.breakdown?.athlete ??
         null,
+      rawMetrics: mergedRaw,
     });
   }
 
@@ -2211,22 +2295,70 @@ function buildOffenseTestBreakdownsForTeam(
         src && typeof src === "object"
           ? src.tests ?? src
           : {};
-      const raw = (tests as any)[def.field];
+      const rawPoints = (tests as any)[def.field];
+
+      const raw = p.rawMetrics ?? undefined;
 
       let value: number | null = null;
-      if (typeof raw === "number" && Number.isFinite(raw)) {
-        value = raw;
-      } else if (typeof raw === "string") {
-        const n = Number(raw);
-        value = Number.isFinite(n) ? n : null;
+      let raw_seconds: number | null | undefined;
+      let raw_distance_ft: number | null | undefined;
+
+      if (def.raw_metric_key && raw && raw[def.raw_metric_key] != null) {
+        // POWER tests: use the raw MPH metric from assessments
+        const v = raw[def.raw_metric_key];
+        value =
+          typeof v === "number" && Number.isFinite(v) ? (v as number) : null;
+      } else if (
+        def.time_metric_key &&
+        def.distance_metric_key &&
+        raw &&
+        (raw[def.time_metric_key] != null ||
+          raw[def.distance_metric_key] != null)
+      ) {
+        // SPEED tests: compute ft/s from distance / seconds
+        const secRaw = raw[def.time_metric_key];
+        const distRaw = raw[def.distance_metric_key];
+
+        const seconds =
+          typeof secRaw === "number" && Number.isFinite(secRaw) && secRaw > 0
+            ? (secRaw as number)
+            : null;
+        const distanceFt =
+          typeof distRaw === "number" &&
+          Number.isFinite(distRaw) &&
+          distRaw > 0
+            ? (distRaw as number)
+            : null;
+
+        raw_seconds = seconds;
+        raw_distance_ft = distanceFt;
+
+        if (seconds != null && distanceFt != null) {
+          value = distanceFt / seconds; // ft/s
+        } else {
+          // fall back to points if we don't have both pieces
+          value = coerceNumber(rawPoints);
+        }
+      } else {
+        // CONTACT tests (and any other fallback): just use the points value
+        value = coerceNumber(rawPoints);
       }
 
-      return {
+      const row: OffenseTestPlayerRow = {
         player_id: p.player_id,
         player_name: p.player_name,
         jersey_number: p.jersey_number,
         value,
       };
+
+      if (raw_seconds !== undefined) {
+        row.raw_seconds = raw_seconds;
+      }
+      if (raw_distance_ft !== undefined) {
+        row.raw_distance_ft = raw_distance_ft;
+      }
+
+      return row;
     });
 
     const team_average = avg(per_player.map((p) => p.value));
@@ -2243,6 +2375,35 @@ function buildOffenseTestBreakdownsForTeam(
       per_player,
     };
 
+    // For speed tests, also compute extra aggregates (seconds / basepath).
+    if (def.time_metric_key && def.distance_metric_key) {
+      const secondsList = per_player
+        .map((p) => p.raw_seconds)
+        .filter(isNumber);
+      const distanceList = per_player
+        .map((p) => p.raw_distance_ft)
+        .filter(isNumber);
+
+      const team_avg_seconds = avg(secondsList);
+      const base_path_feet =
+        distanceList.length > 0
+          ? Math.max(...distanceList)
+          : null;
+
+      let team_avg_feet_per_second: number | null = null;
+      if (
+        team_avg_seconds != null &&
+        base_path_feet != null &&
+        team_avg_seconds > 0
+      ) {
+        team_avg_feet_per_second = base_path_feet / team_avg_seconds;
+      }
+
+      breakdown.team_avg_seconds = team_avg_seconds;
+      breakdown.team_avg_feet_per_second = team_avg_feet_per_second;
+      breakdown.base_path_feet = base_path_feet;
+    }
+
     result[def.submetric].push(breakdown);
   }
 
@@ -2252,6 +2413,7 @@ function buildOffenseTestBreakdownsForTeam(
 
   return result;
 }
+
 
 /**
  * Optional: build the same test‑level structure from an array of
@@ -2690,10 +2852,12 @@ async function computeTeamOffenseDrilldown(
   type RatingRow = {
     id: number;
     player_id: string | null;
+    assessment_id: number | null;
     created_at: string | null;
     offense_score: number | null;
     breakdown: any;
   };
+
 
   const latestByPlayer = new Map<string, RatingRow>();
 
@@ -2811,11 +2975,103 @@ async function computeTeamOffenseDrilldown(
     jersey_number: jerseyByPlayer[playerId] ?? null,
   }));
 
-  const tests_by_metric = buildOffenseTestBreakdownsForTeam(
-    ratingRows ?? [],
-    playersForTests
+  // --- Load raw metrics for power / speed tests (MPH, seconds, distance ft) ---
+
+  // Collect all assessment_ids present in these rating rows so we can look up
+  // the underlying player_assessment_values for just those assessments.
+  const assessmentIds = Array.from(
+    new Set(
+      (ratingRows ?? [])
+        .map((row: any) => row.assessment_id as number | null)
+        .filter((id): id is number => typeof id === "number")
+    )
   );
 
+  let rawMetricsByAssessmentId:
+    | Map<number, Record<string, number>>
+    | undefined;
+
+  if (assessmentIds.length > 0) {
+    const OFFENSE_RAW_METRIC_KEYS = [
+      "max_bat_speed",
+      "max_exit_velo_tee",
+      "timed_run_1b",
+      "timed_run_4b",
+      "timed_run_1b_distance_ft",
+      "timed_run_4b_distance_ft",
+    ];
+
+    const { data: metricRows, error: metricsError } = await supabase
+      .from("assessment_metrics")
+      .select("id, metric_key")
+      .in("metric_key", OFFENSE_RAW_METRIC_KEYS);
+
+    if (metricsError) {
+      console.error(
+        "computeTeamOffenseDrilldown: error loading assessment_metrics for raw offense tests:",
+        metricsError
+      );
+    } else if (metricRows && metricRows.length > 0) {
+      const metricKeyById = new Map<number, string>();
+      const metricIds: number[] = [];
+
+      for (const row of metricRows as any[]) {
+        const mid = row.id as number;
+        const key = (row.metric_key as string) ?? null;
+        if (!key) continue;
+        metricKeyById.set(mid, key);
+        metricIds.push(mid);
+      }
+
+      if (metricIds.length > 0) {
+        const { data: valueRows, error: valuesError } = await supabase
+          .from("player_assessment_values")
+          .select("player_assessment_id, metric_id, value_numeric")
+          .in("player_assessment_id", assessmentIds)
+          .in("metric_id", metricIds);
+
+        if (valuesError) {
+          console.error(
+            "computeTeamOffenseDrilldown: error loading player_assessment_values for raw offense tests:",
+            valuesError
+          );
+        } else if (valueRows) {
+          rawMetricsByAssessmentId = new Map();
+
+          for (const row of valueRows as any[]) {
+            const assessmentId = row.player_assessment_id as number | null;
+            const metricId = row.metric_id as number | null;
+            const value = row.value_numeric as number | null;
+
+            if (
+              assessmentId == null ||
+              metricId == null ||
+              value == null ||
+              Number.isNaN(value)
+            ) {
+              continue;
+            }
+
+            const key = metricKeyById.get(metricId);
+            if (!key) continue;
+
+            let bucket = rawMetricsByAssessmentId.get(assessmentId);
+            if (!bucket) {
+              bucket = {};
+              rawMetricsByAssessmentId.set(assessmentId, bucket);
+            }
+            bucket[key] = value;
+          }
+        }
+      }
+    }
+  }
+
+  const tests_by_metric = buildOffenseTestBreakdownsForTeam(
+    ratingRows ?? [],
+    playersForTests,
+    rawMetricsByAssessmentId
+  );
 
   
   // 6) Build per-player metrics rows for the frontend
