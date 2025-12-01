@@ -21,7 +21,6 @@ import type {
   OffenseTestBreakdown,
 } from "../../api/types";
 import { getMetricMeta } from "../../config/metricMeta";
-import type { MetricMeta } from "../../config/metricMeta";
 
 // Local union for the offense drilldown cards we show in the UI
 type OffenseMetricCode =
@@ -302,34 +301,34 @@ function MetricCard({
   );
 }
 
-// Map backend test IDs → assessment_metrics.metric_key for metricMeta
-const OFFENSE_TEST_ID_TO_METRIC_KEY: Record<string, string> = {
+/**
+ * Map backend test fields → assessment_metrics.metric_key for metricMeta.
+ * We key this primarily by the backend `field` we set in the drilldown.
+ */
+const OFFENSE_TEST_FIELD_TO_METRIC_KEY: Record<string, string> = {
   // Contact – tee & matrix
   tee_ld_points: "tee_line_drive_test_10",
-  pitch_points: "m_10_fastball_quality", // Hitting Matrix – Fastball
-  varied_speed_points: "m_5_varied_speed_quality", // Hitting Matrix – Varied Speed
-  curveball_points: "m_5_curveball_quality", // Hitting Matrix – Curveball
+  pitch_points: "m_10_fastball_quality",
+  varied_speed_points: "m_5_varied_speed_quality",
+  curveball_points: "m_5_curveball_quality",
 
   // Power
   exit_velo_points: "max_exit_velo_tee",
   bat_speed_points: "max_bat_speed",
 
-  // Speed – 1B / 4B; we prefer distance_ft but fall back to time
+  // Speed – use the timed run tests, not the distance
   run_1b_points: "timed_run_1b",
   run_4b_points: "timed_run_4b",
 };
 
-function getHumanizedTestMeta(test: OffenseTestBreakdown): {
-  label: string;
-  description?: string;
-} {
-  // Prefer explicit mapping from backend test id → metric key; fall back to using id directly
-  const metricKey = OFFENSE_TEST_ID_TO_METRIC_KEY[test.id] ?? test.id;
+function getHumanizedTestMeta(
+  test: OffenseTestBreakdown
+): { label: string } {
+  // Backend OffenseTestBreakdown.id is the internal test id
+  // (tee_ld_points, pitch_points, run_1b_points, etc.)
+  const metricKey = OFFENSE_TEST_FIELD_TO_METRIC_KEY[test.id];
 
-  let meta: MetricMeta | undefined;
-  if (metricKey) {
-    meta = getMetricMeta(metricKey);
-  }
+  const meta = metricKey ? getMetricMeta(metricKey) : undefined;
 
   // Priority: shortLabel → displayName → backend label
   const label =
@@ -340,18 +339,24 @@ function getHumanizedTestMeta(test: OffenseTestBreakdown): {
   return { label };
 }
 
+
+type OffenseDrilldownViewMode = "team" | "players";
+
+interface OffenseTestsForMetricProps {
+  metricCode: OffenseMetricCode;
+  drilldown: TeamOffenseDrilldown | null;
+  viewMode: OffenseDrilldownViewMode;
+}
+
 /**
- * Per‑metric test breakdown chip list + per‑test leaderboards
+ * Per‑metric test breakdown chip list + per‑test leaderboards.
+ * Uses TeamOffenseDrilldown.tests_by_metric.
  */
 function OffenseTestsForMetric({
   metricCode,
   drilldown,
   viewMode,
-}: {
-  metricCode: OffenseMetricCode;
-  drilldown: TeamOffenseDrilldown | null;
-  viewMode: OffenseViewMode;
-}) {
+}: OffenseTestsForMetricProps) {
   if (!drilldown) return null;
 
   const rawTests =
@@ -359,7 +364,7 @@ function OffenseTestsForMetric({
       metricCode
     ] as OffenseTestBreakdown[] | undefined) ?? [];
 
-  // 1) Filter out raw‑score helpers (Contact Raw Score, Power Raw Score, Speed Raw Score, etc.)
+  // Filter out "raw score" helpers (Contact Raw Score, Power Raw Score, Speed Raw Score)
   const tests = rawTests.filter((t) => {
     const label = (t.label || "").toLowerCase();
     if (label.includes("raw score")) return false;
@@ -393,7 +398,11 @@ function OffenseTestsForMetric({
             let teamAvg = test.team_average;
             if (teamAvg === null || teamAvg === undefined) {
               const numericValues = (test.per_player || [])
-                .map((p) => (typeof p.value === "number" ? p.value : null))
+                .map((p) =>
+                  typeof p.value === "number" && Number.isFinite(p.value)
+                    ? p.value
+                    : null
+                )
                 .filter((v): v is number => v !== null);
               if (numericValues.length > 0) {
                 const sum = numericValues.reduce((acc, v) => acc + v, 0);
@@ -441,7 +450,7 @@ function OffenseTestsForMetric({
       {tests.map((test) => {
         const { label } = getHumanizedTestMeta(test);
 
-        // For strikechance, lower is better → sort ascending
+        // For strikechance, lower value is better → sort ascending
         const sorted = [...(test.per_player || [])].sort((a, b) => {
           const av =
             a.value ?? (metricCode === "strikechance" ? Infinity : -Infinity);
@@ -454,12 +463,27 @@ function OffenseTestsForMetric({
           return bv - av;
         });
 
+        let teamAvg = test.team_average;
+        if (teamAvg === null || teamAvg === undefined) {
+          const numericValues = (test.per_player || [])
+            .map((p) =>
+              typeof p.value === "number" && Number.isFinite(p.value)
+                ? p.value
+                : null
+            )
+            .filter((v): v is number => v !== null);
+          if (numericValues.length > 0) {
+            const sum = numericValues.reduce((acc, v) => acc + v, 0);
+            teamAvg = sum / numericValues.length;
+          }
+        }
+
         const teamAvgDisplay =
           metricCode === "strikechance"
-            ? formatStrikePercent(test.team_average)
-            : test.team_average == null
+            ? formatStrikePercent(teamAvg)
+            : teamAvg == null
             ? "—"
-            : test.team_average.toFixed(1);
+            : teamAvg.toFixed(1);
 
         return (
           <div
