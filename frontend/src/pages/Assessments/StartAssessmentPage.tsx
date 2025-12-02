@@ -149,12 +149,6 @@ function resolveTemplateId(team: TeamWithRole, evaluationType: string): number {
     );
   }
 
-  if (evaluationType === "full") {
-    throw new Error(
-      'Full Assessment templates are not wired yet. Please pick a specific section (Athletic, Hitting, etc.).'
-    );
-  }
-
   const templateId = (byAge as Record<string, number>)[evaluationType];
   if (!templateId) {
     throw new Error(
@@ -163,6 +157,50 @@ function resolveTemplateId(team: TeamWithRole, evaluationType: string): number {
   }
 
   return templateId;
+}
+
+const FULL_YOUTH_SECTIONS = [
+  { key: "athletic", label: "Athletic Skills" },
+  { key: "hitting", label: "Hitting" },
+  { key: "throwing", label: "Throwing" },
+  { key: "catching", label: "Catching" },
+  { key: "fielding", label: "Fielding" },
+] as const;
+
+const FULL_OLDER_SECTIONS = [
+  { key: "athletic", label: "Athletic Skills" },
+  { key: "hitting", label: "Hitting" },
+  { key: "pitching", label: "Pitching" },
+  { key: "catcher", label: "Catcher" },
+  { key: "firstbase", label: "First Base" },
+  { key: "infield", label: "Infield" },
+  { key: "outfield", label: "Outfield" },
+] as const;
+
+function resolveFullAssessmentSections(team: TeamWithRole) {
+  const ageKey = (team.age_group || "").toLowerCase();
+  const byAge = TEMPLATE_IDS[ageKey];
+
+  if (!byAge) {
+    throw new Error(
+      `No templates configured yet for age group "${team.age_group}"`
+    );
+  }
+
+  const isYouth = ["5u", "6u", "7u", "8u", "9u"].includes(ageKey);
+  const sectionDefs = isYouth ? FULL_YOUTH_SECTIONS : FULL_OLDER_SECTIONS;
+
+  return sectionDefs.map((section) => {
+    const templateId = (byAge as Record<string, number>)[section.key];
+
+    if (!templateId) {
+      throw new Error(
+        `No template configured for "${section.key}" at age group "${team.age_group}"`
+      );
+    }
+
+    return { ...section, templateId };
+  });
 }
 
 export default function StartAssessmentPage() {
@@ -435,7 +473,14 @@ export default function StartAssessmentPage() {
 
     (async () => {
       try {
-        const templateId = resolveTemplateId(selectedTeam, evaluationType);
+        const fullSections =
+          evaluationType === "full"
+            ? resolveFullAssessmentSections(selectedTeam)
+            : null;
+
+        const templateId = fullSections?.[0]?.templateId
+          ? fullSections[0].templateId
+          : resolveTemplateId(selectedTeam, evaluationType);
 
         // Decide which team players are included in this session.
         let playerIds: string[] = [];
@@ -479,8 +524,28 @@ export default function StartAssessmentPage() {
           player_ids: playerIds,
         });
 
+        const existingData = (res as any).session_data || {};
+
+        let nextSessionData: any = {
+          ...existingData,
+          evaluation_type: evaluationType,
+          session_mode: sessionMode,
+        };
+
+        if (fullSections && fullSections.length > 0) {
+          nextSessionData = {
+            ...nextSessionData,
+            full_sections: fullSections.map((section) => ({
+              key: section.key,
+              label: section.label,
+              template_id: section.templateId,
+            })),
+            active_full_section:
+              (existingData as any).active_full_section || fullSections[0].key,
+          };
+        }
+
         if (modeUI === "tryout") {
-          const existingData = (res as any).session_data || {};
           const existingTryouts: PreTryoutPlayer[] = Array.isArray(
             (existingData as any).tryout_players
           )
@@ -491,18 +556,20 @@ export default function StartAssessmentPage() {
             selectedPreTryoutIds.includes(p.id)
           );
 
-          const nextSessionData = {
-            ...existingData,
+          nextSessionData = {
+            ...nextSessionData,
             tryout_mode: true,
             tryout_players: [...existingTryouts, ...selectedTryoutPlayers],
           };
+        }
 
+        if (nextSessionData !== existingData) {
           try {
             await updateAssessmentSession(res.id, {
               session_data: nextSessionData,
             });
           } catch (err) {
-            console.error("Failed to mark session as tryout:", err);
+            console.error("Failed to update session metadata:", err);
           }
         }
 
