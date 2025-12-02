@@ -3062,156 +3062,178 @@ async function computeTeamStatsOverview(
 
   // 5) Build metrics (BPOP rating + offense/defense/pitching/athletic)
 
-  const metricDefs: { code: CoreMetricCode; label: string }[] = [
-    { code: "bpoprating", label: "BPOP Rating" },
-    { code: "offense", label: "Offense" },
-    { code: "defense", label: "Defense" },
-    { code: "pitching", label: "Pitching" },
-    { code: "athletic", label: "Athletic" },
-  ];
+  const buildMetricsForRows = (
+    ratingRows: TeamRatingRow[]
+  ): StatsMetricSummary[] => {
+    const metricDefs: { code: CoreMetricCode; label: string }[] = [
+      { code: "bpoprating", label: "BPOP Rating" },
+      { code: "offense", label: "Offense" },
+      { code: "defense", label: "Defense" },
+      { code: "pitching", label: "Pitching" },
+      { code: "athletic", label: "Athletic" },
+    ];
 
-  const metrics: StatsMetricSummary[] = metricDefs.map((def) => {
-    let values: number[] = [];
-    let percents: (number | null)[] = [];
+    return metricDefs.map((def) => {
+      let values: number[] = [];
 
-    const ratingLikeRows: RatingResult[] = rows.map((row) => ({
-      age_group_id: row.age_group_id,
-      overall_score: parseScore(row.overall_score),
-      offense_score: parseScore(row.offense_score),
-      defense_score: parseScore(row.defense_score),
-      pitching_score: parseScore(row.pitching_score),
-      breakdown: row.breakdown || null,
-    }));
+      const ratingLikeRows: RatingResult[] = ratingRows.map((row) => ({
+        age_group_id: row.age_group_id,
+        overall_score: parseScore(row.overall_score),
+        offense_score: parseScore(row.offense_score),
+        defense_score: parseScore(row.defense_score),
+        pitching_score: parseScore(row.pitching_score),
+        breakdown: row.breakdown || null,
+      }));
 
-    switch (def.code) {
-      case "bpoprating": {
-        values = ratingLikeRows
-          .map((r) => r.overall_score)
-          .filter((v): v is number => v != null && !Number.isNaN(v));
+      switch (def.code) {
+        case "bpoprating": {
+          values = ratingLikeRows
+            .map((r) => r.overall_score)
+            .filter((v): v is number => v != null && !Number.isNaN(v));
 
-        const avgScore = averageNonNull(values);
-        const percent =
-          avgScore != null ? Math.round((avgScore / 50) * 100) : null;
+          const avgScore = averageNonNull(values);
+          const percent =
+            avgScore != null ? Math.round((avgScore / 50) * 100) : null;
 
-        return {
-          code: def.code,
-          label: def.label,
-          score: avgScore != null ? Number(avgScore.toFixed(1)) : null,
-          percent,
-          sample_size: values.length,
-        };
+          return {
+            code: def.code,
+            label: def.label,
+            score: avgScore != null ? Number(avgScore.toFixed(1)) : null,
+            percent,
+            sample_size: values.length,
+          };
+        }
+
+        case "offense": {
+          const offenseScores = ratingLikeRows
+            .map((r) => r.offense_score)
+            .filter((v): v is number => v != null && !Number.isNaN(v));
+
+          const avgScore = averageNonNull(offenseScores);
+
+          const offensePercents = ratingLikeRows.map((r) =>
+            getMetricPercentFromRatings("offense", r)
+          );
+          const avgPercent = averageNonNull(
+            offensePercents.filter(
+              (p): p is number => p != null && !Number.isNaN(p)
+            )
+          );
+
+          return {
+            code: def.code,
+            label: def.label,
+            score: avgScore != null ? Number(avgScore.toFixed(1)) : null,
+            percent: avgPercent != null ? Math.round(avgPercent) : null,
+            sample_size: offenseScores.length,
+          };
+        }
+
+        case "defense": {
+          const defenseScores = ratingLikeRows
+            .map((r) => r.defense_score)
+            .filter((v): v is number => v != null && !Number.isNaN(v));
+
+          const avgScore = averageNonNull(defenseScores);
+
+          const defensePercents = ratingLikeRows.map((r) =>
+            getMetricPercentFromRatings("defense", r)
+          );
+          const avgPercent = averageNonNull(
+            defensePercents.filter(
+              (p): p is number => p != null && !Number.isNaN(p)
+            )
+          );
+
+          return {
+            code: def.code,
+            label: def.label,
+            score: avgScore != null ? Number(avgScore.toFixed(1)) : null,
+            percent: avgPercent != null ? Math.round(avgPercent) : null,
+            sample_size: defenseScores.length,
+          };
+        }
+
+        case "pitching": {
+          const pitchingScores = ratingLikeRows
+            .map((r) => r.pitching_score)
+            .filter((v): v is number => v != null && !Number.isNaN(v));
+
+          const avgScore = averageNonNull(pitchingScores);
+
+          const pitchingPercents = ratingLikeRows.map((r) =>
+            getMetricPercentFromRatings("pitching", r)
+          );
+          const avgPercent = averageNonNull(
+            pitchingPercents.filter(
+              (p): p is number => p != null && !Number.isNaN(p)
+            )
+          );
+
+          return {
+            code: def.code,
+            label: def.label,
+            score: avgScore != null ? Number(avgScore.toFixed(1)) : null,
+            percent: avgPercent != null ? Math.round(avgPercent) : null,
+            sample_size: pitchingScores.length,
+          };
+        }
+
+        case "athletic": {
+          const athleticPercents = ratingLikeRows.map((r) =>
+            getMetricPercentFromRatings("athletic", r)
+          );
+
+          const avgPercent = averageNonNull(
+            athleticPercents.filter(
+              (p): p is number => p != null && !Number.isNaN(p)
+            )
+          );
+
+          const avgScore =
+            avgPercent != null ? (avgPercent / 100) * 50 : null;
+
+          return {
+            code: def.code,
+            label: def.label,
+            score: avgScore != null ? Number(avgScore.toFixed(1)) : null,
+            percent: avgPercent != null ? Math.round(avgPercent) : null,
+            sample_size: athleticPercents.filter(
+              (p): p is number => p != null && !Number.isNaN(p)
+            ).length,
+          };
+        }
+
+        default:
+          return {
+            code: def.code,
+            label: def.label,
+            score: null,
+            percent: null,
+            sample_size: 0,
+          };
       }
+    });
+  };
 
-      case "offense": {
-        const offenseScores = ratingLikeRows
-          .map((r) => r.offense_score)
-          .filter((v): v is number => v != null && !Number.isNaN(v));
+  let metrics = buildMetricsForRows(rows);
 
-        const avgScore = averageNonNull(offenseScores);
+  if (options.evalScope === "specific") {
+    const fallbackRows = buildAllStarRows(filteredRows);
+    const fallbackMetrics = buildMetricsForRows(fallbackRows);
 
-        const offensePercents = ratingLikeRows.map((r) =>
-          getMetricPercentFromRatings("offense", r)
-        );
-        const avgPercent = averageNonNull(
-          offensePercents.filter(
-            (p): p is number => p != null && !Number.isNaN(p)
-          )
-        );
+    metrics = metrics.map((m) => {
+      const fallback = fallbackMetrics.find((f) => f.code === m.code);
+      if (!fallback) return m;
 
-        return {
-          code: def.code,
-          label: def.label,
-          score: avgScore != null ? Number(avgScore.toFixed(1)) : null,
-          percent: avgPercent != null ? Math.round(avgPercent) : null,
-          sample_size: offenseScores.length,
-        };
-      }
-
-      case "defense": {
-        const defenseScores = ratingLikeRows
-          .map((r) => r.defense_score)
-          .filter((v): v is number => v != null && !Number.isNaN(v));
-
-        const avgScore = averageNonNull(defenseScores);
-
-        const defensePercents = ratingLikeRows.map((r) =>
-          getMetricPercentFromRatings("defense", r)
-        );
-        const avgPercent = averageNonNull(
-          defensePercents.filter(
-            (p): p is number => p != null && !Number.isNaN(p)
-          )
-        );
-
-        return {
-          code: def.code,
-          label: def.label,
-          score: avgScore != null ? Number(avgScore.toFixed(1)) : null,
-          percent: avgPercent != null ? Math.round(avgPercent) : null,
-          sample_size: defenseScores.length,
-        };
-      }
-
-      case "pitching": {
-        const pitchingScores = ratingLikeRows
-          .map((r) => r.pitching_score)
-          .filter((v): v is number => v != null && !Number.isNaN(v));
-
-        const avgScore = averageNonNull(pitchingScores);
-
-        const pitchingPercents = ratingLikeRows.map((r) =>
-          getMetricPercentFromRatings("pitching", r)
-        );
-        const avgPercent = averageNonNull(
-          pitchingPercents.filter(
-            (p): p is number => p != null && !Number.isNaN(p)
-          )
-        );
-
-        return {
-          code: def.code,
-          label: def.label,
-          score: avgScore != null ? Number(avgScore.toFixed(1)) : null,
-          percent: avgPercent != null ? Math.round(avgPercent) : null,
-          sample_size: pitchingScores.length,
-        };
-      }
-
-      case "athletic": {
-        const athleticPercents = ratingLikeRows.map((r) =>
-          getMetricPercentFromRatings("athletic", r)
-        );
-
-        const avgPercent = averageNonNull(
-          athleticPercents.filter(
-            (p): p is number => p != null && !Number.isNaN(p)
-          )
-        );
-
-        const avgScore =
-          avgPercent != null ? (avgPercent / 100) * 50 : null;
-
-        return {
-          code: def.code,
-          label: def.label,
-          score: avgScore != null ? Number(avgScore.toFixed(1)) : null,
-          percent: avgPercent != null ? Math.round(avgPercent) : null,
-          sample_size: athleticPercents.filter(
-            (p): p is number => p != null && !Number.isNaN(p)
-          ).length,
-        };
-      }
-
-      default:
-        return {
-          code: def.code,
-          label: def.label,
-          score: null,
-          percent: null,
-          sample_size: 0,
-        };
-    }
-  });
+      return {
+        ...m,
+        score: m.score ?? fallback.score,
+        percent: m.percent ?? fallback.percent,
+        sample_size: m.sample_size || fallback.sample_size,
+      };
+    });
+  }
 
   return {
     team_id: teamRow.id,
@@ -3410,7 +3432,44 @@ async function computeTeamOffenseDrilldown(
     metricsByPlayerId.set(playerId, metrics);
   }
 
-  if (!metricsByPlayerId.size) {
+  const fallbackMetricsByPlayer = new Map<string, BattingPlayerMetrics>();
+
+  if (options.evalScope === "specific") {
+    const fallbackRows = buildAllStarRows(filteredRows);
+
+    for (const row of fallbackRows) {
+      const playerId = row.player_id;
+      if (!playerId) continue;
+      const metrics = getBattingMetricsFromRating(row);
+      if (!metrics) continue;
+      fallbackMetricsByPlayer.set(playerId, metrics);
+    }
+  }
+
+  const mergedMetricsByPlayer = new Map<string, BattingPlayerMetrics>();
+
+  const mergedPlayerIds = Array.from(
+    new Set([
+      ...metricsByPlayerId.keys(),
+      ...fallbackMetricsByPlayer.keys(),
+    ])
+  );
+
+  for (const pid of mergedPlayerIds) {
+    const primary = metricsByPlayerId.get(pid);
+    const fallback = fallbackMetricsByPlayer.get(pid);
+
+    if (primary) {
+      mergedMetricsByPlayer.set(pid, {
+        ...fallback,
+        ...primary,
+      });
+    } else if (fallback) {
+      mergedMetricsByPlayer.set(pid, fallback);
+    }
+  }
+
+  if (!mergedMetricsByPlayer.size) {
     return {
       team_id: teamRow.id,
       team_name: teamRow.name ?? null,
@@ -3428,8 +3487,8 @@ async function computeTeamOffenseDrilldown(
     };
   }
 
-  const playerIds = Array.from(metricsByPlayerId.keys());
-  const battingMetrics = Array.from(metricsByPlayerId.values());
+  const playerIds = Array.from(mergedMetricsByPlayer.keys());
+  const battingMetrics = Array.from(mergedMetricsByPlayer.values());
 
   // 5) Load player names / jersey numbers for these players
   const nameByPlayer: Record<string, string | null> = {};
@@ -3576,10 +3635,10 @@ async function computeTeamOffenseDrilldown(
     }
   );
 
-  
+
   // 6) Build per-player metrics rows for the frontend
   const players: OffenseDrilldownPlayerMetrics[] = playerIds.map((playerId) => {
-    const m = metricsByPlayerId.get(playerId)!;
+    const m = mergedMetricsByPlayer.get(playerId)!;
     const displayName =
       nameByPlayer[playerId] ??
       `Player ${playerId.slice(0, 8)}…`;

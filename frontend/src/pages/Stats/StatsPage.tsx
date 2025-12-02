@@ -1286,7 +1286,7 @@ export default function StatsPage() {
   const [teamEvaluationsError, setTeamEvaluationsError] = useState<string | null>(
     null
   );
-  const [selectedEvalKey, setSelectedEvalKey] = useState<string>("latest_eval");
+  const [selectedEvalKey, setSelectedEvalKey] = useState<string>("all_star");
 
   const [teamStats, setTeamStats] = useState<TeamStatsOverview | null>(null);
   const [teamStatsLoading, setTeamStatsLoading] = useState(false);
@@ -1365,11 +1365,6 @@ export default function StatsPage() {
   }, [isCoachLike, selectedTeamId]);
 
   useEffect(() => {
-    if (!isCoachLike || viewMode !== "team") return;
-    setSelectedEvalKey("latest_eval");
-  }, [selectedTeamId, isCoachLike, viewMode]);
-
-  useEffect(() => {
     if (!selectedTeamId || !isCoachLike || viewMode !== "team") {
       setTeamEvaluations([]);
       return;
@@ -1406,14 +1401,14 @@ export default function StatsPage() {
   const evaluationSelectOptions = useMemo<EvaluationSelectOption[]>(() => {
     const base: EvaluationSelectOption[] = [
       {
-        key: "latest_eval",
-        label: "Latest Eval",
-        evalScope: "latest_eval",
-      },
-      {
         key: "all_star",
         label: "All-Star Points",
         evalScope: "all_star",
+      },
+      {
+        key: "latest_eval",
+        label: "Latest Eval",
+        evalScope: "latest_eval",
       },
     ];
 
