@@ -2664,7 +2664,7 @@ async function loadTeamAssessmentMeta(
     .from("player_assessments")
     .select("id, performed_at, created_at")
     .eq("team_id", teamId)
-    .eq("kind", "official")
+    .in("kind", ["official", "practice"])
     .order("performed_at", { ascending: false });
 
   if (error || !data) {
@@ -6121,6 +6121,8 @@ function getBattingMetricsFromRating(
     }
   }
 
+  const derived = (breakdown?.derived as Record<string, any>) ?? {};
+
   const hittingTests =
     (breakdown?.hitting?.tests as Record<string, any> | undefined) ??
     (breakdown?.hitting as Record<string, any> | undefined) ??
@@ -6142,28 +6144,34 @@ function getBattingMetricsFromRating(
     return fallback;
   };
 
-  // Contact / power from hitting tests
+  const clampScore = (raw: number): number =>
+    Math.max(0, Math.min(50, raw));
+
+  // Contact / power from hitting tests (0–50 expected from backend)
   const contactRaw =
+    derived.contact_score ??
     hittingTests.contact_score ??
     breakdown?.offense?.contact_score ??
     breakdown?.contact_score;
 
   const powerRaw =
+    derived.power_score ??
     hittingTests.power_score ??
     breakdown?.offense?.power_score ??
     breakdown?.power_score;
 
   // Speed from athletic tests (11u+ template has speed_score here)
   const speedRaw =
+    derived.speed_score ??
     athleticTests.speed_score ??
     breakdown?.hitting?.speed_score ??
     breakdown?.athletic?.speed_score ??
     breakdown?.athlete?.speed_score ??
     breakdown?.running?.speed_score;
 
-  const contact = toNumber(contactRaw, hittingScoreRaw ?? 0);
-  const power = toNumber(powerRaw, hittingScoreRaw ?? 0);
-  const speed = toNumber(speedRaw, 0);
+  const contact = clampScore(toNumber(contactRaw, hittingScoreRaw ?? 0));
+  const power = clampScore(toNumber(powerRaw, hittingScoreRaw ?? 0));
+  const speed = clampScore(toNumber(speedRaw, 0));
 
   // StrikeChance (hitter) = explicit percent if present, else derived from contact
   const strikeChance =
@@ -8868,7 +8876,35 @@ app.get("/teams/:teamId/stats/evaluations", async (req, res) => {
   try {
     const meta = await loadTeamAssessmentMeta(teamId);
 
-    const evaluations = meta.orderedDates.map((iso) => ({
+    let evaluationDates = [...meta.orderedDates];
+
+    // Fallback: if we didn't find assessment rows (or only had malformed dates),
+    // use any player_ratings rows for this team to surface created_at timestamps
+    // as individual evaluation dates.
+    if (!evaluationDates.length) {
+      const { data: ratingRows, error: ratingErr } = await supabase
+        .from("player_ratings")
+        .select("created_at")
+        .eq("team_id", teamId)
+        .order("created_at", { ascending: false });
+
+      if (ratingErr) {
+        console.error(
+          "Team evaluations fallback: error loading player_ratings:",
+          ratingErr
+        );
+      } else if (ratingRows && ratingRows.length) {
+        const createdDates = (ratingRows as any[])
+          .map((row) => normalizeIsoDate(row.created_at))
+          .filter((d): d is string => !!d);
+
+        evaluationDates = Array.from(new Set(createdDates)).sort(
+          (a, b) => new Date(b).getTime() - new Date(a).getTime()
+        );
+      }
+    }
+
+    const evaluations = evaluationDates.map((iso) => ({
       id: iso,
       performed_at: iso,
       label: iso,
