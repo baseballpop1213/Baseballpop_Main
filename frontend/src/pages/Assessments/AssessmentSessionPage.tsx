@@ -1,5 +1,5 @@
 // src/pages/Assessments/AssessmentSessionPage.tsx
-import { useEffect, useMemo, useState, Fragment } from "react";
+import { useEffect, useMemo, useState, Fragment, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
   getAssessmentSession,
@@ -37,6 +37,12 @@ interface TryoutPlayerSession {
   last_name?: string | null;
   email?: string | null;
   phone?: string | null;
+}
+
+interface FullSectionConfig {
+  key: string;
+  label: string;
+  template_id: number;
 }
 
 interface GridColumn {
@@ -364,6 +370,12 @@ export default function AssessmentSessionPage() {
   const [metrics, setMetrics] = useState<AssessmentMetric[]>([]);
   const [loadingTemplate, setLoadingTemplate] = useState(false);
   const [templateError, setTemplateError] = useState<string | null>(null);
+  const [templateCache, setTemplateCache] = useState<
+    Record<number, { template: AssessmentTemplate; metrics: AssessmentMetric[] }>
+  >({});
+  const [activeFullSection, setActiveFullSection] = useState<string | null>(
+    null
+  );
 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -466,46 +478,6 @@ export default function AssessmentSessionPage() {
     };
   }, [session?.team_id]);
 
-  // Load template + metrics for this session
-  useEffect(() => {
-    if (!session?.template_id) return;
-
-    const templateId = session.template_id;
-    let cancelled = false;
-
-    async function loadTemplate() {
-      setLoadingTemplate(true);
-      setTemplateError(null);
-
-      try {
-        const data = await getTemplateWithMetrics(templateId);
-        if (!cancelled) {
-          setTemplate(data.template);
-          setMetrics(data.metrics || []);
-        }
-      } catch (err: any) {
-        if (!cancelled) {
-          setTemplateError(
-            err?.response?.data?.error ||
-              err?.response?.data?.message ||
-              err?.message ||
-              "Failed to load assessment template"
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setLoadingTemplate(false);
-        }
-      }
-    }
-
-    loadTemplate();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [session?.template_id]);
-
   const isFinalized = session?.status === "finalized";
   const isTryoutSession =
     session?.mode === "tryout" || (sessionData as any)?.tryout_mode === true;
@@ -594,8 +566,172 @@ export default function AssessmentSessionPage() {
     (sessionData as any)?.session_mode ??
     "single";
 
-  const effectiveEvalType =
+  const sessionEvalType =
     session?.evaluation_type ?? (sessionData as any)?.evaluation_type ?? null;
+
+  const fullSections: FullSectionConfig[] = useMemo(() => {
+    if (sessionEvalType !== "full") return [];
+
+    const raw = (sessionData as any)?.full_sections;
+    if (!Array.isArray(raw)) return [];
+
+    return raw
+      .map((item) => {
+        const templateId = Number((item as any).template_id);
+        if (!templateId || Number.isNaN(templateId)) return null;
+
+        const key = (item as any).key as string | undefined;
+        const label = ((item as any).label as string | undefined) || key;
+
+        if (!key) return null;
+
+        return {
+          key,
+          label: label || key,
+          template_id: templateId,
+        } as FullSectionConfig;
+      })
+      .filter((item): item is FullSectionConfig => Boolean(item));
+  }, [sessionEvalType, sessionData]);
+
+  useEffect(() => {
+    if (sessionEvalType !== "full") {
+      setActiveFullSection(null);
+      return;
+    }
+
+    const preferred = (sessionData as any)?.active_full_section as
+      | string
+      | undefined;
+    const fallback = fullSections[0]?.key ?? null;
+
+    setActiveFullSection((prev) => preferred || prev || fallback);
+  }, [sessionEvalType, sessionData, fullSections]);
+
+  const activeFullSectionConfig = useMemo(() => {
+    if (sessionEvalType !== "full") return null;
+
+    const activeKey =
+      activeFullSection || (sessionData as any)?.active_full_section || null;
+
+    if (activeKey) {
+      const found = fullSections.find((s) => s.key === activeKey);
+      if (found) return found;
+    }
+
+    return fullSections[0] ?? null;
+  }, [sessionEvalType, activeFullSection, sessionData, fullSections]);
+
+  const effectiveEvalType =
+    sessionEvalType === "full"
+      ? activeFullSectionConfig?.key || null
+      : sessionEvalType;
+
+  const activeTemplateId =
+    sessionEvalType === "full"
+      ? activeFullSectionConfig?.template_id ?? session?.template_id
+      : session?.template_id;
+
+  // Load template + metrics for the active section
+  useEffect(() => {
+    const templateId = activeTemplateId;
+    if (templateId == null) return;
+    const resolvedTemplateId: number = templateId;
+
+    const cached = templateCache[resolvedTemplateId];
+    if (cached) {
+      setTemplate(cached.template);
+      setMetrics(cached.metrics);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadTemplate() {
+      setLoadingTemplate(true);
+      setTemplateError(null);
+
+      try {
+        const data = await getTemplateWithMetrics(resolvedTemplateId);
+        if (!cancelled) {
+          setTemplate(data.template);
+          setMetrics(data.metrics || []);
+          setTemplateCache((prev) => ({
+            ...prev,
+            [resolvedTemplateId]: {
+              template: data.template,
+              metrics: data.metrics || [],
+            },
+          }));
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          setTemplateError(
+            err?.response?.data?.error ||
+              err?.response?.data?.message ||
+              err?.message ||
+              "Failed to load assessment template"
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingTemplate(false);
+        }
+      }
+    }
+
+    loadTemplate();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTemplateId, templateCache]);
+
+  // Prefetch the other templates in a full assessment so we can show per-section
+  // progress and switch tabs instantly.
+  useEffect(() => {
+    if (sessionEvalType !== "full") return;
+    if (!fullSections.length) return;
+
+    const missing = fullSections
+      .map((s) => s.template_id)
+      .filter((id) => id && !templateCache[id]);
+
+    if (!missing.length) return;
+
+    let cancelled = false;
+
+    (async () => {
+      for (const templateId of missing) {
+        try {
+          const data = await getTemplateWithMetrics(templateId);
+          if (cancelled) return;
+
+          setTemplateCache((prev) => {
+            if (prev[templateId]) return prev;
+            return {
+              ...prev,
+              [templateId]: {
+                template: data.template,
+                metrics: data.metrics || [],
+              },
+            };
+          });
+        } catch (err) {
+          if (!cancelled) {
+            console.error(
+              `Failed to prefetch template ${templateId}:`,
+              err
+            );
+          }
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionEvalType, fullSections, templateCache]);
 
   // Athletic Skills: which section is active in the grid tabs
   const [activeAthleticBlock, setActiveAthleticBlock] = useState<
@@ -856,45 +992,98 @@ export default function AssessmentSessionPage() {
 
   
 
-  // Overall progress: how many metrics have at least one value for any player
-  const metricsCompletion = useMemo(() => {
-    if (!metrics.length || !gridColumns.length || !sessionData) {
-      return { metricsWithAnyValue: 0, totalMetrics: metrics.length };
-    }
+  const computeMetricsCompletion = useCallback(
+    (metricList: AssessmentMetric[]) => {
+      if (!metricList.length || !gridColumns.length || !sessionData) {
+        return { metricsWithAnyValue: 0, totalMetrics: metricList.length };
+      }
 
-    const values = sessionData.values || {};
-    let metricsWithAnyValue = 0;
+      const values = sessionData.values || {};
+      let metricsWithAnyValue = 0;
 
-    for (const m of metrics) {
-      const metricId = m.id;
-      let hasValue = false;
+      for (const m of metricList) {
+        const metricId = m.id;
+        let hasValue = false;
 
-      for (const col of gridColumns) {
-        const perPlayer = (values as any)[col.id] || {};
-        const v = perPlayer[metricId];
-        const numeric = v?.value_numeric;
-        const text = v?.value_text;
+        for (const col of gridColumns) {
+          const perPlayer = (values as any)[col.id] || {};
+          const v = perPlayer[metricId];
+          const numeric = v?.value_numeric;
+          const text = v?.value_text;
 
-        if (
-          (numeric !== null &&
-            numeric !== undefined &&
-            !Number.isNaN(numeric)) ||
-          (text !== null &&
-            text !== undefined &&
-            String(text).trim() !== "")
-        ) {
-          hasValue = true;
-          break;
+          if (
+            (numeric !== null &&
+              numeric !== undefined &&
+              !Number.isNaN(numeric)) ||
+            (text !== null &&
+              text !== undefined &&
+              String(text).trim() !== "")
+          ) {
+            hasValue = true;
+            break;
+          }
+        }
+
+        if (hasValue) {
+          metricsWithAnyValue += 1;
         }
       }
 
-      if (hasValue) {
-        metricsWithAnyValue += 1;
-      }
-    }
+      return { metricsWithAnyValue, totalMetrics: metricList.length };
+    },
+    [gridColumns, sessionData]
+  );
 
-    return { metricsWithAnyValue, totalMetrics: metrics.length };
-  }, [metrics, gridColumns, sessionData]);
+  // Overall progress for the active tab
+  const metricsCompletion = useMemo(
+    () => computeMetricsCompletion(metrics),
+    [metrics, computeMetricsCompletion]
+  );
+
+  const fullProgress = useMemo(() => {
+    if (sessionEvalType !== "full") return null;
+    if (!fullSections.length) return null;
+
+    const perSection = fullSections.map((section) => {
+      const cached = templateCache[section.template_id];
+      const metricList = cached?.metrics ||
+        (section.template_id === activeTemplateId ? metrics : []);
+      const progress = computeMetricsCompletion(metricList);
+
+      return {
+        ...section,
+        ...progress,
+      };
+    });
+
+    const totals = perSection.reduce(
+      (acc, section) => {
+        acc.metricsWithAnyValue += section.metricsWithAnyValue;
+        acc.totalMetrics += section.totalMetrics;
+        return acc;
+      },
+      { metricsWithAnyValue: 0, totalMetrics: 0 }
+    );
+
+    return { perSection, totals };
+  }, [
+    sessionEvalType,
+    fullSections,
+    templateCache,
+    activeTemplateId,
+    metrics,
+    computeMetricsCompletion,
+  ]);
+
+  function handleSelectFullSection(key: string) {
+    if (sessionEvalType !== "full") return;
+    setSessionData((prev) => {
+      if (!prev) return prev;
+      return { ...prev, active_full_section: key } as EvalSessionData;
+    });
+    setActiveFullSection(key);
+    setDirty(true);
+  }
 
   // Speed block helpers: base path length + stopwatch for 1B / 4B speed
   const speedMetricKeys = {
@@ -1849,60 +2038,106 @@ export default function AssessmentSessionPage() {
         return;
       }
 
-      if (!metrics.length) {
+      const sectionsToFinalize =
+        sessionEvalType === "full" && fullSections.length
+          ? fullSections
+          : [
+              {
+                key: effectiveEvalType || "assessment",
+                label: template?.name || "Assessment",
+                template_id: session?.template_id ?? activeTemplateId,
+              },
+            ];
+
+      const metricsByTemplate = new Map<number, AssessmentMetric[]>();
+
+      for (const section of sectionsToFinalize) {
+        const cached = templateCache[section.template_id];
+        const list = cached?.metrics ||
+          (section.template_id === activeTemplateId ? metrics : []);
+        if (list && list.length) {
+          metricsByTemplate.set(section.template_id, list);
+        }
+      }
+
+      if (!metricsByTemplate.size) {
         setFinalizeError(
           "No metrics are defined for this template. Cannot finalize."
         );
         return;
       }
 
+      const missingTemplates = sectionsToFinalize.filter(
+        (section) => !(metricsByTemplate.get(section.template_id)?.length)
+      );
+
+      if (missingTemplates.length) {
+        setFinalizeError(
+          "Load each assessment section before finalizing so we know which metrics to save."
+        );
+        return;
+      }
+
       const valuesByPlayer = sessionData.values || {};
       const assessmentsByPlayer: Record<string, number> = {};
+      const assessmentsBySection: Record<string, Record<string, number>> =
+        {};
       let createdCount = 0;
 
       // Only create player_assessment records for roster players
-      for (const playerId of rosterIds) {
-        const perMetricValues = (valuesByPlayer as any)[playerId] || {};
-        const valueArray = metrics
-          .map((m) => {
-            const v = perMetricValues[m.id];
-            const numeric = v?.value_numeric ?? null;
-            const text = v?.value_text ?? null;
+      for (const section of sectionsToFinalize) {
+        const sectionMetrics = metricsByTemplate.get(section.template_id) || [];
+        if (!sectionMetrics.length) continue;
 
-            if (
-              numeric === null &&
-              (text === null || String(text).trim() === "")
-            ) {
-              return null;
-            }
+        for (const playerId of rosterIds) {
+          const perMetricValues = (valuesByPlayer as any)[playerId] || {};
+          const valueArray = sectionMetrics
+            .map((m) => {
+              const v = perMetricValues[m.id];
+              const numeric = v?.value_numeric ?? null;
+              const text = v?.value_text ?? null;
 
-            return {
-              metric_id: m.id,
-              value_numeric: numeric,
-              value_text: text,
-            };
-          })
-          .filter((v) => v !== null) as {
-          metric_id: number;
-          value_numeric: number | null;
-          value_text: string | null;
-        }[];
+              if (
+                numeric === null &&
+                (text === null || String(text).trim() === "")
+              ) {
+                return null;
+              }
 
-        if (!valueArray.length) {
-          continue;
-        }
+              return {
+                metric_id: m.id,
+                value_numeric: numeric,
+                value_text: text,
+              };
+            })
+            .filter((v) => v !== null) as {
+            metric_id: number;
+            value_numeric: number | null;
+            value_text: string | null;
+          }[];
 
-        const result = await createAssessment({
-          player_id: playerId,
-          team_id: session.team_id ?? null,
-          template_id: session.template_id,
-          kind: session.mode as EvalMode,
-          values: valueArray,
-        });
+          if (!valueArray.length) {
+            continue;
+          }
 
-        if (result && typeof (result as any).assessment_id === "number") {
-          assessmentsByPlayer[playerId] = (result as any).assessment_id;
-          createdCount += 1;
+          const result = await createAssessment({
+            player_id: playerId,
+            team_id: session.team_id ?? null,
+            template_id: section.template_id,
+            kind: session.mode as EvalMode,
+            values: valueArray,
+          });
+
+          if (result && typeof (result as any).assessment_id === "number") {
+            assessmentsByPlayer[playerId] = (result as any).assessment_id;
+            const sectionKey = section.key || String(section.template_id);
+            assessmentsBySection[sectionKey] =
+              assessmentsBySection[sectionKey] || {};
+            assessmentsBySection[sectionKey][playerId] = (
+              result as any
+            ).assessment_id;
+            createdCount += 1;
+          }
         }
       }
 
@@ -1913,14 +2148,26 @@ export default function AssessmentSessionPage() {
         return;
       }
 
+      const allMetricIds: number[] = [];
+      metricsByTemplate.forEach((list) => {
+        list.forEach((m) => allMetricIds.push(m.id));
+      });
+
       const finalizedSessionData: EvalSessionData = {
         ...sessionData,
         player_ids: rosterIds,
-        completed_metric_ids: metrics.map((m) => m.id),
+        completed_metric_ids: Array.from(new Set(allMetricIds)),
         assessments_by_player: {
           ...(sessionData as any).assessments_by_player,
           ...assessmentsByPlayer,
         },
+        assessments_by_section:
+          sessionEvalType === "full"
+            ? {
+                ...(sessionData as any).assessments_by_section,
+                ...assessmentsBySection,
+              }
+            : (sessionData as any).assessments_by_section,
       };
 
       const updated = await updateAssessmentSession(session.id, {
@@ -1997,6 +2244,11 @@ export default function AssessmentSessionPage() {
         <p className="text-xs text-slate-400 mt-1">
           Mode: {session.mode} · Session mode: {effectiveSessionMode}
         </p>
+        {sessionEvalType === "full" && activeFullSectionConfig && (
+          <p className="text-xs text-slate-400 mt-1">
+            Full assessment · Current section: {activeFullSectionConfig.label}
+          </p>
+        )}
         {effectiveEvalType === "athletic" && (
           <p className="text-xs text-slate-400 mt-1">
             Athletic skills battery: speed, agility, strength, power, balance,
@@ -2023,6 +2275,94 @@ export default function AssessmentSessionPage() {
           </p>
         )}
       </section>
+
+      {sessionEvalType === "full" && fullSections.length > 0 && (
+        <section className="rounded-xl bg-slate-900/70 border border-slate-700 p-3 space-y-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="space-y-1">
+              <h3 className="text-sm font-semibold text-slate-100">
+                Full assessment overview
+              </h3>
+              <p className="text-[11px] text-slate-400 max-w-3xl">
+                Use the tabs below to move between sections. Each tab contains
+                the same metrics you would see when running that individual
+                assessment from the dashboard.
+              </p>
+            </div>
+
+            {fullProgress && fullProgress.totals.totalMetrics > 0 && (
+              <div className="min-w-[14rem] w-full md:w-auto">
+                <div className="flex items-center justify-between text-[11px] text-slate-300 mb-1">
+                  <span>Overall progress</span>
+                  <span>
+                    {fullProgress.totals.metricsWithAnyValue}/
+                    {fullProgress.totals.totalMetrics} metrics started
+                  </span>
+                </div>
+                <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-400"
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        Math.round(
+                          (fullProgress.totals.metricsWithAnyValue /
+                            fullProgress.totals.totalMetrics) *
+                            100
+                        )
+                      )}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {(fullProgress?.perSection ||
+              fullSections.map((s) => ({
+                ...s,
+                metricsWithAnyValue: 0,
+                totalMetrics: 0,
+              }))
+            ).map((section) => {
+              const isActive = effectiveEvalType === section.key;
+              const percent = section.totalMetrics
+                ? Math.round(
+                    (section.metricsWithAnyValue / section.totalMetrics) * 100
+                  )
+                : 0;
+
+              return (
+                <button
+                  key={section.key}
+                  type="button"
+                  onClick={() => handleSelectFullSection(section.key)}
+                  className={`min-w-[10rem] rounded-lg border px-3 py-2 text-left text-slate-100 transition ${
+                    isActive
+                      ? "border-emerald-400 bg-emerald-500/10"
+                      : "border-slate-700 bg-slate-800/70 hover:bg-slate-800"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold">
+                      {section.label}
+                    </span>
+                    <span className="text-[10px] text-slate-300">
+                      {percent}%
+                    </span>
+                  </div>
+                  <div className="mt-1 text-[11px] text-slate-400">
+                    {section.totalMetrics
+                      ? `${section.metricsWithAnyValue}/${section.totalMetrics} metrics started`
+                      : "No metrics loaded yet"}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {/* Players in this session (roster) */}
       <section className="rounded-xl bg-slate-900/70 border border-slate-700 p-3 space-y-2">
