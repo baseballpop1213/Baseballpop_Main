@@ -2644,8 +2644,15 @@ interface TeamEvalSelection {
 
 interface TeamAssessmentMeta {
   byAssessmentId: Map<number, string>;
-  orderedDates: string[]; // ISO strings, most recent first
+  orderedDates: string[]; // ISO date-only strings (YYYY-MM-DD), most recent first
   latestDate: string | null;
+  assessments: {
+    id: number;
+    date: string; // YYYY-MM-DD
+    template_id: number | null;
+    template_name: string | null;
+    kind: string | null;
+  }[];
 }
 
 function normalizeIsoDate(value: string | null | undefined): string | null {
@@ -2655,32 +2662,78 @@ function normalizeIsoDate(value: string | null | undefined): string | null {
   return date.toISOString();
 }
 
+function normalizeDateOnly(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
+}
+
 async function loadTeamAssessmentMeta(
   teamId: string
 ): Promise<TeamAssessmentMeta> {
   const byAssessmentId = new Map<number, string>();
+  const assessments: TeamAssessmentMeta["assessments"] = [];
 
   const { data, error } = await supabase
     .from("player_assessments")
-    .select("id, performed_at, created_at")
+    .select("id, performed_at, created_at, template_id, kind")
     .eq("team_id", teamId)
-    .eq("kind", "official")
+    .in("kind", ["official", "practice"])
     .order("performed_at", { ascending: false });
 
   if (error || !data) {
     console.error("Error loading assessments for team stats:", error);
-    return { byAssessmentId, orderedDates: [], latestDate: null };
+    return { byAssessmentId, orderedDates: [], latestDate: null, assessments };
   }
 
+  const templateIds = new Set<number>();
   const dates: string[] = [];
 
   for (const row of data as any[]) {
-    const normalized =
-      normalizeIsoDate(row.performed_at) || normalizeIsoDate(row.created_at);
-    if (!normalized) continue;
-    byAssessmentId.set(row.id as number, normalized);
-    dates.push(normalized);
+    const normalizedDate =
+      normalizeDateOnly(row.performed_at) || normalizeDateOnly(row.created_at);
+    if (!normalizedDate) continue;
+    const templateId =
+      typeof row.template_id === "number" ? (row.template_id as number) : null;
+    if (typeof row.template_id === "number") {
+      templateIds.add(row.template_id as number);
+    }
+
+    byAssessmentId.set(row.id as number, normalizedDate);
+    dates.push(normalizedDate);
+    assessments.push({
+      id: row.id as number,
+      date: normalizedDate,
+      template_id: templateId,
+      template_name: null,
+      kind: typeof row.kind === "string" ? (row.kind as string) : null,
+    });
   }
+
+  let templateNames = new Map<number, string>();
+
+  if (templateIds.size > 0) {
+    const { data: templates, error: templateErr } = await supabase
+      .from("assessment_templates")
+      .select("id, name")
+      .in("id", Array.from(templateIds));
+
+    if (templateErr) {
+      console.error("Error fetching assessment_templates:", templateErr);
+    } else if (templates) {
+      templateNames = new Map(
+        (templates as any[])
+          .filter((t) => typeof t.id === "number" && typeof t.name === "string")
+          .map((t) => [t.id as number, t.name as string])
+      );
+    }
+  }
+
+  const assessmentsWithNames = assessments.map((a) => ({
+    ...a,
+    template_name: a.template_id ? templateNames.get(a.template_id) ?? null : null,
+  }));
 
   const orderedDates = Array.from(new Set(dates)).sort(
     (a, b) => new Date(b).getTime() - new Date(a).getTime()
@@ -2690,6 +2743,7 @@ async function loadTeamAssessmentMeta(
     byAssessmentId,
     orderedDates,
     latestDate: orderedDates[0] ?? null,
+    assessments: assessmentsWithNames,
   };
 }
 
@@ -2705,7 +2759,7 @@ function getAssessmentDateForRatingRow(
     }
   }
 
-  return normalizeIsoDate(row.created_at);
+  return normalizeDateOnly(row.created_at);
 }
 
 function resolveLatestAssessmentDate(
@@ -2929,7 +2983,7 @@ async function computeTeamStatsOverview(
   }
 
   const assessmentMeta = await loadTeamAssessmentMeta(teamId);
-  const normalizedAssessmentDate = normalizeIsoDate(options.assessmentDate);
+  const normalizedAssessmentDate = normalizeDateOnly(options.assessmentDate);
 
   let targetAssessmentDate: string | null = null;
   if (options.evalScope === "latest_eval") {
@@ -2948,7 +3002,7 @@ async function computeTeamStatsOverview(
     const filteredByDate = filteredRows.filter((row) => {
       const performedAt = getAssessmentDateForRatingRow(row, assessmentMeta);
       if (!performedAt) return false;
-      return normalizeIsoDate(performedAt) === targetAssessmentDate;
+      return normalizeDateOnly(performedAt) === targetAssessmentDate;
     });
 
     if (filteredByDate.length > 0) {
@@ -3008,156 +3062,178 @@ async function computeTeamStatsOverview(
 
   // 5) Build metrics (BPOP rating + offense/defense/pitching/athletic)
 
-  const metricDefs: { code: CoreMetricCode; label: string }[] = [
-    { code: "bpoprating", label: "BPOP Rating" },
-    { code: "offense", label: "Offense" },
-    { code: "defense", label: "Defense" },
-    { code: "pitching", label: "Pitching" },
-    { code: "athletic", label: "Athletic" },
-  ];
+  const buildMetricsForRows = (
+    ratingRows: TeamRatingRow[]
+  ): StatsMetricSummary[] => {
+    const metricDefs: { code: CoreMetricCode; label: string }[] = [
+      { code: "bpoprating", label: "BPOP Rating" },
+      { code: "offense", label: "Offense" },
+      { code: "defense", label: "Defense" },
+      { code: "pitching", label: "Pitching" },
+      { code: "athletic", label: "Athletic" },
+    ];
 
-  const metrics: StatsMetricSummary[] = metricDefs.map((def) => {
-    let values: number[] = [];
-    let percents: (number | null)[] = [];
+    return metricDefs.map((def) => {
+      let values: number[] = [];
 
-    const ratingLikeRows: RatingResult[] = rows.map((row) => ({
-      age_group_id: row.age_group_id,
-      overall_score: parseScore(row.overall_score),
-      offense_score: parseScore(row.offense_score),
-      defense_score: parseScore(row.defense_score),
-      pitching_score: parseScore(row.pitching_score),
-      breakdown: row.breakdown || null,
-    }));
+      const ratingLikeRows: RatingResult[] = ratingRows.map((row) => ({
+        age_group_id: row.age_group_id,
+        overall_score: parseScore(row.overall_score),
+        offense_score: parseScore(row.offense_score),
+        defense_score: parseScore(row.defense_score),
+        pitching_score: parseScore(row.pitching_score),
+        breakdown: row.breakdown || null,
+      }));
 
-    switch (def.code) {
-      case "bpoprating": {
-        values = ratingLikeRows
-          .map((r) => r.overall_score)
-          .filter((v): v is number => v != null && !Number.isNaN(v));
+      switch (def.code) {
+        case "bpoprating": {
+          values = ratingLikeRows
+            .map((r) => r.overall_score)
+            .filter((v): v is number => v != null && !Number.isNaN(v));
 
-        const avgScore = averageNonNull(values);
-        const percent =
-          avgScore != null ? Math.round((avgScore / 50) * 100) : null;
+          const avgScore = averageNonNull(values);
+          const percent =
+            avgScore != null ? Math.round((avgScore / 50) * 100) : null;
 
-        return {
-          code: def.code,
-          label: def.label,
-          score: avgScore != null ? Number(avgScore.toFixed(1)) : null,
-          percent,
-          sample_size: values.length,
-        };
+          return {
+            code: def.code,
+            label: def.label,
+            score: avgScore != null ? Number(avgScore.toFixed(1)) : null,
+            percent,
+            sample_size: values.length,
+          };
+        }
+
+        case "offense": {
+          const offenseScores = ratingLikeRows
+            .map((r) => r.offense_score)
+            .filter((v): v is number => v != null && !Number.isNaN(v));
+
+          const avgScore = averageNonNull(offenseScores);
+
+          const offensePercents = ratingLikeRows.map((r) =>
+            getMetricPercentFromRatings("offense", r)
+          );
+          const avgPercent = averageNonNull(
+            offensePercents.filter(
+              (p): p is number => p != null && !Number.isNaN(p)
+            )
+          );
+
+          return {
+            code: def.code,
+            label: def.label,
+            score: avgScore != null ? Number(avgScore.toFixed(1)) : null,
+            percent: avgPercent != null ? Math.round(avgPercent) : null,
+            sample_size: offenseScores.length,
+          };
+        }
+
+        case "defense": {
+          const defenseScores = ratingLikeRows
+            .map((r) => r.defense_score)
+            .filter((v): v is number => v != null && !Number.isNaN(v));
+
+          const avgScore = averageNonNull(defenseScores);
+
+          const defensePercents = ratingLikeRows.map((r) =>
+            getMetricPercentFromRatings("defense", r)
+          );
+          const avgPercent = averageNonNull(
+            defensePercents.filter(
+              (p): p is number => p != null && !Number.isNaN(p)
+            )
+          );
+
+          return {
+            code: def.code,
+            label: def.label,
+            score: avgScore != null ? Number(avgScore.toFixed(1)) : null,
+            percent: avgPercent != null ? Math.round(avgPercent) : null,
+            sample_size: defenseScores.length,
+          };
+        }
+
+        case "pitching": {
+          const pitchingScores = ratingLikeRows
+            .map((r) => r.pitching_score)
+            .filter((v): v is number => v != null && !Number.isNaN(v));
+
+          const avgScore = averageNonNull(pitchingScores);
+
+          const pitchingPercents = ratingLikeRows.map((r) =>
+            getMetricPercentFromRatings("pitching", r)
+          );
+          const avgPercent = averageNonNull(
+            pitchingPercents.filter(
+              (p): p is number => p != null && !Number.isNaN(p)
+            )
+          );
+
+          return {
+            code: def.code,
+            label: def.label,
+            score: avgScore != null ? Number(avgScore.toFixed(1)) : null,
+            percent: avgPercent != null ? Math.round(avgPercent) : null,
+            sample_size: pitchingScores.length,
+          };
+        }
+
+        case "athletic": {
+          const athleticPercents = ratingLikeRows.map((r) =>
+            getMetricPercentFromRatings("athletic", r)
+          );
+
+          const avgPercent = averageNonNull(
+            athleticPercents.filter(
+              (p): p is number => p != null && !Number.isNaN(p)
+            )
+          );
+
+          const avgScore =
+            avgPercent != null ? (avgPercent / 100) * 50 : null;
+
+          return {
+            code: def.code,
+            label: def.label,
+            score: avgScore != null ? Number(avgScore.toFixed(1)) : null,
+            percent: avgPercent != null ? Math.round(avgPercent) : null,
+            sample_size: athleticPercents.filter(
+              (p): p is number => p != null && !Number.isNaN(p)
+            ).length,
+          };
+        }
+
+        default:
+          return {
+            code: def.code,
+            label: def.label,
+            score: null,
+            percent: null,
+            sample_size: 0,
+          };
       }
+    });
+  };
 
-      case "offense": {
-        const offenseScores = ratingLikeRows
-          .map((r) => r.offense_score)
-          .filter((v): v is number => v != null && !Number.isNaN(v));
+  let metrics = buildMetricsForRows(rows);
 
-        const avgScore = averageNonNull(offenseScores);
+  if (options.evalScope === "specific") {
+    const fallbackRows = buildAllStarRows(filteredRows);
+    const fallbackMetrics = buildMetricsForRows(fallbackRows);
 
-        const offensePercents = ratingLikeRows.map((r) =>
-          getMetricPercentFromRatings("offense", r)
-        );
-        const avgPercent = averageNonNull(
-          offensePercents.filter(
-            (p): p is number => p != null && !Number.isNaN(p)
-          )
-        );
+    metrics = metrics.map((m) => {
+      const fallback = fallbackMetrics.find((f) => f.code === m.code);
+      if (!fallback) return m;
 
-        return {
-          code: def.code,
-          label: def.label,
-          score: avgScore != null ? Number(avgScore.toFixed(1)) : null,
-          percent: avgPercent != null ? Math.round(avgPercent) : null,
-          sample_size: offenseScores.length,
-        };
-      }
-
-      case "defense": {
-        const defenseScores = ratingLikeRows
-          .map((r) => r.defense_score)
-          .filter((v): v is number => v != null && !Number.isNaN(v));
-
-        const avgScore = averageNonNull(defenseScores);
-
-        const defensePercents = ratingLikeRows.map((r) =>
-          getMetricPercentFromRatings("defense", r)
-        );
-        const avgPercent = averageNonNull(
-          defensePercents.filter(
-            (p): p is number => p != null && !Number.isNaN(p)
-          )
-        );
-
-        return {
-          code: def.code,
-          label: def.label,
-          score: avgScore != null ? Number(avgScore.toFixed(1)) : null,
-          percent: avgPercent != null ? Math.round(avgPercent) : null,
-          sample_size: defenseScores.length,
-        };
-      }
-
-      case "pitching": {
-        const pitchingScores = ratingLikeRows
-          .map((r) => r.pitching_score)
-          .filter((v): v is number => v != null && !Number.isNaN(v));
-
-        const avgScore = averageNonNull(pitchingScores);
-
-        const pitchingPercents = ratingLikeRows.map((r) =>
-          getMetricPercentFromRatings("pitching", r)
-        );
-        const avgPercent = averageNonNull(
-          pitchingPercents.filter(
-            (p): p is number => p != null && !Number.isNaN(p)
-          )
-        );
-
-        return {
-          code: def.code,
-          label: def.label,
-          score: avgScore != null ? Number(avgScore.toFixed(1)) : null,
-          percent: avgPercent != null ? Math.round(avgPercent) : null,
-          sample_size: pitchingScores.length,
-        };
-      }
-
-      case "athletic": {
-        const athleticPercents = ratingLikeRows.map((r) =>
-          getMetricPercentFromRatings("athletic", r)
-        );
-
-        const avgPercent = averageNonNull(
-          athleticPercents.filter(
-            (p): p is number => p != null && !Number.isNaN(p)
-          )
-        );
-
-        const avgScore =
-          avgPercent != null ? (avgPercent / 100) * 50 : null;
-
-        return {
-          code: def.code,
-          label: def.label,
-          score: avgScore != null ? Number(avgScore.toFixed(1)) : null,
-          percent: avgPercent != null ? Math.round(avgPercent) : null,
-          sample_size: athleticPercents.filter(
-            (p): p is number => p != null && !Number.isNaN(p)
-          ).length,
-        };
-      }
-
-      default:
-        return {
-          code: def.code,
-          label: def.label,
-          score: null,
-          percent: null,
-          sample_size: 0,
-        };
-    }
-  });
+      return {
+        ...m,
+        score: m.score ?? fallback.score,
+        percent: m.percent ?? fallback.percent,
+        sample_size: m.sample_size || fallback.sample_size,
+      };
+    });
+  }
 
   return {
     team_id: teamRow.id,
@@ -3227,7 +3303,7 @@ async function computeTeamOffenseDrilldown(
   let filteredRows = ratingRows as TeamRatingRow[];
 
   const assessmentMeta = await loadTeamAssessmentMeta(teamId);
-  const normalizedAssessmentDate = normalizeIsoDate(options.assessmentDate);
+  const normalizedAssessmentDate = normalizeDateOnly(options.assessmentDate);
 
   let targetAssessmentDate: string | null = null;
   if (options.evalScope === "latest_eval") {
@@ -3246,7 +3322,7 @@ async function computeTeamOffenseDrilldown(
     const filteredByDate = filteredRows.filter((row) => {
       const performedAt = getAssessmentDateForRatingRow(row, assessmentMeta);
       if (!performedAt) return false;
-      return normalizeIsoDate(performedAt) === targetAssessmentDate;
+      return normalizeDateOnly(performedAt) === targetAssessmentDate;
     });
 
     if (filteredByDate.length > 0) {
@@ -3356,7 +3432,44 @@ async function computeTeamOffenseDrilldown(
     metricsByPlayerId.set(playerId, metrics);
   }
 
-  if (!metricsByPlayerId.size) {
+  const fallbackMetricsByPlayer = new Map<string, BattingPlayerMetrics>();
+
+  if (options.evalScope === "specific") {
+    const fallbackRows = buildAllStarRows(filteredRows);
+
+    for (const row of fallbackRows) {
+      const playerId = row.player_id;
+      if (!playerId) continue;
+      const metrics = getBattingMetricsFromRating(row);
+      if (!metrics) continue;
+      fallbackMetricsByPlayer.set(playerId, metrics);
+    }
+  }
+
+  const mergedMetricsByPlayer = new Map<string, BattingPlayerMetrics>();
+
+  const mergedPlayerIds = Array.from(
+    new Set([
+      ...metricsByPlayerId.keys(),
+      ...fallbackMetricsByPlayer.keys(),
+    ])
+  );
+
+  for (const pid of mergedPlayerIds) {
+    const primary = metricsByPlayerId.get(pid);
+    const fallback = fallbackMetricsByPlayer.get(pid);
+
+    if (primary) {
+      mergedMetricsByPlayer.set(pid, {
+        ...fallback,
+        ...primary,
+      });
+    } else if (fallback) {
+      mergedMetricsByPlayer.set(pid, fallback);
+    }
+  }
+
+  if (!mergedMetricsByPlayer.size) {
     return {
       team_id: teamRow.id,
       team_name: teamRow.name ?? null,
@@ -3374,8 +3487,8 @@ async function computeTeamOffenseDrilldown(
     };
   }
 
-  const playerIds = Array.from(metricsByPlayerId.keys());
-  const battingMetrics = Array.from(metricsByPlayerId.values());
+  const playerIds = Array.from(mergedMetricsByPlayer.keys());
+  const battingMetrics = Array.from(mergedMetricsByPlayer.values());
 
   // 5) Load player names / jersey numbers for these players
   const nameByPlayer: Record<string, string | null> = {};
@@ -3522,10 +3635,10 @@ async function computeTeamOffenseDrilldown(
     }
   );
 
-  
+
   // 6) Build per-player metrics rows for the frontend
   const players: OffenseDrilldownPlayerMetrics[] = playerIds.map((playerId) => {
-    const m = metricsByPlayerId.get(playerId)!;
+    const m = mergedMetricsByPlayer.get(playerId)!;
     const displayName =
       nameByPlayer[playerId] ??
       `Player ${playerId.slice(0, 8)}…`;
@@ -6121,6 +6234,8 @@ function getBattingMetricsFromRating(
     }
   }
 
+  const derived = (breakdown?.derived as Record<string, any>) ?? {};
+
   const hittingTests =
     (breakdown?.hitting?.tests as Record<string, any> | undefined) ??
     (breakdown?.hitting as Record<string, any> | undefined) ??
@@ -6142,28 +6257,34 @@ function getBattingMetricsFromRating(
     return fallback;
   };
 
-  // Contact / power from hitting tests
+  const clampScore = (raw: number): number =>
+    Math.max(0, Math.min(50, raw));
+
+  // Contact / power from hitting tests (0–50 expected from backend)
   const contactRaw =
+    derived.contact_score ??
     hittingTests.contact_score ??
     breakdown?.offense?.contact_score ??
     breakdown?.contact_score;
 
   const powerRaw =
+    derived.power_score ??
     hittingTests.power_score ??
     breakdown?.offense?.power_score ??
     breakdown?.power_score;
 
   // Speed from athletic tests (11u+ template has speed_score here)
   const speedRaw =
+    derived.speed_score ??
     athleticTests.speed_score ??
     breakdown?.hitting?.speed_score ??
     breakdown?.athletic?.speed_score ??
     breakdown?.athlete?.speed_score ??
     breakdown?.running?.speed_score;
 
-  const contact = toNumber(contactRaw, hittingScoreRaw ?? 0);
-  const power = toNumber(powerRaw, hittingScoreRaw ?? 0);
-  const speed = toNumber(speedRaw, 0);
+  const contact = clampScore(toNumber(contactRaw, hittingScoreRaw ?? 0));
+  const power = clampScore(toNumber(powerRaw, hittingScoreRaw ?? 0));
+  const speed = clampScore(toNumber(speedRaw, 0));
 
   // StrikeChance (hitter) = explicit percent if present, else derived from contact
   const strikeChance =
@@ -8868,11 +8989,110 @@ app.get("/teams/:teamId/stats/evaluations", async (req, res) => {
   try {
     const meta = await loadTeamAssessmentMeta(teamId);
 
-    const evaluations = meta.orderedDates.map((iso) => ({
-      id: iso,
-      performed_at: iso,
-      label: iso,
-    }));
+    const formatEvalLabel = (
+      dateOnly: string,
+      templateName: string | null,
+      kind: string | null
+    ): string => {
+      const date = new Date(dateOnly);
+      const dateLabel = Number.isNaN(date.getTime())
+        ? dateOnly
+        : date.toLocaleDateString(undefined, {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          });
+
+      const typeLabel =
+        (templateName && templateName.trim()) ||
+        (kind && kind.trim()
+          ? kind
+              .trim()
+              .split(/[_\s]+/)
+              .map((part) =>
+                part.length > 0
+                  ? part[0].toUpperCase() + part.slice(1).toLowerCase()
+                  : part
+              )
+              .join(" ")
+          : null);
+
+      if (typeLabel) return `${dateLabel} — ${typeLabel}`;
+
+      return dateLabel;
+    };
+
+    const seenAssessments = new Set<number>();
+    const evaluations: {
+      id: string;
+      performed_at: string;
+      label: string;
+      template_id: number | null;
+      template_name: string | null;
+      kind: string | null;
+    }[] = [];
+
+    for (const assessment of meta.assessments) {
+      if (typeof assessment.id === "number") {
+        if (seenAssessments.has(assessment.id)) continue;
+        seenAssessments.add(assessment.id);
+      }
+
+      const performedAt = assessment.date;
+      const id =
+        typeof assessment.id === "number"
+          ? `assessment-${assessment.id}`
+          : `date-${performedAt}-${assessment.template_id ?? "unknown"}`;
+
+      evaluations.push({
+        id,
+        performed_at: performedAt,
+        label: formatEvalLabel(
+          performedAt,
+          assessment.template_name,
+          assessment.kind
+        ),
+        template_id: assessment.template_id ?? null,
+        template_name: assessment.template_name ?? null,
+        kind: assessment.kind ?? null,
+      });
+    }
+
+    // Fallback: if we didn't find assessment rows, pull distinct created_at dates
+    // from player_ratings to avoid showing one option per player row.
+    if (!evaluations.length) {
+      const { data: ratingRows, error: ratingErr } = await supabase
+        .from("player_ratings")
+        .select("created_at")
+        .eq("team_id", teamId)
+        .order("created_at", { ascending: false });
+
+      if (ratingErr) {
+        console.error(
+          "Team evaluations fallback: error loading player_ratings:",
+          ratingErr
+        );
+      } else if (ratingRows && ratingRows.length) {
+        const seenDates = new Set<string>();
+        for (const row of ratingRows as any[]) {
+          const dateOnly = normalizeDateOnly(row.created_at);
+          if (!dateOnly || seenDates.has(dateOnly)) continue;
+          seenDates.add(dateOnly);
+          evaluations.push({
+            id: `date-${dateOnly}`,
+            performed_at: dateOnly,
+            label: formatEvalLabel(dateOnly, null, null),
+            template_id: null,
+            template_name: null,
+            kind: null,
+          });
+        }
+      }
+    }
+
+    evaluations.sort(
+      (a, b) => new Date(b.performed_at).getTime() - new Date(a.performed_at).getTime()
+    );
 
     return res.status(200).json({ team_id: teamId, evaluations });
   } catch (err) {

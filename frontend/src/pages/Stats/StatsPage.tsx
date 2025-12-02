@@ -1257,7 +1257,11 @@ export default function StatsPage() {
   const isCoachLike =
     role === "coach" || role === "assistant" || role === "admin";
 
-  const playerId = profile?.id ?? null;
+  const [hasPlayerProfile, setHasPlayerProfile] = useState<boolean>(
+    role === "player"
+  );
+
+  const playerId = hasPlayerProfile ? profile?.id ?? null : null;
 
   const [viewMode, setViewMode] = useState<ViewMode>(
     isCoachLike ? "team" : "player"
@@ -1282,7 +1286,7 @@ export default function StatsPage() {
   const [teamEvaluationsError, setTeamEvaluationsError] = useState<string | null>(
     null
   );
-  const [selectedEvalKey, setSelectedEvalKey] = useState<string>("latest_eval");
+  const [selectedEvalKey, setSelectedEvalKey] = useState<string>("all_star");
 
   const [teamStats, setTeamStats] = useState<TeamStatsOverview | null>(null);
   const [teamStatsLoading, setTeamStatsLoading] = useState(false);
@@ -1312,6 +1316,12 @@ export default function StatsPage() {
     []
   );
 
+  useEffect(() => {
+    if (!hasPlayerProfile && viewMode === "player") {
+      setViewMode(isCoachLike ? "team" : "team");
+    }
+  }, [hasPlayerProfile, viewMode, isCoachLike]);
+
   // Load teams for coach-like users
   useEffect(() => {
     if (!isCoachLike) return;
@@ -1323,9 +1333,16 @@ export default function StatsPage() {
     getMyTeams()
       .then((data) => {
         if (cancelled) return;
-        setTeams(data ?? []);
-        if (!selectedTeamId && data && data.length > 0) {
-          setSelectedTeamId(data[0].id);
+        const teams = data ?? [];
+        setTeams(teams);
+
+        const hasPlayerRole = teams.some((team) => team.role === "player");
+        if (hasPlayerRole) {
+          setHasPlayerProfile((prev) => prev || hasPlayerRole);
+        }
+
+        if (!selectedTeamId && teams.length > 0) {
+          setSelectedTeamId(teams[0].id);
         }
       })
       .catch((err: any) => {
@@ -1346,11 +1363,6 @@ export default function StatsPage() {
       cancelled = true;
     };
   }, [isCoachLike, selectedTeamId]);
-
-  useEffect(() => {
-    if (!isCoachLike || viewMode !== "team") return;
-    setSelectedEvalKey("latest_eval");
-  }, [selectedTeamId, isCoachLike, viewMode]);
 
   useEffect(() => {
     if (!selectedTeamId || !isCoachLike || viewMode !== "team") {
@@ -1389,34 +1401,61 @@ export default function StatsPage() {
   const evaluationSelectOptions = useMemo<EvaluationSelectOption[]>(() => {
     const base: EvaluationSelectOption[] = [
       {
-        key: "latest_eval",
-        label: "Latest Eval",
-        evalScope: "latest_eval",
-      },
-      {
         key: "all_star",
         label: "All-Star Points",
         evalScope: "all_star",
       },
+      {
+        key: "latest_eval",
+        label: "Latest Eval",
+        evalScope: "latest_eval",
+      },
     ];
 
-    const dated = teamEvaluations.map((ev) => {
-      const date = new Date(ev.performed_at);
-      const label = Number.isNaN(date.getTime())
-        ? ev.label
-        : date.toLocaleDateString(undefined, {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          });
+    const normalizeDateOnly = (value: string) => {
+      const d = new Date(value);
+      return Number.isNaN(d.getTime()) ? value : d.toISOString().slice(0, 10);
+    };
 
-      return {
-        key: `assessment-${ev.id}`,
-        label: label || ev.label,
-        evalScope: "specific" as TeamEvalScope,
-        assessmentDate: ev.performed_at,
-      } satisfies EvaluationSelectOption;
-    });
+    const formatKindLabel = (kind?: string | null) => {
+      if (!kind || !kind.trim()) return null;
+      return kind
+        .trim()
+        .split(/[_\s]+/)
+        .map((p) => (p ? p[0].toUpperCase() + p.slice(1).toLowerCase() : p))
+        .join(" ");
+    };
+
+    const dated = teamEvaluations
+      .map((ev) => ({
+        ...ev,
+        performed_at: normalizeDateOnly(ev.performed_at),
+      }))
+      .sort(
+        (a, b) =>
+          new Date(b.performed_at).getTime() - new Date(a.performed_at).getTime()
+      )
+      .map((ev) => {
+        const date = new Date(ev.performed_at);
+        const dateLabel = Number.isNaN(date.getTime())
+          ? ev.performed_at
+          : date.toLocaleDateString(undefined, {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+            });
+
+        const typeLabel =
+          (ev.template_name && ev.template_name.trim()) || formatKindLabel(ev.kind);
+        const label = ev.label || (typeLabel ? `${dateLabel} — ${typeLabel}` : dateLabel);
+
+        return {
+          key: ev.id || `assessment-${ev.performed_at}`,
+          label,
+          evalScope: "specific" as TeamEvalScope,
+          assessmentDate: ev.performed_at,
+        } satisfies EvaluationSelectOption;
+      });
 
     return [...base, ...dated];
   }, [teamEvaluations]);
@@ -1686,21 +1725,23 @@ export default function StatsPage() {
                   ? "bg-amber-500 text-slate-900"
                   : "text-slate-300",
               ].join(" ")}
-            >
-              Team view
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode("player")}
-              className={[
-                "px-3 py-1",
-                viewMode === "player"
-                  ? "bg-amber-500 text-slate-900"
-                  : "text-slate-300",
-              ].join(" ")}
-            >
-              My stats
-            </button>
+              >
+                Team view
+              </button>
+            {hasPlayerProfile && (
+              <button
+                type="button"
+                onClick={() => setViewMode("player")}
+                className={[
+                  "px-3 py-1",
+                  viewMode === "player"
+                    ? "bg-amber-500 text-slate-900"
+                    : "text-slate-300",
+                ].join(" ")}
+              >
+                My stats
+              </button>
+            )}
           </div>
         )}
       </header>
