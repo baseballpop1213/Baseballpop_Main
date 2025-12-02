@@ -148,6 +148,9 @@ export interface TeamEvaluationOption {
   id: string;
   performed_at: string;
   label: string;
+  template_id?: number | null;
+  template_name?: string | null;
+  kind?: string | null;
 }
 
 export interface TeamEvaluationListResponse {

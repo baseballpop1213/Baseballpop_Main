@@ -1423,14 +1423,28 @@ export default function StatsPage() {
       )
       .map((ev) => {
         const date = new Date(ev.performed_at);
-        const label = Number.isNaN(date.getTime())
-          ? ev.label
+        const dateLabel = Number.isNaN(date.getTime())
+          ? ev.performed_at
           : date.toLocaleDateString(undefined, {
               month: "short",
               day: "numeric",
               year: "numeric",
             });
 
+        const fallbackLabel = ev.label?.trim();
+
+        const parts = [dateLabel];
+        if (ev.template_name) {
+          parts.push(ev.template_name);
+        } else if (fallbackLabel && !fallbackLabel.includes(dateLabel)) {
+          parts.push(fallbackLabel);
+        }
+
+        const label = ev.template_name ? parts.join(" — ") : fallbackLabel || parts.join(" — ");
+
+        return {
+          key: ev.id || `assessment-${ev.performed_at}`,
+          label,
         return {
           key: `assessment-${ev.id}`,
           label: label || ev.label,

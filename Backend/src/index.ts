@@ -2644,8 +2644,15 @@ interface TeamEvalSelection {
 
 interface TeamAssessmentMeta {
   byAssessmentId: Map<number, string>;
-  orderedDates: string[]; // ISO strings, most recent first
+  orderedDates: string[]; // ISO date-only strings (YYYY-MM-DD), most recent first
   latestDate: string | null;
+  assessments: {
+    id: number;
+    date: string; // YYYY-MM-DD
+    template_id: number | null;
+    template_name: string | null;
+    kind: string | null;
+  }[];
 }
 
 function normalizeIsoDate(value: string | null | undefined): string | null {
@@ -2655,32 +2662,78 @@ function normalizeIsoDate(value: string | null | undefined): string | null {
   return date.toISOString();
 }
 
+function normalizeDateOnly(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
+}
+
 async function loadTeamAssessmentMeta(
   teamId: string
 ): Promise<TeamAssessmentMeta> {
   const byAssessmentId = new Map<number, string>();
+  const assessments: TeamAssessmentMeta["assessments"] = [];
 
   const { data, error } = await supabase
     .from("player_assessments")
-    .select("id, performed_at, created_at")
+    .select("id, performed_at, created_at, template_id, kind")
     .eq("team_id", teamId)
     .in("kind", ["official", "practice"])
     .order("performed_at", { ascending: false });
 
   if (error || !data) {
     console.error("Error loading assessments for team stats:", error);
-    return { byAssessmentId, orderedDates: [], latestDate: null };
+    return { byAssessmentId, orderedDates: [], latestDate: null, assessments };
   }
 
+  const templateIds = new Set<number>();
   const dates: string[] = [];
 
   for (const row of data as any[]) {
-    const normalized =
-      normalizeIsoDate(row.performed_at) || normalizeIsoDate(row.created_at);
-    if (!normalized) continue;
-    byAssessmentId.set(row.id as number, normalized);
-    dates.push(normalized);
+    const normalizedDate =
+      normalizeDateOnly(row.performed_at) || normalizeDateOnly(row.created_at);
+    if (!normalizedDate) continue;
+    const templateId =
+      typeof row.template_id === "number" ? (row.template_id as number) : null;
+    if (typeof row.template_id === "number") {
+      templateIds.add(row.template_id as number);
+    }
+
+    byAssessmentId.set(row.id as number, normalizedDate);
+    dates.push(normalizedDate);
+    assessments.push({
+      id: row.id as number,
+      date: normalizedDate,
+      template_id: templateId,
+      template_name: null,
+      kind: typeof row.kind === "string" ? (row.kind as string) : null,
+    });
   }
+
+  let templateNames = new Map<number, string>();
+
+  if (templateIds.size > 0) {
+    const { data: templates, error: templateErr } = await supabase
+      .from("assessment_templates")
+      .select("id, name")
+      .in("id", Array.from(templateIds));
+
+    if (templateErr) {
+      console.error("Error fetching assessment_templates:", templateErr);
+    } else if (templates) {
+      templateNames = new Map(
+        (templates as any[])
+          .filter((t) => typeof t.id === "number" && typeof t.name === "string")
+          .map((t) => [t.id as number, t.name as string])
+      );
+    }
+  }
+
+  const assessmentsWithNames = assessments.map((a) => ({
+    ...a,
+    template_name: a.template_id ? templateNames.get(a.template_id) ?? null : null,
+  }));
 
   const orderedDates = Array.from(new Set(dates)).sort(
     (a, b) => new Date(b).getTime() - new Date(a).getTime()
@@ -2690,6 +2743,7 @@ async function loadTeamAssessmentMeta(
     byAssessmentId,
     orderedDates,
     latestDate: orderedDates[0] ?? null,
+    assessments: assessmentsWithNames,
   };
 }
 
@@ -2705,7 +2759,7 @@ function getAssessmentDateForRatingRow(
     }
   }
 
-  return normalizeIsoDate(row.created_at);
+  return normalizeDateOnly(row.created_at);
 }
 
 function resolveLatestAssessmentDate(
@@ -2929,7 +2983,7 @@ async function computeTeamStatsOverview(
   }
 
   const assessmentMeta = await loadTeamAssessmentMeta(teamId);
-  const normalizedAssessmentDate = normalizeIsoDate(options.assessmentDate);
+  const normalizedAssessmentDate = normalizeDateOnly(options.assessmentDate);
 
   let targetAssessmentDate: string | null = null;
   if (options.evalScope === "latest_eval") {
@@ -2948,7 +3002,7 @@ async function computeTeamStatsOverview(
     const filteredByDate = filteredRows.filter((row) => {
       const performedAt = getAssessmentDateForRatingRow(row, assessmentMeta);
       if (!performedAt) return false;
-      return normalizeIsoDate(performedAt) === targetAssessmentDate;
+      return normalizeDateOnly(performedAt) === targetAssessmentDate;
     });
 
     if (filteredByDate.length > 0) {
@@ -3227,7 +3281,7 @@ async function computeTeamOffenseDrilldown(
   let filteredRows = ratingRows as TeamRatingRow[];
 
   const assessmentMeta = await loadTeamAssessmentMeta(teamId);
-  const normalizedAssessmentDate = normalizeIsoDate(options.assessmentDate);
+  const normalizedAssessmentDate = normalizeDateOnly(options.assessmentDate);
 
   let targetAssessmentDate: string | null = null;
   if (options.evalScope === "latest_eval") {
@@ -3246,7 +3300,7 @@ async function computeTeamOffenseDrilldown(
     const filteredByDate = filteredRows.filter((row) => {
       const performedAt = getAssessmentDateForRatingRow(row, assessmentMeta);
       if (!performedAt) return false;
-      return normalizeIsoDate(performedAt) === targetAssessmentDate;
+      return normalizeDateOnly(performedAt) === targetAssessmentDate;
     });
 
     if (filteredByDate.length > 0) {
@@ -8876,12 +8930,26 @@ app.get("/teams/:teamId/stats/evaluations", async (req, res) => {
   try {
     const meta = await loadTeamAssessmentMeta(teamId);
 
-    let evaluationDates = [...meta.orderedDates];
+    const groupedByDateAndTemplate = new Map<
+      string,
+      { date: string; template_id: number | null; template_name: string | null; kind: string | null }
+    >();
 
-    // Fallback: if we didn't find assessment rows (or only had malformed dates),
-    // use any player_ratings rows for this team to surface created_at timestamps
-    // as individual evaluation dates.
-    if (!evaluationDates.length) {
+    for (const assessment of meta.assessments) {
+      const key = `${assessment.date}|${assessment.template_id ?? "unknown"}`;
+      if (!groupedByDateAndTemplate.has(key)) {
+        groupedByDateAndTemplate.set(key, {
+          date: assessment.date,
+          template_id: assessment.template_id,
+          template_name: assessment.template_name,
+          kind: assessment.kind,
+        });
+      }
+    }
+
+    // Fallback: if we didn't find assessment rows, pull distinct created_at dates
+    // from player_ratings to avoid showing one option per player row.
+    if (!groupedByDateAndTemplate.size) {
       const { data: ratingRows, error: ratingErr } = await supabase
         .from("player_ratings")
         .select("created_at")
@@ -8894,21 +8962,55 @@ app.get("/teams/:teamId/stats/evaluations", async (req, res) => {
           ratingErr
         );
       } else if (ratingRows && ratingRows.length) {
-        const createdDates = (ratingRows as any[])
-          .map((row) => normalizeIsoDate(row.created_at))
-          .filter((d): d is string => !!d);
-
-        evaluationDates = Array.from(new Set(createdDates)).sort(
-          (a, b) => new Date(b).getTime() - new Date(a).getTime()
-        );
+        for (const row of ratingRows as any[]) {
+          const dateOnly = normalizeDateOnly(row.created_at);
+          if (!dateOnly) continue;
+          const key = `${dateOnly}|unknown`;
+          if (!groupedByDateAndTemplate.has(key)) {
+            groupedByDateAndTemplate.set(key, {
+              date: dateOnly,
+              template_id: null,
+              template_name: null,
+              kind: null,
+            });
+          }
+        }
       }
     }
 
-    const evaluations = evaluationDates.map((iso) => ({
-      id: iso,
-      performed_at: iso,
-      label: iso,
-    }));
+    const formatEvalLabel = (
+      dateOnly: string,
+      templateName: string | null
+    ): string => {
+      const date = new Date(dateOnly);
+      const dateLabel = Number.isNaN(date.getTime())
+        ? dateOnly
+        : date.toLocaleDateString(undefined, {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          });
+
+      if (templateName) {
+        return `${dateLabel} — ${templateName}`;
+      }
+
+      return dateLabel;
+    };
+
+    const evaluations = Array.from(groupedByDateAndTemplate.values())
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .map((entry) => {
+        const id = `${entry.date}|${entry.template_id ?? "unknown"}`;
+        return {
+          id,
+          performed_at: entry.date,
+          label: formatEvalLabel(entry.date, entry.template_name),
+          template_id: entry.template_id,
+          template_name: entry.template_name,
+          kind: entry.kind,
+        };
+      });
 
     return res.status(200).json({ team_id: teamId, evaluations });
   } catch (err) {
