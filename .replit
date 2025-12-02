@@ -70,7 +70,11 @@ externalPort = 80
 localPort = 5174
 externalPort = 3002
 
+[[ports]]
+localPort = 36045
+externalPort = 3003
+
 [userenv]
 
 [userenv.shared]
-VITE_API_BASE_URL = "https://58680740-f947-442a-a61c-3b301ca9f092-00-23zy02ckuh0f0.worf.replit.dev:3000"
+VITE_API_BASE_URL = "https://58680740-f947-442a-a61c-3b301ca9f092-00-23zy02ckuh0f0.worf.replit.dev:5000"
