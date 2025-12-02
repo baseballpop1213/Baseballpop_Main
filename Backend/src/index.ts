@@ -1951,6 +1951,9 @@ interface OffenseTestPlayerRow {
    */
   value: number | null;
 
+  /** Raw MPH for power tests (bat speed / exit velo). */
+  raw_mph?: number | null;
+
   /**
    * Extra raw data for speed tests only (run_1b / run_4b).
    * These stay undefined for non‑speed tests.
@@ -1982,6 +1985,9 @@ interface OffenseTestBreakdown {
   team_avg_seconds?: number | null;
   team_avg_feet_per_second?: number | null;
   base_path_feet?: number | null;
+
+  /** Team-average raw MPH for power tests (bat speed / exit velo). */
+  team_avg_mph?: number | null;
 }
 
 
@@ -2134,7 +2140,11 @@ function buildOffenseTestBreakdownsForTeam(
     player_name: string | null;
     jersey_number: number | null;
   }[],
-  rawMetricsByAssessmentId?: Map<number, Record<string, number>>
+  rawMetricsByAssessmentId?: Map<number, Record<string, number>>,
+  options?: {
+    evalScope?: TeamEvalScope;
+    playerAssessmentIdsByPlayer?: Map<string, number[]>;
+  }
 ): OffenseTestsByMetric {
   const result: OffenseTestsByMetric = {
     offense: [],
@@ -2250,30 +2260,67 @@ function buildOffenseTestBreakdownsForTeam(
       continue; // no test data at all for this player
     }
 
+    const assessmentIdsForPlayer =
+      options?.playerAssessmentIdsByPlayer?.get(pb.player_id) ?? [];
+
     // Merge raw metrics from the underlying assessment rows for this player.
+    // For all-star scope, pick the BEST raw metric across all available
+    // assessments for that player (max MPH, fastest ft/s). For other scopes we
+    // default to the first available assessment id for that player, which will
+    // align with the rating rows used for this drilldown.
     let mergedRaw: Record<string, number> | null = null;
 
-    const mergeFromAssessment = (assessmentId: number | null | undefined) => {
-      if (!rawMetricsByAssessmentId || assessmentId == null) return;
-      const bucket = rawMetricsByAssessmentId.get(assessmentId);
-      if (!bucket) return;
-      if (!mergedRaw) {
-        mergedRaw = { ...bucket };
-      } else {
-        for (const [key, value] of Object.entries(bucket)) {
-          if (
-            typeof value === "number" &&
-            Number.isFinite(value) &&
-            !(key in mergedRaw)
-          ) {
-            mergedRaw[key] = value;
+    const getBucket = (assessmentId: number | null | undefined) => {
+      if (!rawMetricsByAssessmentId || assessmentId == null) return null;
+      return rawMetricsByAssessmentId.get(assessmentId) ?? null;
+    };
+
+    const useAssessmentOrder = assessmentIdsForPlayer.length
+      ? assessmentIdsForPlayer
+      : [hittingSource?.assessment_id, athleticSource?.assessment_id].filter(
+          (v): v is number => typeof v === "number"
+        );
+
+    if (options?.evalScope === "all_star" && useAssessmentOrder.length) {
+      const best: Record<string, number> = {};
+
+      for (const aid of useAssessmentOrder) {
+        const bucket = getBucket(aid);
+        if (!bucket) continue;
+        for (const [key, rawVal] of Object.entries(bucket)) {
+          const v = typeof rawVal === "number" && Number.isFinite(rawVal)
+            ? (rawVal as number)
+            : null;
+          if (v == null) continue;
+          if (!(key in best) || v > best[key]) {
+            best[key] = v;
           }
         }
       }
-    };
 
-    mergeFromAssessment(hittingSource?.assessment_id ?? null);
-    mergeFromAssessment(athleticSource?.assessment_id ?? null);
+      mergedRaw = Object.keys(best).length ? best : null;
+    } else {
+      for (const aid of useAssessmentOrder) {
+        const bucket = getBucket(aid);
+        if (!bucket) continue;
+        if (!mergedRaw) {
+          mergedRaw = { ...bucket };
+        } else {
+          const target = mergedRaw as Record<string, number>;
+          for (const [key, value] of Object.entries(bucket)) {
+            if (
+              typeof value === "number" &&
+              Number.isFinite(value) &&
+              !(key in target)
+            ) {
+              target[key] = value;
+            }
+          }
+        }
+
+        if (mergedRaw) break; // Non all-star scopes only need the first match
+      }
+    }
 
     playersForTests.push({
       player_id: pb.player_id,
@@ -2297,46 +2344,126 @@ function buildOffenseTestBreakdownsForTeam(
           : {};
       const rawPoints = (tests as any)[def.field];
 
-      const raw = p.rawMetrics ?? undefined;
+      const assessmentIds =
+        options?.playerAssessmentIdsByPlayer?.get(p.player_id) ?? [];
 
       let value: number | null = null;
       let raw_seconds: number | null | undefined;
       let raw_distance_ft: number | null | undefined;
+      let raw_mph: number | null | undefined;
 
-      if (def.raw_metric_key && raw && raw[def.raw_metric_key] != null) {
-        // POWER tests: use the raw MPH metric from assessments
-        const v = raw[def.raw_metric_key];
-        value =
-          typeof v === "number" && Number.isFinite(v) ? (v as number) : null;
-      } else if (
-        def.time_metric_key &&
-        def.distance_metric_key &&
-        raw &&
-        (raw[def.time_metric_key] != null ||
-          raw[def.distance_metric_key] != null)
-      ) {
-        // SPEED tests: compute ft/s from distance / seconds
-        const secRaw = raw[def.time_metric_key];
-        const distRaw = raw[def.distance_metric_key];
+      const pickPowerMetric = (): number | null => {
+        if (!rawMetricsByAssessmentId || !def.raw_metric_key) return null;
+        let best: number | null = null;
 
-        const seconds =
-          typeof secRaw === "number" && Number.isFinite(secRaw) && secRaw > 0
-            ? (secRaw as number)
-            : null;
-        const distanceFt =
-          typeof distRaw === "number" &&
-          Number.isFinite(distRaw) &&
-          distRaw > 0
-            ? (distRaw as number)
-            : null;
+        const consider = (aid: number | null | undefined) => {
+          if (aid == null) return;
+          const bucket = rawMetricsByAssessmentId?.get(aid);
+          const rawVal = bucket ? bucket[def.raw_metric_key!] : null;
+          if (typeof rawVal !== "number" || !Number.isFinite(rawVal)) return;
+          if (best === null || rawVal > best) {
+            best = rawVal;
+          }
+        };
 
-        raw_seconds = seconds;
-        raw_distance_ft = distanceFt;
-
-        if (seconds != null && distanceFt != null) {
-          value = distanceFt / seconds; // ft/s
+        if (assessmentIds.length) {
+          assessmentIds.forEach(consider);
         } else {
-          // fall back to points if we don't have both pieces
+          consider(hittingByPlayer.get(p.player_id)?.assessment_id ?? null);
+        }
+
+        return best;
+      };
+
+      const pickSpeedMetric = (): {
+        fps: number;
+        seconds: number | null;
+        distance: number | null;
+      } | null => {
+        if (
+          !rawMetricsByAssessmentId ||
+          !def.time_metric_key ||
+          !def.distance_metric_key
+        ) {
+          return null;
+        }
+
+        let best: {
+          fps: number;
+          seconds: number | null;
+          distance: number | null;
+        } | null = null;
+
+        const consider = (aid: number | null | undefined) => {
+          if (aid == null) return;
+          const bucket = rawMetricsByAssessmentId?.get(aid);
+          if (!bucket) return;
+
+          const secRaw = bucket[def.time_metric_key!];
+          const distRaw = bucket[def.distance_metric_key!];
+
+          const seconds =
+            typeof secRaw === "number" && Number.isFinite(secRaw) && secRaw > 0
+              ? (secRaw as number)
+              : null;
+          const distanceFt =
+            typeof distRaw === "number" &&
+            Number.isFinite(distRaw) &&
+            distRaw > 0
+              ? (distRaw as number)
+              : null;
+
+          if (seconds != null && distanceFt != null) {
+            const fps = distanceFt / seconds;
+            if (!best || fps > best.fps) {
+              best = { fps, seconds, distance: distanceFt };
+            }
+          }
+        };
+
+        if (assessmentIds.length) {
+          assessmentIds.forEach(consider);
+        } else {
+          consider(athleticByPlayer.get(p.player_id)?.assessment_id ?? null);
+        }
+
+        return best;
+      };
+
+      if (def.raw_metric_key) {
+        raw_mph = pickPowerMetric();
+        value = raw_mph ?? coerceNumber(rawPoints);
+      } else if (def.time_metric_key && def.distance_metric_key) {
+        const picked = pickSpeedMetric();
+        if (picked) {
+          value = picked.fps;
+          raw_seconds = picked.seconds;
+          raw_distance_ft = picked.distance;
+        } else if (p.rawMetrics) {
+          // Fall back to whatever raw metrics we merged earlier
+          const secRaw = p.rawMetrics[def.time_metric_key];
+          const distRaw = p.rawMetrics[def.distance_metric_key];
+
+          const seconds =
+            typeof secRaw === "number" && Number.isFinite(secRaw) && secRaw > 0
+              ? (secRaw as number)
+              : null;
+          const distanceFt =
+            typeof distRaw === "number" &&
+            Number.isFinite(distRaw) &&
+            distRaw > 0
+              ? (distRaw as number)
+              : null;
+
+          raw_seconds = seconds;
+          raw_distance_ft = distanceFt;
+
+          if (seconds != null && distanceFt != null) {
+            value = distanceFt / seconds;
+          }
+        }
+
+        if (value === null) {
           value = coerceNumber(rawPoints);
         }
       } else {
@@ -2349,13 +2476,16 @@ function buildOffenseTestBreakdownsForTeam(
         player_name: p.player_name,
         jersey_number: p.jersey_number,
         value,
-      };
+      } as OffenseTestPlayerRow;
 
       if (raw_seconds !== undefined) {
         row.raw_seconds = raw_seconds;
       }
       if (raw_distance_ft !== undefined) {
         row.raw_distance_ft = raw_distance_ft;
+      }
+      if (raw_mph !== undefined) {
+        row.raw_mph = raw_mph;
       }
 
       return row;
@@ -2402,6 +2532,13 @@ function buildOffenseTestBreakdownsForTeam(
       breakdown.team_avg_seconds = team_avg_seconds;
       breakdown.team_avg_feet_per_second = team_avg_feet_per_second;
       breakdown.base_path_feet = base_path_feet;
+    }
+
+    if (def.raw_metric_key) {
+      const rawMphValues = per_player
+        .map((p) => p.raw_mph)
+        .filter(isNumber);
+      breakdown.team_avg_mph = avg(rawMphValues);
     }
 
     result[def.submetric].push(breakdown);
@@ -2498,8 +2635,222 @@ function buildOffenseTestBreakdownsForPlayers(
 // Team stats overview (for StatsPage)
 // ---------------------------------------------------------------------------
 
-async function computeTeamStatsOverview(
+type TeamEvalScope = "latest_eval" | "all_star" | "specific" | null;
+
+interface TeamEvalSelection {
+  evalScope?: TeamEvalScope;
+  assessmentDate?: string | null;
+}
+
+interface TeamAssessmentMeta {
+  byAssessmentId: Map<number, string>;
+  orderedDates: string[]; // ISO strings, most recent first
+  latestDate: string | null;
+}
+
+function normalizeIsoDate(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
+async function loadTeamAssessmentMeta(
   teamId: string
+): Promise<TeamAssessmentMeta> {
+  const byAssessmentId = new Map<number, string>();
+
+  const { data, error } = await supabase
+    .from("player_assessments")
+    .select("id, performed_at, created_at")
+    .eq("team_id", teamId)
+    .eq("kind", "official")
+    .order("performed_at", { ascending: false });
+
+  if (error || !data) {
+    console.error("Error loading assessments for team stats:", error);
+    return { byAssessmentId, orderedDates: [], latestDate: null };
+  }
+
+  const dates: string[] = [];
+
+  for (const row of data as any[]) {
+    const normalized =
+      normalizeIsoDate(row.performed_at) || normalizeIsoDate(row.created_at);
+    if (!normalized) continue;
+    byAssessmentId.set(row.id as number, normalized);
+    dates.push(normalized);
+  }
+
+  const orderedDates = Array.from(new Set(dates)).sort(
+    (a, b) => new Date(b).getTime() - new Date(a).getTime()
+  );
+
+  return {
+    byAssessmentId,
+    orderedDates,
+    latestDate: orderedDates[0] ?? null,
+  };
+}
+
+function getAssessmentDateForRatingRow(
+  row: { assessment_id?: any; player_assessment_id?: any; created_at?: any },
+  meta: TeamAssessmentMeta
+): string | null {
+  const candidates = [row.player_assessment_id, row.assessment_id];
+
+  for (const id of candidates) {
+    if (typeof id === "number" && meta.byAssessmentId.has(id)) {
+      return meta.byAssessmentId.get(id)!;
+    }
+  }
+
+  return normalizeIsoDate(row.created_at);
+}
+
+function resolveLatestAssessmentDate(
+  meta: TeamAssessmentMeta,
+  ratingRows: TeamRatingRow[]
+): string | null {
+  if (meta.latestDate) return meta.latestDate;
+
+  const dates = ratingRows
+    .map((row) => getAssessmentDateForRatingRow(row, meta))
+    .filter((d): d is string => !!d);
+
+  if (!dates.length) return null;
+
+  return dates.sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0];
+}
+
+function mergeBestValues(a: any, b: any): any {
+  if (a === null || a === undefined) return b;
+  if (b === null || b === undefined) return a;
+
+  if (typeof a === "number" && typeof b === "number") {
+    return Math.max(a, b);
+  }
+
+  if (
+    typeof a === "object" &&
+    typeof b === "object" &&
+    !Array.isArray(a) &&
+    !Array.isArray(b)
+  ) {
+    const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+    const result: Record<string, any> = {};
+    for (const key of keys) {
+      result[key] = mergeBestValues((a as any)[key], (b as any)[key]);
+    }
+    return result;
+  }
+
+  return a ?? b;
+}
+
+function mergeBestBreakdowns(breakdowns: any[]): any {
+  let merged: any = {};
+
+  for (const raw of breakdowns) {
+    let parsed = raw;
+    if (typeof parsed === "string") {
+      try {
+        parsed = JSON.parse(parsed);
+      } catch {
+        parsed = {};
+      }
+    }
+    if (!parsed || typeof parsed !== "object") continue;
+    merged = mergeBestValues(merged, parsed);
+  }
+
+  return merged;
+}
+
+function toNumberOrNull(value: any): number | null {
+  if (value === null || value === undefined) return null;
+  const num = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function maxNumeric(values: (number | null)[]): number | null {
+  const nums = values.filter((v): v is number => v !== null && !Number.isNaN(v));
+  if (!nums.length) return null;
+  return Math.max(...nums);
+}
+
+type TeamRatingRow = {
+  id: number;
+  player_id: string;
+  age_group_id: number | string | null;
+  player_assessment_id?: number | null;
+  assessment_id: number | null;
+  overall_score: string | number | null;
+  offense_score: string | number | null;
+  defense_score: string | number | null;
+  pitching_score: string | number | null;
+  created_at: string | null;
+  breakdown: any;
+};
+
+function buildAllStarRows(
+  rows: TeamRatingRow[]
+): TeamRatingRow[] {
+  const byPlayer = new Map<string, TeamRatingRow[]>();
+
+  for (const row of rows) {
+    if (!row.player_id) continue;
+    const arr = byPlayer.get(row.player_id) ?? [];
+    arr.push(row);
+    byPlayer.set(row.player_id, arr);
+  }
+
+  const combined: TeamRatingRow[] = [];
+
+  for (const [, playerRows] of byPlayer.entries()) {
+    if (!playerRows.length) continue;
+    const sorted = [...playerRows].sort((a, b) => {
+      const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return bTime - aTime;
+    });
+
+    const mergedBreakdown = mergeBestBreakdowns(
+      sorted.map((r) => r.breakdown ?? {})
+    );
+
+    const bestOverall = maxNumeric(
+      sorted.map((r) => toNumberOrNull(r.overall_score))
+    );
+
+    const bestOffense = maxNumeric(
+      sorted.map((r) => toNumberOrNull(r.offense_score))
+    );
+
+    const bestDefense = maxNumeric(
+      sorted.map((r) => toNumberOrNull(r.defense_score))
+    );
+
+    const bestPitching = maxNumeric(
+      sorted.map((r) => toNumberOrNull(r.pitching_score))
+    );
+
+    combined.push({
+      ...sorted[0],
+      overall_score: bestOverall ?? sorted[0].overall_score,
+      offense_score: bestOffense ?? sorted[0].offense_score,
+      defense_score: bestDefense ?? sorted[0].defense_score,
+      pitching_score: bestPitching ?? sorted[0].pitching_score,
+      breakdown: mergedBreakdown,
+    });
+  }
+
+  return combined;
+}
+
+async function computeTeamStatsOverview(
+  teamId: string,
+  options: TeamEvalSelection = {}
 ): Promise<TeamStatsOverview | null> {
   // 1) Load the team – use age_group and alias it to age_group_label so
   //    we don't rely on a non-existent age_group_label column.
@@ -2525,6 +2876,8 @@ async function computeTeamStatsOverview(
       id,
       player_id,
       age_group_id,
+      player_assessment_id,
+      assessment_id,
       overall_score,
       offense_score,
       defense_score,
@@ -2555,7 +2908,7 @@ async function computeTeamStatsOverview(
 
   // 3) Optionally filter to a single age_group_id if present on the rows.
   //    (We no longer depend on a team-level age_group_id column.)
-  let filteredRows = ratingRows as any[];
+  let filteredRows = ratingRows as TeamRatingRow[];
 
   const distinctAgeGroupIds = Array.from(
     new Set(
@@ -2575,6 +2928,34 @@ async function computeTeamStatsOverview(
     );
   }
 
+  const assessmentMeta = await loadTeamAssessmentMeta(teamId);
+  const normalizedAssessmentDate = normalizeIsoDate(options.assessmentDate);
+
+  let targetAssessmentDate: string | null = null;
+  if (options.evalScope === "latest_eval") {
+    targetAssessmentDate = resolveLatestAssessmentDate(
+      assessmentMeta,
+      filteredRows
+    );
+  } else if (
+    (options.evalScope === "specific" || normalizedAssessmentDate) &&
+    normalizedAssessmentDate
+  ) {
+    targetAssessmentDate = normalizedAssessmentDate;
+  }
+
+  if (targetAssessmentDate) {
+    const filteredByDate = filteredRows.filter((row) => {
+      const performedAt = getAssessmentDateForRatingRow(row, assessmentMeta);
+      if (!performedAt) return false;
+      return normalizeIsoDate(performedAt) === targetAssessmentDate;
+    });
+
+    if (filteredByDate.length > 0) {
+      filteredRows = filteredByDate;
+    }
+  }
+
   if (!filteredRows.length) {
     return {
       team_id: teamRow.id,
@@ -2585,41 +2966,37 @@ async function computeTeamStatsOverview(
     };
   }
 
-  // 4) For each player, keep only their latest rating row
-  type RatingRow = {
-    id: number;
-    player_id: string;
-    age_group_id: number | string | null;
-    overall_score: string | number | null;
-    offense_score: string | number | null;
-    defense_score: string | number | null;
-    pitching_score: string | number | null;
-    created_at: string | null;
-    breakdown: any;
-  };
+  // 4) Determine which rows to use: all-star aggregate or latest per player
+  let rows: TeamRatingRow[] = [];
 
-  const latestByPlayer = new Map<string, RatingRow>();
+  if (options.evalScope === "all_star") {
+    rows = buildAllStarRows(filteredRows);
+  } else {
+    const latestByPlayer = new Map<string, TeamRatingRow>();
 
-  for (const row of filteredRows as RatingRow[]) {
-    const playerId = row.player_id;
-    const existing = latestByPlayer.get(playerId);
+    for (const row of filteredRows) {
+      const playerId = row.player_id;
+      const existing = latestByPlayer.get(playerId);
 
-    if (!existing) {
-      latestByPlayer.set(playerId, row);
-      continue;
+      if (!existing) {
+        latestByPlayer.set(playerId, row);
+        continue;
+      }
+
+      const existingTime = existing.created_at
+        ? new Date(existing.created_at).getTime()
+        : 0;
+      const rowTime = row.created_at ? new Date(row.created_at).getTime() : 0;
+
+      if (rowTime > existingTime) {
+        latestByPlayer.set(playerId, row);
+      }
     }
 
-    const existingTime = existing.created_at
-      ? new Date(existing.created_at).getTime()
-      : 0;
-    const rowTime = row.created_at ? new Date(row.created_at).getTime() : 0;
-
-    if (rowTime > existingTime) {
-      latestByPlayer.set(playerId, row);
-    }
+    rows = Array.from(latestByPlayer.values());
   }
 
-  if (latestByPlayer.size === 0) {
+  if (!rows.length) {
     return {
       team_id: teamRow.id,
       team_name: teamRow.name ?? null,
@@ -2630,8 +3007,6 @@ async function computeTeamStatsOverview(
   }
 
   // 5) Build metrics (BPOP rating + offense/defense/pitching/athletic)
-
-  const rows = Array.from(latestByPlayer.values());
 
   const metricDefs: { code: CoreMetricCode; label: string }[] = [
     { code: "bpoprating", label: "BPOP Rating" },
@@ -2794,7 +3169,8 @@ async function computeTeamStatsOverview(
 }
 
 async function computeTeamOffenseDrilldown(
-  teamId: string
+  teamId: string,
+  options: TeamEvalSelection = {}
 ): Promise<TeamOffenseDrilldown | null> {
   // 1) Load team meta
   const { data: teamRow, error: teamError } = await supabase
@@ -2816,7 +3192,7 @@ async function computeTeamOffenseDrilldown(
   const { data: ratingRows, error: ratingsError } = await supabase
     .from("player_ratings")
     .select(
-      "id, player_id, team_id, age_group_id, assessment_id, created_at, offense_score, breakdown"
+      "id, player_id, team_id, age_group_id, player_assessment_id, assessment_id, overall_score, offense_score, defense_score, pitching_score, created_at, breakdown"
     )
     .eq("team_id", teamId)
     .order("created_at", { ascending: false });
@@ -2848,42 +3224,37 @@ async function computeTeamOffenseDrilldown(
     };
   }
 
-  // 3) Keep the latest rating row per player
-  type RatingRow = {
-    id: number;
-    player_id: string | null;
-    assessment_id: number | null;
-    created_at: string | null;
-    offense_score: number | null;
-    breakdown: any;
-  };
+  let filteredRows = ratingRows as TeamRatingRow[];
 
+  const assessmentMeta = await loadTeamAssessmentMeta(teamId);
+  const normalizedAssessmentDate = normalizeIsoDate(options.assessmentDate);
 
-  const latestByPlayer = new Map<string, RatingRow>();
+  let targetAssessmentDate: string | null = null;
+  if (options.evalScope === "latest_eval") {
+    targetAssessmentDate = resolveLatestAssessmentDate(
+      assessmentMeta,
+      filteredRows
+    );
+  } else if (
+    (options.evalScope === "specific" || normalizedAssessmentDate) &&
+    normalizedAssessmentDate
+  ) {
+    targetAssessmentDate = normalizedAssessmentDate;
+  }
 
-  for (const raw of ratingRows as RatingRow[]) {
-    const playerId = raw.player_id;
-    if (!playerId) continue;
+  if (targetAssessmentDate) {
+    const filteredByDate = filteredRows.filter((row) => {
+      const performedAt = getAssessmentDateForRatingRow(row, assessmentMeta);
+      if (!performedAt) return false;
+      return normalizeIsoDate(performedAt) === targetAssessmentDate;
+    });
 
-    const existing = latestByPlayer.get(playerId);
-    if (!existing) {
-      latestByPlayer.set(playerId, raw);
-      continue;
-    }
-
-    const existingCreated = existing.created_at
-      ? new Date(existing.created_at).getTime()
-      : 0;
-    const rowCreated = raw.created_at
-      ? new Date(raw.created_at).getTime()
-      : 0;
-
-    if (rowCreated > existingCreated) {
-      latestByPlayer.set(playerId, raw);
+    if (filteredByDate.length > 0) {
+      filteredRows = filteredByDate;
     }
   }
 
-  if (!latestByPlayer.size) {
+  if (!filteredRows.length) {
     return {
       team_id: teamRow.id,
       team_name: teamRow.name ?? null,
@@ -2901,10 +3272,84 @@ async function computeTeamOffenseDrilldown(
     };
   }
 
+  let latestRows: TeamRatingRow[] = [];
+
+  if (options.evalScope === "all_star") {
+    latestRows = buildAllStarRows(filteredRows);
+  } else {
+    const latestByPlayer = new Map<string, TeamRatingRow>();
+
+    for (const raw of filteredRows as TeamRatingRow[]) {
+      const playerId = raw.player_id;
+      if (!playerId) continue;
+
+      const existing = latestByPlayer.get(playerId);
+      if (!existing) {
+        latestByPlayer.set(playerId, raw);
+        continue;
+      }
+
+      const existingCreated = existing.created_at
+        ? new Date(existing.created_at).getTime()
+        : 0;
+      const rowCreated = raw.created_at
+        ? new Date(raw.created_at).getTime()
+        : 0;
+
+      if (rowCreated > existingCreated) {
+        latestByPlayer.set(playerId, raw);
+      }
+    }
+
+    latestRows = Array.from(latestByPlayer.values());
+  }
+
+  if (!latestRows.length) {
+    return {
+      team_id: teamRow.id,
+      team_name: teamRow.name ?? null,
+      age_group_label: (teamRow as any).age_group_label ?? null,
+      level: (teamRow as any).level ?? null,
+      metrics: [],
+      players: [],
+      tests_by_metric: {
+        offense: [],
+        contact: [],
+        power: [],
+        speed: [],
+        strikechance: [],
+      },
+    };
+  }
+
+  const playerAssessmentIdsByPlayer = new Map<string, number[]>();
+  const sourceRowsForRawMetrics =
+    options.evalScope === "all_star" ? filteredRows : latestRows;
+
+  for (const row of sourceRowsForRawMetrics ?? []) {
+    const pid = row.player_id;
+    if (!pid) continue;
+
+    const assessmentId =
+      (row as any).player_assessment_id ?? (row as any).assessment_id;
+
+    if (typeof assessmentId !== "number") continue;
+
+    const list = playerAssessmentIdsByPlayer.get(pid) ?? [];
+    if (!list.includes(assessmentId)) {
+      list.push(assessmentId);
+      playerAssessmentIdsByPlayer.set(pid, list);
+    }
+  }
+
   // 4) Convert ratings → batting metrics (hitting/contact/power/speed/strikeChance)
   const metricsByPlayerId = new Map<string, BattingPlayerMetrics>();
+  const ratingRowByPlayer = new Map<string, TeamRatingRow>();
 
-  for (const [playerId, ratingRow] of latestByPlayer.entries()) {
+  for (const ratingRow of latestRows) {
+    const playerId = ratingRow.player_id;
+    if (!playerId) continue;
+    ratingRowByPlayer.set(playerId, ratingRow);
     const metrics = getBattingMetricsFromRating(ratingRow);
     if (!metrics) continue;
 
@@ -2981,8 +3426,8 @@ async function computeTeamOffenseDrilldown(
   // the underlying player_assessment_values for just those assessments.
   const assessmentIds = Array.from(
     new Set(
-      (ratingRows ?? [])
-        .map((row: any) => row.assessment_id as number | null)
+      Array.from(playerAssessmentIdsByPlayer.values())
+        .flat()
         .filter((id): id is number => typeof id === "number")
     )
   );
@@ -3068,9 +3513,13 @@ async function computeTeamOffenseDrilldown(
   }
 
   const tests_by_metric = buildOffenseTestBreakdownsForTeam(
-    ratingRows ?? [],
+    latestRows ?? [],
     playersForTests,
-    rawMetricsByAssessmentId
+    rawMetricsByAssessmentId,
+    {
+      evalScope: options.evalScope ?? null,
+      playerAssessmentIdsByPlayer,
+    }
   );
 
   
@@ -3155,7 +3604,7 @@ async function computeTeamOffenseDrilldown(
   const perTestInput: PlayerWithRatingForOffense[] = [];
 
   for (const playerId of playerIds) {
-    const ratingRow = latestByPlayer.get(playerId);
+    const ratingRow = ratingRowByPlayer.get(playerId);
     if (!ratingRow) continue;
 
     let breakdown: any = ratingRow.breakdown ?? null;
@@ -8381,8 +8830,25 @@ app.get("/teams/:teamId/stats/overview", async (req, res) => {
     return res.status(400).json({ error: "Missing teamId" });
   }
 
+  const evalScopeRaw = req.query.eval_scope;
+  const assessmentDateRaw = req.query.assessment_date;
+
+  const evalScope =
+    typeof evalScopeRaw === "string" &&
+    ["latest_eval", "all_star", "specific"].includes(evalScopeRaw)
+      ? (evalScopeRaw as "latest_eval" | "all_star" | "specific")
+      : null;
+
+  const assessmentDate =
+    typeof assessmentDateRaw === "string" && assessmentDateRaw
+      ? assessmentDateRaw
+      : null;
+
   try {
-    const overview = await computeTeamStatsOverview(teamId);
+    const overview = await computeTeamStatsOverview(teamId, {
+      evalScope,
+      assessmentDate,
+    });
     if (!overview) {
       return res.status(404).json({ error: "Team not found or no ratings." });
     }
@@ -8396,6 +8862,33 @@ app.get("/teams/:teamId/stats/overview", async (req, res) => {
   }
 });
 
+// Team stats evaluation options
+app.get("/teams/:teamId/stats/evaluations", async (req, res) => {
+  const teamId = req.params.teamId;
+
+  if (!teamId) {
+    return res.status(400).json({ error: "Missing teamId" });
+  }
+
+  try {
+    const meta = await loadTeamAssessmentMeta(teamId);
+
+    const evaluations = meta.orderedDates.map((iso) => ({
+      id: iso,
+      performed_at: iso,
+      label: iso,
+    }));
+
+    return res.status(200).json({ team_id: teamId, evaluations });
+  } catch (err) {
+    console.error(
+      "Unexpected error in GET /teams/:teamId/stats/evaluations:",
+      err
+    );
+    return res.status(500).json({ error: "Failed to load team evaluations." });
+  }
+});
+
 app.get(
   "/teams/:teamId/stats/offense",
   requireAuth,
@@ -8406,6 +8899,20 @@ app.get(
       return res.status(400).json({ error: "Missing teamId" });
     }
 
+    const evalScopeRaw = req.query.eval_scope;
+    const assessmentDateRaw = req.query.assessment_date;
+
+    const evalScope =
+      typeof evalScopeRaw === "string" &&
+      ["latest_eval", "all_star", "specific"].includes(evalScopeRaw)
+        ? (evalScopeRaw as "latest_eval" | "all_star" | "specific")
+        : null;
+
+    const assessmentDate =
+      typeof assessmentDateRaw === "string" && assessmentDateRaw
+        ? assessmentDateRaw
+        : null;
+
     const role = await assertTeamRoleOr403(
       req,
       res,
@@ -8415,7 +8922,10 @@ app.get(
     if (!role) return;
 
     try {
-      const drilldown = await computeTeamOffenseDrilldown(teamId);
+      const drilldown = await computeTeamOffenseDrilldown(teamId, {
+        evalScope,
+        assessmentDate,
+      });
       if (!drilldown) {
         return res
           .status(404)
@@ -9232,8 +9742,25 @@ app.get(
     );
     if (!role) return;
 
+    const evalScopeRaw = req.query.eval_scope;
+    const assessmentDateRaw = req.query.assessment_date;
+
+    const evalScope =
+      typeof evalScopeRaw === "string" &&
+      ["latest_eval", "all_star", "specific"].includes(evalScopeRaw)
+        ? (evalScopeRaw as "latest_eval" | "all_star" | "specific")
+        : null;
+
+    const assessmentDate =
+      typeof assessmentDateRaw === "string" && assessmentDateRaw
+        ? assessmentDateRaw
+        : null;
+
     try {
-      const payload = await computeTeamOffenseDrilldown(teamId);
+      const payload = await computeTeamOffenseDrilldown(teamId, {
+        evalScope,
+        assessmentDate,
+      });
 
       if (!payload) {
         return res

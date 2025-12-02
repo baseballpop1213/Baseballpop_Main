@@ -142,6 +142,19 @@ export interface TeamStatsOverview {
   metrics: StatsMetricSummary[];
 }
 
+export type TeamEvalScope = "latest_eval" | "all_star" | "specific";
+
+export interface TeamEvaluationOption {
+  id: string;
+  performed_at: string;
+  label: string;
+}
+
+export interface TeamEvaluationListResponse {
+  team_id: string;
+  evaluations: TeamEvaluationOption[];
+}
+
 /**
  * Player-level stats overview used on the Stats page (player view).
  */
@@ -275,6 +288,9 @@ export interface OffenseTestPlayerRow {
    */
   value: number | null;
 
+  /** Raw MPH for power tests (bat speed / exit velo). */
+  raw_mph?: number | null;
+
   /**
    * Optional raw time in seconds for timed‑run tests.
    * (Filled for timed_run_1b / timed_run_4b once backend is updated.)
@@ -297,6 +313,9 @@ export interface OffenseTestBreakdown {
   team_average: number | null;
   player_count: number;
   per_player: OffenseTestPlayerRow[];
+
+  /** Team-average raw MPH for power tests (bat speed / exit velo). */
+  team_avg_mph?: number | null;
 }
 
 export interface OffenseDrilldownPlayerRow {
