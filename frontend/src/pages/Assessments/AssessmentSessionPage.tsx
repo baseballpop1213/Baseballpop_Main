@@ -158,6 +158,18 @@ const PITCH_COMMAND_OPTIONS: HittingSwingOption[] = [
   { code: "section", label: "Hit called section (3)", points: 3 },
 ];
 
+const ADDITIONAL_PITCH_TYPE_OPTIONS = [
+  { value: "fastball", label: "Fastball" },
+  { value: "changeup", label: "Changeup" },
+  { value: "curveball", label: "Curveball" },
+  { value: "slider", label: "Slider" },
+  { value: "cutter", label: "Cutter" },
+  { value: "sinker", label: "Sinker" },
+  { value: "splitter", label: "Splitter" },
+  { value: "knuckleball", label: "Knuckleball" },
+  { value: "other", label: "Other / Misc." },
+];
+
 // --- Catcher matrix helpers ----------------------------------------------
 
 // Options per pitch for catcher screen tests (C10PCS / C20PCS)
@@ -188,6 +200,47 @@ const CATCHER_MATRIX_CONFIG: Record<
 };
 
 
+// Athletic Skills tabs → metric keys that belong to each block
+const ATHLETIC_BLOCKS =
+  ["speed", "strength", "power", "balance", "mobility"] as const;
+
+type AthleticBlock = (typeof ATHLETIC_BLOCKS)[number];
+
+const ATHLETIC_METRIC_KEYS: Record<AthleticBlock, Set<string>> = {
+  speed: new Set<string>(["timed_run_1b", "timed_run_4b"]),
+  strength: new Set<string>([
+    "apush_60",
+    "asit_60",
+    "apush_30",
+    "asit_30",
+    "apull_60",
+  ]),
+  power: new Set<string>([
+    "asp_jump_inches",
+    "aspscp_distance_ft",
+    "aspsup_distance_ft",
+    "apull_60",
+  ]),
+  balance: new Set<string>([
+    "sls_eyes_open_right",
+    "sls_eyes_open_left",
+    "sls_eyes_closed_right",
+    "sls_eyes_closed_left",
+  ]),
+  mobility: new Set<string>([
+    "msr_right",
+    "msr_left",
+    "toe_touch",
+    "deep_squat",
+  ]),
+};
+
+// Helper metrics that should not render as standalone grid rows
+const ATHLETIC_HELPER_METRIC_KEYS = new Set<string>([
+  "timed_run_1b_distance_ft",
+  "timed_run_4b_distance_ft",
+]);
+
 // Hitting tab grouping: which metrics belong to "tee" vs "live"
 const HITTING_TEE_METRIC_KEYS = new Set<string>([
   "max_bat_speed",
@@ -202,6 +255,9 @@ const HITTING_LIVE_METRIC_KEYS = new Set<string>([
   "m_5_varied_speed_quality",
   "m_5_curveball_quality",
 ]);
+
+const HITTING_SECTIONS = ["tee", "live"] as const;
+type HittingSection = (typeof HITTING_SECTIONS)[number];
 
 // First Base (1B) matrix configuration (10U–Pro)
 // These mirror the hitting / pitching matrix tests:
@@ -340,6 +396,60 @@ const INFIELD_CATCH_MATRIX_OPTIONS: Record<
     { code: "catch", label: "Catch (2)", points: 2 },
   ],
 };
+
+
+function parseMatrixValueText(
+  raw: unknown,
+  expectedCount: number
+): { swings: string[]; pitchType: string | null; format: "array" | "object" } {
+  const max = Math.max(1, expectedCount);
+  const swings = new Array<string>(max).fill("");
+  let pitchType: string | null = null;
+  let format: "array" | "object" = "array";
+
+  if (typeof raw === "string" && raw.trim() !== "") {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        for (let i = 0; i < Math.min(parsed.length, max); i++) {
+          swings[i] = String(parsed[i] ?? "");
+        }
+      } else if (parsed && typeof parsed === "object") {
+        format = "object";
+        const asAny = parsed as any;
+        if (Array.isArray(asAny.swings)) {
+          for (let i = 0; i < Math.min(asAny.swings.length, max); i++) {
+            swings[i] = String(asAny.swings[i] ?? "");
+          }
+        }
+
+        if (
+          typeof asAny.pitchType === "string" &&
+          asAny.pitchType.trim() !== ""
+        ) {
+          pitchType = asAny.pitchType;
+        }
+      }
+    } catch {
+      // ignore parse errors; leave defaults
+    }
+  }
+
+  return { swings, pitchType, format };
+}
+
+function computeMatrixTotal(
+  swings: string[],
+  options: { code: string; points: number }[]
+): number {
+  const pointsMap = new Map<string, number>();
+  options.forEach((opt) => pointsMap.set(opt.code, opt.points));
+
+  return swings.reduce((sum, code) => {
+    if (!code) return sum;
+    return sum + (pointsMap.get(code) ?? 0);
+  }, 0);
+}
 
 
 function formatPlayerName(profile?: TeamPlayerRow["profiles"] | null): string {
@@ -734,13 +844,12 @@ export default function AssessmentSessionPage() {
   }, [sessionEvalType, fullSections, templateCache]);
 
   // Athletic Skills: which section is active in the grid tabs
-  const [activeAthleticBlock, setActiveAthleticBlock] = useState<
-    "speed" | "strength" | "power" | "balance" | "mobility"
-  >("speed");
+  const [activeAthleticBlock, setActiveAthleticBlock] =
+    useState<AthleticBlock>(ATHLETIC_BLOCKS[0]);
 
   // Hitting: Tee vs Live section in the grid tabs
   const [activeHittingSection, setActiveHittingSection] = useState<
-    "tee" | "live"
+    HittingSection
   >("tee");
 
   // First Base (1B): Catching vs Fielding section
@@ -753,13 +862,79 @@ export default function AssessmentSessionPage() {
     "fielding" | "catching"
   >("fielding");
 
-  
+
   // Pitching: which “additional pitch” matrices are visible in the grid
   // (we always show any that already have data; this just controls which
   // empty slots are revealed by the "Add another pitch type" button)
   const [visibleExtraPitchMatrices, setVisibleExtraPitchMatrices] = useState<
     string[]
   >([]);
+
+  const availableAthleticBlocks = useMemo(() => {
+    if (effectiveEvalType !== "athletic") return [] as AthleticBlock[];
+    if (!metrics.length) return [] as AthleticBlock[];
+
+    const metricKeys = new Set(
+      metrics
+        .map((m) => (m as any).metric_key as string | undefined)
+        .filter((k): k is string => Boolean(k))
+    );
+
+    return ATHLETIC_BLOCKS.filter((block) =>
+      Array.from(ATHLETIC_METRIC_KEYS[block]).some(
+        (key) =>
+          metricKeys.has(key) && !ATHLETIC_HELPER_METRIC_KEYS.has(key)
+      )
+    );
+  }, [effectiveEvalType, metrics]);
+
+  useEffect(() => {
+    if (effectiveEvalType !== "athletic") return;
+    if (!availableAthleticBlocks.length) return;
+
+    setActiveAthleticBlock((prev) =>
+      availableAthleticBlocks.includes(prev)
+        ? prev
+        : availableAthleticBlocks[0]
+    );
+  }, [effectiveEvalType, availableAthleticBlocks]);
+
+  const availableHittingSections = useMemo(() => {
+    if (effectiveEvalType !== "hitting") return [] as HittingSection[];
+    if (!metrics.length) return [] as HittingSection[];
+
+    const hittingMetricKeys = metrics
+      .map((m) => (m as any).metric_key as string | undefined)
+      .filter((k): k is string => Boolean(k));
+
+    const hasTee = hittingMetricKeys.some((k) =>
+      HITTING_TEE_METRIC_KEYS.has(k)
+    );
+    const hasLive = hittingMetricKeys.some((k) =>
+      HITTING_LIVE_METRIC_KEYS.has(k)
+    );
+    const hasUncategorized = hittingMetricKeys.some(
+      (k) =>
+        !HITTING_TEE_METRIC_KEYS.has(k) && !HITTING_LIVE_METRIC_KEYS.has(k)
+    );
+
+    const sections: HittingSection[] = [];
+    if (hasTee || hasUncategorized) sections.push("tee");
+    if (hasLive || hasUncategorized) sections.push("live");
+
+    return sections;
+  }, [effectiveEvalType, metrics]);
+
+  useEffect(() => {
+    if (effectiveEvalType !== "hitting") return;
+    if (!availableHittingSections.length) return;
+
+    setActiveHittingSection((prev) =>
+      availableHittingSections.includes(prev)
+        ? prev
+        : availableHittingSections[0]
+    );
+  }, [effectiveEvalType, availableHittingSections]);
 
 
   // Group metrics by logical group (Speed, Strength, Power, Balance, Mobility, etc.)
@@ -828,44 +1003,18 @@ export default function AssessmentSessionPage() {
     // ATHLETIC SKILLS
     // -------------------------------
     if (effectiveEvalType === "athletic") {
-      // Metric keys used in each athletic block
-      const speedKeys = new Set<string>([
-        "timed_run_1b",
-        "timed_run_4b",
-      ]);
+      const activeAthleticTab = availableAthleticBlocks.includes(
+        activeAthleticBlock
+      )
+        ? activeAthleticBlock
+        : availableAthleticBlocks[0];
 
-      const strengthKeys = new Set<string>([
-        "apush_60",
-        "asit_60",
-        "apush_30",
-        "asit_30",
-      ]);
+      if (!activeAthleticTab) {
+        return groups;
+      }
 
-      const powerKeys = new Set<string>([
-        "asp_jump_inches",
-        "aspscp_distance_ft",
-        "aspsup_distance_ft",
-      ]);
-
-      const balanceKeys = new Set<string>([
-        "sls_eyes_open_right",
-        "sls_eyes_open_left",
-        "sls_eyes_closed_right",
-        "sls_eyes_closed_left",
-      ]);
-
-      const mobilityKeys = new Set<string>([
-        "msr_right",
-        "msr_left",
-        "toe_touch",
-        "deep_squat",
-      ]);
-
-      // Helper metrics we don't want to show in the grid (hidden, driven by base_path, etc.)
-      const helperKeysToHide = new Set<string>([
-        "timed_run_1b_distance_ft",
-        "timed_run_4b_distance_ft",
-      ]);
+      const helperKeysToHide = ATHLETIC_HELPER_METRIC_KEYS;
+      const blockKeys = ATHLETIC_METRIC_KEYS[activeAthleticTab];
 
       groups = groups
         .map((group) => {
@@ -879,20 +1028,7 @@ export default function AssessmentSessionPage() {
             }
 
             // Show only metrics for the active Athletic section
-            switch (activeAthleticBlock) {
-              case "speed":
-                return speedKeys.has(metricKey);
-              case "strength":
-                return strengthKeys.has(metricKey);
-              case "power":
-                return powerKeys.has(metricKey);
-              case "balance":
-                return balanceKeys.has(metricKey);
-              case "mobility":
-                return mobilityKeys.has(metricKey);
-              default:
-                return true;
-            }
+            return blockKeys.has(metricKey);
           });
 
           return {
@@ -909,6 +1045,16 @@ export default function AssessmentSessionPage() {
     // HITTING – Tee vs Live tabs
     // -------------------------------
     if (effectiveEvalType === "hitting") {
+      const activeHittingTab = availableHittingSections.includes(
+        activeHittingSection
+      )
+        ? activeHittingSection
+        : availableHittingSections[0];
+
+      if (!activeHittingTab) {
+        return groups;
+      }
+
       groups = groups
         .map((group) => {
           const isHittingGroupLocal =
@@ -927,7 +1073,7 @@ export default function AssessmentSessionPage() {
               return true;
             }
 
-            return activeHittingSection === "tee" ? inTee : inLive;
+            return activeHittingTab === "tee" ? inTee : inLive;
           });
 
           return {
@@ -982,7 +1128,9 @@ export default function AssessmentSessionPage() {
     groupedMetrics,
     effectiveEvalType,
     activeAthleticBlock,
+    availableAthleticBlocks,
     activeHittingSection,
+    availableHittingSections,
     activeFirstBaseSection,
     hasFirstBaseFieldingGroup,
     activeInfieldSection,
@@ -1794,7 +1942,8 @@ export default function AssessmentSessionPage() {
     swingIndex: number,
     swingCode: string,
     options: { code: string; label: string; points: number }[],
-    swingCount: number
+    swingCount: number,
+    opts?: { pitchType?: string | null; forceObject?: boolean }
   ) {
     if (!sessionData || isFinalized) return;
 
@@ -1806,11 +1955,6 @@ export default function AssessmentSessionPage() {
         : swingIndex >= maxSwings
         ? maxSwings - 1
         : swingIndex;
-
-    const pointsMap = new Map<string, number>();
-    for (const opt of options) {
-      pointsMap.set(opt.code, opt.points);
-    }
 
     setSessionData((prev) => {
       const base: EvalSessionData =
@@ -1827,43 +1971,37 @@ export default function AssessmentSessionPage() {
       const byPlayer = { ...(values[playerId] || {}) };
       const existing = byPlayer[metricId];
 
-      // Start with an empty array of swings for this metric
-      let swings: string[] = new Array(maxSwings).fill("");
-
-      // If we already have stored text, hydrate from it
-      if (
-        existing?.value_text &&
-        typeof existing.value_text === "string" &&
-        existing.value_text.trim() !== ""
-      ) {
-        try {
-          const parsed = JSON.parse(existing.value_text);
-          if (Array.isArray(parsed)) {
-            for (let i = 0; i < Math.min(parsed.length, maxSwings); i++) {
-              swings[i] = String(parsed[i] ?? "");
-            }
-          }
-        } catch {
-          // ignore parse errors; treat as fresh
-        }
-      }
+      const parsed = parseMatrixValueText(existing?.value_text, maxSwings);
+      const swings: string[] = [...parsed.swings];
+      const optsPitchTypeProvided =
+        opts && Object.prototype.hasOwnProperty.call(opts, "pitchType");
+      const normalizedPitchType = optsPitchTypeProvided
+        ? opts?.pitchType && opts.pitchType.trim() !== ""
+          ? opts.pitchType.trim()
+          : null
+        : parsed.pitchType;
+      const keepObjectFormat =
+        opts?.forceObject || parsed.format === "object" || optsPitchTypeProvided;
 
       // Update the selected swing
       swings[idx] = swingCode;
 
-      // Compute total score and check if we have any non-empty swings
-      let total = 0;
-      let hasAny = false;
-      for (const code of swings) {
-        if (!code) continue;
-        hasAny = true;
-        total += pointsMap.get(code) ?? 0;
-      }
+      const hasAny = swings.some((code) => code && code.trim() !== "");
+      const total = hasAny ? computeMatrixTotal(swings, options) : 0;
 
-      const nextMetricValue = hasAny
+      const shouldPersist = hasAny || normalizedPitchType;
+      const valueText = shouldPersist
+        ? JSON.stringify(
+            keepObjectFormat || normalizedPitchType
+              ? { swings, pitchType: normalizedPitchType }
+              : swings
+          )
+        : null;
+
+      const nextMetricValue = shouldPersist
         ? {
-            value_numeric: total,
-            value_text: JSON.stringify(swings),
+            value_numeric: hasAny ? total : null,
+            value_text: valueText,
           }
         : {
             value_numeric: null,
@@ -1888,9 +2026,58 @@ export default function AssessmentSessionPage() {
     setDirty(true);
   }
 
+  function handlePitchMatrixTypeChange(
+    metricId: number,
+    playerId: string,
+    pitchCount: number,
+    nextType: string
+  ) {
+    if (!sessionData || isFinalized) return;
 
+    const normalizedType = nextType?.trim() || null;
+    const pitchCountSafe = Math.max(1, pitchCount);
 
-  
+    setSessionData((prev) => {
+      const base: EvalSessionData =
+        prev ?? {
+          player_ids: sessionData.player_ids ?? [],
+          values: {},
+          completed_metric_ids: sessionData.completed_metric_ids ?? [],
+          evaluation_type: effectiveEvalType,
+          session_mode: effectiveSessionMode as any,
+        };
+
+      const values = { ...(base.values || {}) } as any;
+      const byPlayer = { ...(values[playerId] || {}) };
+      const existing = byPlayer[metricId];
+
+      const parsed = parseMatrixValueText(existing?.value_text, pitchCountSafe);
+      const swings = [...parsed.swings];
+      const hasAny = swings.some((code) => code && code.trim() !== "");
+      const total = hasAny ? computeMatrixTotal(swings, PITCH_COMMAND_OPTIONS) : 0;
+      const shouldPersist = hasAny || normalizedType;
+
+      const nextValue = shouldPersist
+        ? {
+            value_numeric: hasAny ? total : null,
+            value_text: JSON.stringify({
+              swings,
+              pitchType: normalizedType,
+            }),
+          }
+        : { value_numeric: null, value_text: null };
+
+      byPlayer[metricId] = nextValue;
+      values[playerId] = byPlayer;
+
+      return {
+        ...base,
+        values,
+      };
+    });
+
+    setDirty(true);
+  }
 
   async function handleAddTryoutPlayerInSession() {
     if (!session || !sessionData) return;
@@ -2580,12 +2767,11 @@ export default function AssessmentSessionPage() {
           </div>
         </div>
 
-        {effectiveEvalType === "athletic" && (
+        {effectiveEvalType === "athletic" &&
+          availableAthleticBlocks.length > 0 && (
           <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
             <span className="text-slate-400">Section:</span>
-            {(
-              ["speed", "strength", "power", "balance", "mobility"] as const
-            ).map((block) => {
+            {availableAthleticBlocks.map((block) => {
               const labelMap: Record<
                 (typeof block),
                 string
@@ -2616,10 +2802,11 @@ export default function AssessmentSessionPage() {
           </div>
         )}
 
-        {effectiveEvalType === "hitting" && (
+        {effectiveEvalType === "hitting" &&
+          availableHittingSections.length > 0 && (
           <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
             <span className="text-slate-400">Section:</span>
-            {(["tee", "live"] as const).map((section) => {
+            {availableHittingSections.map((section) => {
               const isActive = activeHittingSection === section;
               const label = section === "tee" ? "Tee Work" : "Live Pitching";
               return (
@@ -2666,7 +2853,7 @@ export default function AssessmentSessionPage() {
           </div>
         )}
 
-        {effectiveEvalType === "infield" && (
+        {effectiveEvalType === "infield" && hasInfieldFieldingGroup && (
           <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
             <span className="text-slate-400">Section:</span>
             {(["fielding", "catching"] as const).map((section) => {
@@ -4885,8 +5072,8 @@ export default function AssessmentSessionPage() {
                     "For each pitch, mark Miss (0), Hit target (1), or Hit called section (3). The total score is calculated automatically.";
 
                   const options = PITCH_COMMAND_OPTIONS;
-                  const pointsMap = new Map<string, number>();
-                  options.forEach((opt) => pointsMap.set(opt.code, opt.points));
+                  const isExtraPitchMatrix =
+                    metricKey && extraPitchKeys.has(metricKey);
 
                   rows.push(
                     <tr
@@ -4909,36 +5096,20 @@ export default function AssessmentSessionPage() {
                         const numericValue = v?.value_numeric;
 
                         const pitchCountSafe = Math.max(1, pitchCount);
-                        let pitches: string[] = new Array(pitchCountSafe).fill("");
-
-                        if (
-                          typeof storedText === "string" &&
-                          storedText.trim() !== ""
-                        ) {
-                          try {
-                            const parsed = JSON.parse(storedText);
-                            if (Array.isArray(parsed)) {
-                              for (
-                                let i = 0;
-                                i < Math.min(parsed.length, pitchCountSafe);
-                                i++
-                              ) {
-                                pitches[i] = String(parsed[i] ?? "");
-                              }
-                            }
-                          } catch {
-                            // ignore parse errors
-                          }
-                        }
+                        const parsedMatrix = parseMatrixValueText(
+                          storedText,
+                          pitchCountSafe
+                        );
+                        const pitches = parsedMatrix.swings;
+                        const pitchType = parsedMatrix.pitchType;
+                        const keepObjectFormat =
+                          parsedMatrix.format === "object" || !!isExtraPitchMatrix;
 
                         const displayTotal =
                           typeof numericValue === "number" &&
                           !Number.isNaN(numericValue)
                             ? numericValue
-                            : pitches.reduce((sum, code) => {
-                                if (!code) return sum;
-                                return sum + (pointsMap.get(code) ?? 0);
-                              }, 0);
+                            : computeMatrixTotal(pitches, options);
 
                         return (
                           <td
@@ -4946,6 +5117,31 @@ export default function AssessmentSessionPage() {
                             className="px-2 py-2 align-top"
                           >
                             <div className="flex flex-col gap-1">
+                              {isExtraPitchMatrix && (
+                                <div className="mb-1 flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
+                                  <span>Pitch type:</span>
+                                  <select
+                                    className="rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-100"
+                                    value={pitchType ?? ""}
+                                    onChange={(e) =>
+                                      handlePitchMatrixTypeChange(
+                                        metric.id,
+                                        playerId,
+                                        pitchCountSafe,
+                                        e.target.value
+                                      )
+                                    }
+                                    disabled={isFinalized}
+                                  >
+                                    <option value="">Select</option>
+                                    {ADDITIONAL_PITCH_TYPE_OPTIONS.map((opt) => (
+                                      <option key={opt.value} value={opt.value}>
+                                        {opt.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              )}
                               <div className="grid grid-cols-5 gap-1">
                                 {pitches.map((code, idx) => (
                                   <div
@@ -4965,7 +5161,11 @@ export default function AssessmentSessionPage() {
                                           idx,
                                           e.target.value,
                                           options,
-                                          pitchCountSafe
+                                          pitchCountSafe,
+                                          {
+                                            pitchType,
+                                            forceObject: keepObjectFormat,
+                                          }
                                         )
                                       }
                                       disabled={isFinalized}
