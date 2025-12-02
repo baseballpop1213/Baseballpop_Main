@@ -114,3 +114,7 @@ The backend expects the following Supabase tables:
 - Backend binds to localhost:3000 (internal port)
 - All routes use Supabase for data persistence
 - Authentication is handled via Supabase Auth with JWT tokens
+
+## Replit troubleshooting
+- If the workspace fails to open after a merge, clear any cached build artifacts (`frontend/dist`, `Backend/dist`) and reinstall dependencies. Large build folders or accidentally committed `node_modules` can cause the workspace to exceed resource limits while the VM is starting.
+- From the shell you can run `rm -rf node_modules frontend/node_modules Backend/node_modules frontend/dist Backend/dist && npm install --prefix Backend && npm install --prefix frontend` to reset the environment before hitting the Run button again.

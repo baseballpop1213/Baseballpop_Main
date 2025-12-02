@@ -1,0 +1,12 @@
+node_modules/
+frontend/node_modules/
+Backend/node_modules/
+frontend/dist/
+Backend/dist/
+.DS_Store
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.env
+.env.*

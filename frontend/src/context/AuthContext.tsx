@@ -3,13 +3,8 @@ frontend/src/context/AuthContext.tsx
 -7
 
 // src/context/AuthContext.tsx
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useState,
-  ReactNode,
-} from "react";
+import { createContext, useContext, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { supabase } from "../supabaseClient";
 import { getMe } from "../api/auth";
 import type { Profile } from "../api/types";
