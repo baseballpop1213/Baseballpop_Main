@@ -1445,6 +1445,9 @@ export default function StatsPage() {
         return {
           key: ev.id || `assessment-${ev.performed_at}`,
           label,
+        return {
+          key: `assessment-${ev.id}`,
+          label: label || ev.label,
           evalScope: "specific" as TeamEvalScope,
           assessmentDate: ev.performed_at,
         } satisfies EvaluationSelectOption;
