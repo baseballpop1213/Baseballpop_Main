@@ -1951,6 +1951,9 @@ interface OffenseTestPlayerRow {
    */
   value: number | null;
 
+  /** Raw MPH for power tests (bat speed / exit velo). */
+  raw_mph?: number | null;
+
   /**
    * Extra raw data for speed tests only (run_1b / run_4b).
    * These stay undefined for non‑speed tests.
@@ -1982,6 +1985,9 @@ interface OffenseTestBreakdown {
   team_avg_seconds?: number | null;
   team_avg_feet_per_second?: number | null;
   base_path_feet?: number | null;
+
+  /** Team-average raw MPH for power tests (bat speed / exit velo). */
+  team_avg_mph?: number | null;
 }
 
 
@@ -2134,7 +2140,11 @@ function buildOffenseTestBreakdownsForTeam(
     player_name: string | null;
     jersey_number: number | null;
   }[],
-  rawMetricsByAssessmentId?: Map<number, Record<string, number>>
+  rawMetricsByAssessmentId?: Map<number, Record<string, number>>,
+  options?: {
+    evalScope?: TeamEvalScope;
+    playerAssessmentIdsByPlayer?: Map<string, number[]>;
+  }
 ): OffenseTestsByMetric {
   const result: OffenseTestsByMetric = {
     offense: [],
@@ -2250,30 +2260,67 @@ function buildOffenseTestBreakdownsForTeam(
       continue; // no test data at all for this player
     }
 
+    const assessmentIdsForPlayer =
+      options?.playerAssessmentIdsByPlayer?.get(pb.player_id) ?? [];
+
     // Merge raw metrics from the underlying assessment rows for this player.
+    // For all-star scope, pick the BEST raw metric across all available
+    // assessments for that player (max MPH, fastest ft/s). For other scopes we
+    // default to the first available assessment id for that player, which will
+    // align with the rating rows used for this drilldown.
     let mergedRaw: Record<string, number> | null = null;
 
-    const mergeFromAssessment = (assessmentId: number | null | undefined) => {
-      if (!rawMetricsByAssessmentId || assessmentId == null) return;
-      const bucket = rawMetricsByAssessmentId.get(assessmentId);
-      if (!bucket) return;
-      if (!mergedRaw) {
-        mergedRaw = { ...bucket };
-      } else {
-        for (const [key, value] of Object.entries(bucket)) {
-          if (
-            typeof value === "number" &&
-            Number.isFinite(value) &&
-            !(key in mergedRaw)
-          ) {
-            mergedRaw[key] = value;
+    const getBucket = (assessmentId: number | null | undefined) => {
+      if (!rawMetricsByAssessmentId || assessmentId == null) return null;
+      return rawMetricsByAssessmentId.get(assessmentId) ?? null;
+    };
+
+    const useAssessmentOrder = assessmentIdsForPlayer.length
+      ? assessmentIdsForPlayer
+      : [hittingSource?.assessment_id, athleticSource?.assessment_id].filter(
+          (v): v is number => typeof v === "number"
+        );
+
+    if (options?.evalScope === "all_star" && useAssessmentOrder.length) {
+      const best: Record<string, number> = {};
+
+      for (const aid of useAssessmentOrder) {
+        const bucket = getBucket(aid);
+        if (!bucket) continue;
+        for (const [key, rawVal] of Object.entries(bucket)) {
+          const v = typeof rawVal === "number" && Number.isFinite(rawVal)
+            ? (rawVal as number)
+            : null;
+          if (v == null) continue;
+          if (!(key in best) || v > best[key]) {
+            best[key] = v;
           }
         }
       }
-    };
 
-    mergeFromAssessment(hittingSource?.assessment_id ?? null);
-    mergeFromAssessment(athleticSource?.assessment_id ?? null);
+      mergedRaw = Object.keys(best).length ? best : null;
+    } else {
+      for (const aid of useAssessmentOrder) {
+        const bucket = getBucket(aid);
+        if (!bucket) continue;
+        if (!mergedRaw) {
+          mergedRaw = { ...bucket };
+        } else {
+          const target = mergedRaw as Record<string, number>;
+          for (const [key, value] of Object.entries(bucket)) {
+            if (
+              typeof value === "number" &&
+              Number.isFinite(value) &&
+              !(key in target)
+            ) {
+              target[key] = value;
+            }
+          }
+        }
+
+        if (mergedRaw) break; // Non all-star scopes only need the first match
+      }
+    }
 
     playersForTests.push({
       player_id: pb.player_id,
@@ -2297,46 +2344,126 @@ function buildOffenseTestBreakdownsForTeam(
           : {};
       const rawPoints = (tests as any)[def.field];
 
-      const raw = p.rawMetrics ?? undefined;
+      const assessmentIds =
+        options?.playerAssessmentIdsByPlayer?.get(p.player_id) ?? [];
 
       let value: number | null = null;
       let raw_seconds: number | null | undefined;
       let raw_distance_ft: number | null | undefined;
+      let raw_mph: number | null | undefined;
 
-      if (def.raw_metric_key && raw && raw[def.raw_metric_key] != null) {
-        // POWER tests: use the raw MPH metric from assessments
-        const v = raw[def.raw_metric_key];
-        value =
-          typeof v === "number" && Number.isFinite(v) ? (v as number) : null;
-      } else if (
-        def.time_metric_key &&
-        def.distance_metric_key &&
-        raw &&
-        (raw[def.time_metric_key] != null ||
-          raw[def.distance_metric_key] != null)
-      ) {
-        // SPEED tests: compute ft/s from distance / seconds
-        const secRaw = raw[def.time_metric_key];
-        const distRaw = raw[def.distance_metric_key];
+      const pickPowerMetric = (): number | null => {
+        if (!rawMetricsByAssessmentId || !def.raw_metric_key) return null;
+        let best: number | null = null;
 
-        const seconds =
-          typeof secRaw === "number" && Number.isFinite(secRaw) && secRaw > 0
-            ? (secRaw as number)
-            : null;
-        const distanceFt =
-          typeof distRaw === "number" &&
-          Number.isFinite(distRaw) &&
-          distRaw > 0
-            ? (distRaw as number)
-            : null;
+        const consider = (aid: number | null | undefined) => {
+          if (aid == null) return;
+          const bucket = rawMetricsByAssessmentId?.get(aid);
+          const rawVal = bucket ? bucket[def.raw_metric_key!] : null;
+          if (typeof rawVal !== "number" || !Number.isFinite(rawVal)) return;
+          if (best === null || rawVal > best) {
+            best = rawVal;
+          }
+        };
 
-        raw_seconds = seconds;
-        raw_distance_ft = distanceFt;
-
-        if (seconds != null && distanceFt != null) {
-          value = distanceFt / seconds; // ft/s
+        if (assessmentIds.length) {
+          assessmentIds.forEach(consider);
         } else {
-          // fall back to points if we don't have both pieces
+          consider(hittingByPlayer.get(p.player_id)?.assessment_id ?? null);
+        }
+
+        return best;
+      };
+
+      const pickSpeedMetric = (): {
+        fps: number;
+        seconds: number | null;
+        distance: number | null;
+      } | null => {
+        if (
+          !rawMetricsByAssessmentId ||
+          !def.time_metric_key ||
+          !def.distance_metric_key
+        ) {
+          return null;
+        }
+
+        let best: {
+          fps: number;
+          seconds: number | null;
+          distance: number | null;
+        } | null = null;
+
+        const consider = (aid: number | null | undefined) => {
+          if (aid == null) return;
+          const bucket = rawMetricsByAssessmentId?.get(aid);
+          if (!bucket) return;
+
+          const secRaw = bucket[def.time_metric_key!];
+          const distRaw = bucket[def.distance_metric_key!];
+
+          const seconds =
+            typeof secRaw === "number" && Number.isFinite(secRaw) && secRaw > 0
+              ? (secRaw as number)
+              : null;
+          const distanceFt =
+            typeof distRaw === "number" &&
+            Number.isFinite(distRaw) &&
+            distRaw > 0
+              ? (distRaw as number)
+              : null;
+
+          if (seconds != null && distanceFt != null) {
+            const fps = distanceFt / seconds;
+            if (!best || fps > best.fps) {
+              best = { fps, seconds, distance: distanceFt };
+            }
+          }
+        };
+
+        if (assessmentIds.length) {
+          assessmentIds.forEach(consider);
+        } else {
+          consider(athleticByPlayer.get(p.player_id)?.assessment_id ?? null);
+        }
+
+        return best;
+      };
+
+      if (def.raw_metric_key) {
+        raw_mph = pickPowerMetric();
+        value = raw_mph ?? coerceNumber(rawPoints);
+      } else if (def.time_metric_key && def.distance_metric_key) {
+        const picked = pickSpeedMetric();
+        if (picked) {
+          value = picked.fps;
+          raw_seconds = picked.seconds;
+          raw_distance_ft = picked.distance;
+        } else if (p.rawMetrics) {
+          // Fall back to whatever raw metrics we merged earlier
+          const secRaw = p.rawMetrics[def.time_metric_key];
+          const distRaw = p.rawMetrics[def.distance_metric_key];
+
+          const seconds =
+            typeof secRaw === "number" && Number.isFinite(secRaw) && secRaw > 0
+              ? (secRaw as number)
+              : null;
+          const distanceFt =
+            typeof distRaw === "number" &&
+            Number.isFinite(distRaw) &&
+            distRaw > 0
+              ? (distRaw as number)
+              : null;
+
+          raw_seconds = seconds;
+          raw_distance_ft = distanceFt;
+
+          if (seconds != null && distanceFt != null) {
+            value = distanceFt / seconds;
+          }
+        }
+
+        if (value === null) {
           value = coerceNumber(rawPoints);
         }
       } else {
@@ -2349,13 +2476,16 @@ function buildOffenseTestBreakdownsForTeam(
         player_name: p.player_name,
         jersey_number: p.jersey_number,
         value,
-      };
+      } as OffenseTestPlayerRow;
 
       if (raw_seconds !== undefined) {
         row.raw_seconds = raw_seconds;
       }
       if (raw_distance_ft !== undefined) {
         row.raw_distance_ft = raw_distance_ft;
+      }
+      if (raw_mph !== undefined) {
+        row.raw_mph = raw_mph;
       }
 
       return row;
@@ -2402,6 +2532,13 @@ function buildOffenseTestBreakdownsForTeam(
       breakdown.team_avg_seconds = team_avg_seconds;
       breakdown.team_avg_feet_per_second = team_avg_feet_per_second;
       breakdown.base_path_feet = base_path_feet;
+    }
+
+    if (def.raw_metric_key) {
+      const rawMphValues = per_player
+        .map((p) => p.raw_mph)
+        .filter(isNumber);
+      breakdown.team_avg_mph = avg(rawMphValues);
     }
 
     result[def.submetric].push(breakdown);
@@ -3185,6 +3322,26 @@ async function computeTeamOffenseDrilldown(
     };
   }
 
+  const playerAssessmentIdsByPlayer = new Map<string, number[]>();
+  const sourceRowsForRawMetrics =
+    options.evalScope === "all_star" ? filteredRows : latestRows;
+
+  for (const row of sourceRowsForRawMetrics ?? []) {
+    const pid = row.player_id;
+    if (!pid) continue;
+
+    const assessmentId =
+      (row as any).player_assessment_id ?? (row as any).assessment_id;
+
+    if (typeof assessmentId !== "number") continue;
+
+    const list = playerAssessmentIdsByPlayer.get(pid) ?? [];
+    if (!list.includes(assessmentId)) {
+      list.push(assessmentId);
+      playerAssessmentIdsByPlayer.set(pid, list);
+    }
+  }
+
   // 4) Convert ratings → batting metrics (hitting/contact/power/speed/strikeChance)
   const metricsByPlayerId = new Map<string, BattingPlayerMetrics>();
   const ratingRowByPlayer = new Map<string, TeamRatingRow>();
@@ -3269,11 +3426,8 @@ async function computeTeamOffenseDrilldown(
   // the underlying player_assessment_values for just those assessments.
   const assessmentIds = Array.from(
     new Set(
-      (latestRows ?? [])
-        .map((row: any) => {
-          const assessmentId = row.player_assessment_id ?? row.assessment_id;
-          return assessmentId as number | null;
-        })
+      Array.from(playerAssessmentIdsByPlayer.values())
+        .flat()
         .filter((id): id is number => typeof id === "number")
     )
   );
@@ -3361,7 +3515,11 @@ async function computeTeamOffenseDrilldown(
   const tests_by_metric = buildOffenseTestBreakdownsForTeam(
     latestRows ?? [],
     playersForTests,
-    rawMetricsByAssessmentId
+    rawMetricsByAssessmentId,
+    {
+      evalScope: options.evalScope ?? null,
+      playerAssessmentIdsByPlayer,
+    }
   );
 
   

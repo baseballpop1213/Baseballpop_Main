@@ -288,6 +288,9 @@ export interface OffenseTestPlayerRow {
    */
   value: number | null;
 
+  /** Raw MPH for power tests (bat speed / exit velo). */
+  raw_mph?: number | null;
+
   /**
    * Optional raw time in seconds for timed‑run tests.
    * (Filled for timed_run_1b / timed_run_4b once backend is updated.)
@@ -310,6 +313,9 @@ export interface OffenseTestBreakdown {
   team_average: number | null;
   player_count: number;
   per_player: OffenseTestPlayerRow[];
+
+  /** Team-average raw MPH for power tests (bat speed / exit velo). */
+  team_avg_mph?: number | null;
 }
 
 export interface OffenseDrilldownPlayerRow {
