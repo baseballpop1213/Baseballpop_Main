@@ -1417,9 +1417,65 @@ export default function StatsPage() {
       },
     ];
 
-    const dated = [...teamEvaluations]
-      .sort((a, b) =>
-        new Date(b.performed_at).getTime() - new Date(a.performed_at).getTime()
+    const normalizeDateOnly = (value: string) => {
+      const d = new Date(value);
+      return Number.isNaN(d.getTime()) ? value : d.toISOString().slice(0, 10);
+    };
+
+    const buildTemplateKey = (
+      templateId?: number | null,
+      templateName?: string | null,
+      kind?: string | null
+    ) => {
+      if (typeof templateId === "number") return `template-${templateId}`;
+      if (templateName && templateName.trim())
+        return `name-${templateName.trim().toLowerCase()}`;
+      if (kind && kind.trim()) return `kind-${kind.trim().toLowerCase()}`;
+      return "unknown";
+    };
+
+    const formatKindLabel = (kind?: string | null) => {
+      if (!kind || !kind.trim()) return null;
+      return kind
+        .trim()
+        .split(/[_\s]+/)
+        .map((p) => (p ? p[0].toUpperCase() + p.slice(1).toLowerCase() : p))
+        .join(" ");
+    };
+
+    const dedupedByAssessment = new Map<string, typeof teamEvaluations[number]>();
+
+    for (const ev of teamEvaluations) {
+      const dateOnly = normalizeDateOnly(ev.performed_at);
+      const key = `${dateOnly}|${buildTemplateKey(
+        ev.template_id,
+        ev.template_name,
+        ev.kind
+      )}`;
+      const existing = dedupedByAssessment.get(key);
+
+      if (!existing) {
+        dedupedByAssessment.set(key, {
+          ...ev,
+          performed_at: dateOnly,
+        });
+        continue;
+      }
+
+      dedupedByAssessment.set(key, {
+        ...existing,
+        performed_at: dateOnly,
+        template_id: existing.template_id ?? ev.template_id ?? null,
+        template_name: existing.template_name ?? ev.template_name ?? null,
+        kind: existing.kind ?? ev.kind ?? null,
+        label: existing.label ?? ev.label,
+      });
+    }
+
+    const dated = Array.from(dedupedByAssessment.values())
+      .sort(
+        (a, b) =>
+          new Date(b.performed_at).getTime() - new Date(a.performed_at).getTime()
       )
       .map((ev) => {
         const date = new Date(ev.performed_at);
@@ -1431,23 +1487,13 @@ export default function StatsPage() {
               year: "numeric",
             });
 
-        const fallbackLabel = ev.label?.trim();
-
-        const parts = [dateLabel];
-        if (ev.template_name) {
-          parts.push(ev.template_name);
-        } else if (fallbackLabel && !fallbackLabel.includes(dateLabel)) {
-          parts.push(fallbackLabel);
-        }
-
-        const label = ev.template_name ? parts.join(" — ") : fallbackLabel || parts.join(" — ");
+        const typeLabel =
+          (ev.template_name && ev.template_name.trim()) || formatKindLabel(ev.kind);
+        const label = typeLabel ? `${dateLabel} — ${typeLabel}` : dateLabel;
 
         return {
           key: ev.id || `assessment-${ev.performed_at}`,
           label,
-        return {
-          key: `assessment-${ev.id}`,
-          label: label || ev.label,
           evalScope: "specific" as TeamEvalScope,
           assessmentDate: ev.performed_at,
         } satisfies EvaluationSelectOption;

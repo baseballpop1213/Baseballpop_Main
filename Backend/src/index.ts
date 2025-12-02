@@ -8932,19 +8932,67 @@ app.get("/teams/:teamId/stats/evaluations", async (req, res) => {
 
     const groupedByDateAndTemplate = new Map<
       string,
-      { date: string; template_id: number | null; template_name: string | null; kind: string | null }
+      {
+        date: string;
+        template_id: number | null;
+        template_name: string | null;
+        kind: string | null;
+      }
     >();
 
-    for (const assessment of meta.assessments) {
-      const key = `${assessment.date}|${assessment.template_id ?? "unknown"}`;
-      if (!groupedByDateAndTemplate.has(key)) {
-        groupedByDateAndTemplate.set(key, {
-          date: assessment.date,
-          template_id: assessment.template_id,
-          template_name: assessment.template_name,
-          kind: assessment.kind,
-        });
+    const buildTemplateKey = (
+      template_id: number | null,
+      template_name: string | null,
+      kind: string | null
+    ) => {
+      if (typeof template_id === "number") return `template-${template_id}`;
+      if (template_name && template_name.trim().length) {
+        return `name-${template_name.trim().toLowerCase()}`;
       }
+      if (kind && kind.trim().length) {
+        return `kind-${kind.trim().toLowerCase()}`;
+      }
+      return "unknown";
+    };
+
+    const upsertGroupedEntry = (
+      dateOnly: string,
+      template_id: number | null,
+      template_name: string | null,
+      kind: string | null
+    ) => {
+      const key = `${dateOnly}|${buildTemplateKey(
+        template_id,
+        template_name,
+        kind
+      )}`;
+
+      const existing = groupedByDateAndTemplate.get(key);
+      if (!existing) {
+        groupedByDateAndTemplate.set(key, {
+          date: dateOnly,
+          template_id,
+          template_name,
+          kind,
+        });
+        return;
+      }
+
+      groupedByDateAndTemplate.set(key, {
+        date: existing.date,
+        template_id: existing.template_id ?? template_id ?? null,
+        template_name: existing.template_name ?? template_name ?? null,
+        kind: existing.kind ?? kind ?? null,
+      });
+    };
+
+    for (const assessment of meta.assessments) {
+      upsertGroupedEntry(
+        assessment.date,
+        assessment.template_id,
+        assessment.template_name,
+        assessment.kind
+      );
     }
 
     // Fallback: if we didn't find assessment rows, pull distinct created_at dates
@@ -8965,22 +9013,15 @@ app.get("/teams/:teamId/stats/evaluations", async (req, res) => {
         for (const row of ratingRows as any[]) {
           const dateOnly = normalizeDateOnly(row.created_at);
           if (!dateOnly) continue;
-          const key = `${dateOnly}|unknown`;
-          if (!groupedByDateAndTemplate.has(key)) {
-            groupedByDateAndTemplate.set(key, {
-              date: dateOnly,
-              template_id: null,
-              template_name: null,
-              kind: null,
-            });
-          }
+          upsertGroupedEntry(dateOnly, null, null, null);
         }
       }
     }
 
     const formatEvalLabel = (
       dateOnly: string,
-      templateName: string | null
+      templateName: string | null,
+      kind: string | null
     ): string => {
       const date = new Date(dateOnly);
       const dateLabel = Number.isNaN(date.getTime())
@@ -8991,9 +9032,21 @@ app.get("/teams/:teamId/stats/evaluations", async (req, res) => {
             year: "numeric",
           });
 
-      if (templateName) {
-        return `${dateLabel} — ${templateName}`;
-      }
+      const typeLabel =
+        (templateName && templateName.trim()) ||
+        (kind && kind.trim()
+          ? kind
+              .trim()
+              .split(/[_\s]+/)
+              .map((part) =>
+                part.length > 0
+                  ? part[0].toUpperCase() + part.slice(1).toLowerCase()
+                  : part
+              )
+              .join(" ")
+          : null);
+
+      if (typeLabel) return `${dateLabel} — ${typeLabel}`;
 
       return dateLabel;
     };
@@ -9001,11 +9054,15 @@ app.get("/teams/:teamId/stats/evaluations", async (req, res) => {
     const evaluations = Array.from(groupedByDateAndTemplate.values())
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
       .map((entry) => {
-        const id = `${entry.date}|${entry.template_id ?? "unknown"}`;
+        const id = `${entry.date}|${buildTemplateKey(
+          entry.template_id,
+          entry.template_name,
+          entry.kind
+        )}`;
         return {
           id,
           performed_at: entry.date,
-          label: formatEvalLabel(entry.date, entry.template_name),
+          label: formatEvalLabel(entry.date, entry.template_name, entry.kind),
           template_id: entry.template_id,
           template_name: entry.template_name,
           kind: entry.kind,
