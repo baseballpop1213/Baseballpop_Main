@@ -1257,7 +1257,11 @@ export default function StatsPage() {
   const isCoachLike =
     role === "coach" || role === "assistant" || role === "admin";
 
-  const playerId = profile?.id ?? null;
+  const [hasPlayerProfile, setHasPlayerProfile] = useState<boolean>(
+    role === "player"
+  );
+
+  const playerId = hasPlayerProfile ? profile?.id ?? null : null;
 
   const [viewMode, setViewMode] = useState<ViewMode>(
     isCoachLike ? "team" : "player"
@@ -1312,6 +1316,12 @@ export default function StatsPage() {
     []
   );
 
+  useEffect(() => {
+    if (!hasPlayerProfile && viewMode === "player") {
+      setViewMode(isCoachLike ? "team" : "team");
+    }
+  }, [hasPlayerProfile, viewMode, isCoachLike]);
+
   // Load teams for coach-like users
   useEffect(() => {
     if (!isCoachLike) return;
@@ -1323,9 +1333,16 @@ export default function StatsPage() {
     getMyTeams()
       .then((data) => {
         if (cancelled) return;
-        setTeams(data ?? []);
-        if (!selectedTeamId && data && data.length > 0) {
-          setSelectedTeamId(data[0].id);
+        const teams = data ?? [];
+        setTeams(teams);
+
+        const hasPlayerRole = teams.some((team) => team.role === "player");
+        if (hasPlayerRole) {
+          setHasPlayerProfile((prev) => prev || hasPlayerRole);
+        }
+
+        if (!selectedTeamId && teams.length > 0) {
+          setSelectedTeamId(teams[0].id);
         }
       })
       .catch((err: any) => {
@@ -1400,23 +1417,87 @@ export default function StatsPage() {
       },
     ];
 
-    const dated = teamEvaluations.map((ev) => {
-      const date = new Date(ev.performed_at);
-      const label = Number.isNaN(date.getTime())
-        ? ev.label
-        : date.toLocaleDateString(undefined, {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          });
+    const normalizeDateOnly = (value: string) => {
+      const d = new Date(value);
+      return Number.isNaN(d.getTime()) ? value : d.toISOString().slice(0, 10);
+    };
 
-      return {
-        key: `assessment-${ev.id}`,
-        label: label || ev.label,
-        evalScope: "specific" as TeamEvalScope,
-        assessmentDate: ev.performed_at,
-      } satisfies EvaluationSelectOption;
-    });
+    const buildTemplateKey = (
+      templateId?: number | null,
+      templateName?: string | null,
+      kind?: string | null
+    ) => {
+      if (typeof templateId === "number") return `template-${templateId}`;
+      if (templateName && templateName.trim())
+        return `name-${templateName.trim().toLowerCase()}`;
+      if (kind && kind.trim()) return `kind-${kind.trim().toLowerCase()}`;
+      return "unknown";
+    };
+
+    const formatKindLabel = (kind?: string | null) => {
+      if (!kind || !kind.trim()) return null;
+      return kind
+        .trim()
+        .split(/[_\s]+/)
+        .map((p) => (p ? p[0].toUpperCase() + p.slice(1).toLowerCase() : p))
+        .join(" ");
+    };
+
+    const dedupedByAssessment = new Map<string, typeof teamEvaluations[number]>();
+
+    for (const ev of teamEvaluations) {
+      const dateOnly = normalizeDateOnly(ev.performed_at);
+      const key = `${dateOnly}|${buildTemplateKey(
+        ev.template_id,
+        ev.template_name,
+        ev.kind
+      )}`;
+      const existing = dedupedByAssessment.get(key);
+
+      if (!existing) {
+        dedupedByAssessment.set(key, {
+          ...ev,
+          performed_at: dateOnly,
+        });
+        continue;
+      }
+
+      dedupedByAssessment.set(key, {
+        ...existing,
+        performed_at: dateOnly,
+        template_id: existing.template_id ?? ev.template_id ?? null,
+        template_name: existing.template_name ?? ev.template_name ?? null,
+        kind: existing.kind ?? ev.kind ?? null,
+        label: existing.label ?? ev.label,
+      });
+    }
+
+    const dated = Array.from(dedupedByAssessment.values())
+      .sort(
+        (a, b) =>
+          new Date(b.performed_at).getTime() - new Date(a.performed_at).getTime()
+      )
+      .map((ev) => {
+        const date = new Date(ev.performed_at);
+        const dateLabel = Number.isNaN(date.getTime())
+          ? ev.performed_at
+          : date.toLocaleDateString(undefined, {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+            });
+
+        const typeLabel =
+          (ev.template_name && ev.template_name.trim()) || formatKindLabel(ev.kind);
+        const label = typeLabel ? `${dateLabel} — ${typeLabel}` : dateLabel;
+
+        return {
+          key: ev.id || `assessment-${ev.performed_at}`,
+          label,
+          evalScope: "specific" as TeamEvalScope,
+          assessmentDate: ev.performed_at,
+        } satisfies EvaluationSelectOption;
+      });
 
     return [...base, ...dated];
   }, [teamEvaluations]);
@@ -1686,21 +1767,23 @@ export default function StatsPage() {
                   ? "bg-amber-500 text-slate-900"
                   : "text-slate-300",
               ].join(" ")}
-            >
-              Team view
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode("player")}
-              className={[
-                "px-3 py-1",
-                viewMode === "player"
-                  ? "bg-amber-500 text-slate-900"
-                  : "text-slate-300",
-              ].join(" ")}
-            >
-              My stats
-            </button>
+              >
+                Team view
+              </button>
+            {hasPlayerProfile && (
+              <button
+                type="button"
+                onClick={() => setViewMode("player")}
+                className={[
+                  "px-3 py-1",
+                  viewMode === "player"
+                    ? "bg-amber-500 text-slate-900"
+                    : "text-slate-300",
+                ].join(" ")}
+              >
+                My stats
+              </button>
+            )}
           </div>
         )}
       </header>
