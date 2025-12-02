@@ -1020,10 +1020,7 @@ export default function AssessmentSessionPage() {
         .map((group) => {
           const filtered = group.metrics.filter((m) => {
             const metricKey = (m as any).metric_key as string | undefined;
-            if (!metricKey) return true;
-
-            // Hide helper / behind‑the‑scenes metrics
-            if (helperKeysToHide.has(metricKey)) {
+            if (metricKey && helperKeysToHide.has(metricKey)) {
               return false;
             }
 
