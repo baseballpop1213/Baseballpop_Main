@@ -3,7 +3,7 @@ import axios from "axios";
 import { supabase } from "../supabaseClient";
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL, // your Node backend URL
+  baseURL: '', // Uses Vite proxy to forward /api/* to backend
 });
 
 // Attach Supabase access token on every request to your backend
