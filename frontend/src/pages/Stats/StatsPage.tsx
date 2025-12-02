@@ -1417,6 +1417,18 @@ export default function StatsPage() {
       return Number.isNaN(d.getTime()) ? value : d.toISOString().slice(0, 10);
     };
 
+    const buildTemplateKey = (
+      templateId?: number | null,
+      templateName?: string | null,
+      kind?: string | null
+    ) => {
+      if (typeof templateId === "number") return `template-${templateId}`;
+      if (templateName && templateName.trim())
+        return `name-${templateName.trim().toLowerCase()}`;
+      if (kind && kind.trim()) return `kind-${kind.trim().toLowerCase()}`;
+      return "unknown";
+    };
+
     const formatKindLabel = (kind?: string | null) => {
       if (!kind || !kind.trim()) return null;
       return kind
@@ -1426,11 +1438,36 @@ export default function StatsPage() {
         .join(" ");
     };
 
-    const dated = teamEvaluations
-      .map((ev) => ({
-        ...ev,
-        performed_at: normalizeDateOnly(ev.performed_at),
-      }))
+    const dedupedByAssessment = new Map<string, typeof teamEvaluations[number]>();
+
+    for (const ev of teamEvaluations) {
+      const dateOnly = normalizeDateOnly(ev.performed_at);
+      const key = `${dateOnly}|${buildTemplateKey(
+        ev.template_id,
+        ev.template_name,
+        ev.kind
+      )}`;
+      const existing = dedupedByAssessment.get(key);
+
+      if (!existing) {
+        dedupedByAssessment.set(key, {
+          ...ev,
+          performed_at: dateOnly,
+        });
+        continue;
+      }
+
+      dedupedByAssessment.set(key, {
+        ...existing,
+        performed_at: dateOnly,
+        template_id: existing.template_id ?? ev.template_id ?? null,
+        template_name: existing.template_name ?? ev.template_name ?? null,
+        kind: existing.kind ?? ev.kind ?? null,
+        label: existing.label ?? ev.label,
+      });
+    }
+
+    const dated = Array.from(dedupedByAssessment.values())
       .sort(
         (a, b) =>
           new Date(b.performed_at).getTime() - new Date(a.performed_at).getTime()
@@ -1447,7 +1484,7 @@ export default function StatsPage() {
 
         const typeLabel =
           (ev.template_name && ev.template_name.trim()) || formatKindLabel(ev.kind);
-        const label = ev.label || (typeLabel ? `${dateLabel} — ${typeLabel}` : dateLabel);
+        const label = typeLabel ? `${dateLabel} — ${typeLabel}` : dateLabel;
 
         return {
           key: ev.id || `assessment-${ev.performed_at}`,

@@ -8989,6 +8989,94 @@ app.get("/teams/:teamId/stats/evaluations", async (req, res) => {
   try {
     const meta = await loadTeamAssessmentMeta(teamId);
 
+    const groupedByDateAndTemplate = new Map<
+      string,
+      {
+        date: string;
+        template_id: number | null;
+        template_name: string | null;
+        kind: string | null;
+      }
+    >();
+
+    const buildTemplateKey = (
+      template_id: number | null,
+      template_name: string | null,
+      kind: string | null
+    ) => {
+      if (typeof template_id === "number") return `template-${template_id}`;
+      if (template_name && template_name.trim().length) {
+        return `name-${template_name.trim().toLowerCase()}`;
+      }
+      if (kind && kind.trim().length) {
+        return `kind-${kind.trim().toLowerCase()}`;
+      }
+      return "unknown";
+    };
+
+    const upsertGroupedEntry = (
+      dateOnly: string,
+      template_id: number | null,
+      template_name: string | null,
+      kind: string | null
+    ) => {
+      const key = `${dateOnly}|${buildTemplateKey(
+        template_id,
+        template_name,
+        kind
+      )}`;
+
+      const existing = groupedByDateAndTemplate.get(key);
+      if (!existing) {
+        groupedByDateAndTemplate.set(key, {
+          date: dateOnly,
+          template_id,
+          template_name,
+          kind,
+        });
+        return;
+      }
+
+      groupedByDateAndTemplate.set(key, {
+        date: existing.date,
+        template_id: existing.template_id ?? template_id ?? null,
+        template_name: existing.template_name ?? template_name ?? null,
+        kind: existing.kind ?? kind ?? null,
+      });
+    };
+
+    for (const assessment of meta.assessments) {
+      upsertGroupedEntry(
+        assessment.date,
+        assessment.template_id,
+        assessment.template_name,
+        assessment.kind
+      );
+    }
+
+    // Fallback: if we didn't find assessment rows, pull distinct created_at dates
+    // from player_ratings to avoid showing one option per player row.
+    if (!groupedByDateAndTemplate.size) {
+      const { data: ratingRows, error: ratingErr } = await supabase
+        .from("player_ratings")
+        .select("created_at")
+        .eq("team_id", teamId)
+        .order("created_at", { ascending: false });
+
+      if (ratingErr) {
+        console.error(
+          "Team evaluations fallback: error loading player_ratings:",
+          ratingErr
+        );
+      } else if (ratingRows && ratingRows.length) {
+        for (const row of ratingRows as any[]) {
+          const dateOnly = normalizeDateOnly(row.created_at);
+          if (!dateOnly) continue;
+          upsertGroupedEntry(dateOnly, null, null, null);
+        }
+      }
+    }
+
     const formatEvalLabel = (
       dateOnly: string,
       templateName: string | null,
@@ -9022,77 +9110,23 @@ app.get("/teams/:teamId/stats/evaluations", async (req, res) => {
       return dateLabel;
     };
 
-    const seenAssessments = new Set<number>();
-    const evaluations: {
-      id: string;
-      performed_at: string;
-      label: string;
-      template_id: number | null;
-      template_name: string | null;
-      kind: string | null;
-    }[] = [];
-
-    for (const assessment of meta.assessments) {
-      if (typeof assessment.id === "number") {
-        if (seenAssessments.has(assessment.id)) continue;
-        seenAssessments.add(assessment.id);
-      }
-
-      const performedAt = assessment.date;
-      const id =
-        typeof assessment.id === "number"
-          ? `assessment-${assessment.id}`
-          : `date-${performedAt}-${assessment.template_id ?? "unknown"}`;
-
-      evaluations.push({
-        id,
-        performed_at: performedAt,
-        label: formatEvalLabel(
-          performedAt,
-          assessment.template_name,
-          assessment.kind
-        ),
-        template_id: assessment.template_id ?? null,
-        template_name: assessment.template_name ?? null,
-        kind: assessment.kind ?? null,
+    const evaluations = Array.from(groupedByDateAndTemplate.values())
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .map((entry) => {
+        const id = `${entry.date}|${buildTemplateKey(
+          entry.template_id,
+          entry.template_name,
+          entry.kind
+        )}`;
+        return {
+          id,
+          performed_at: entry.date,
+          label: formatEvalLabel(entry.date, entry.template_name, entry.kind),
+          template_id: entry.template_id,
+          template_name: entry.template_name,
+          kind: entry.kind,
+        };
       });
-    }
-
-    // Fallback: if we didn't find assessment rows, pull distinct created_at dates
-    // from player_ratings to avoid showing one option per player row.
-    if (!evaluations.length) {
-      const { data: ratingRows, error: ratingErr } = await supabase
-        .from("player_ratings")
-        .select("created_at")
-        .eq("team_id", teamId)
-        .order("created_at", { ascending: false });
-
-      if (ratingErr) {
-        console.error(
-          "Team evaluations fallback: error loading player_ratings:",
-          ratingErr
-        );
-      } else if (ratingRows && ratingRows.length) {
-        const seenDates = new Set<string>();
-        for (const row of ratingRows as any[]) {
-          const dateOnly = normalizeDateOnly(row.created_at);
-          if (!dateOnly || seenDates.has(dateOnly)) continue;
-          seenDates.add(dateOnly);
-          evaluations.push({
-            id: `date-${dateOnly}`,
-            performed_at: dateOnly,
-            label: formatEvalLabel(dateOnly, null, null),
-            template_id: null,
-            template_name: null,
-            kind: null,
-          });
-        }
-      }
-    }
-
-    evaluations.sort(
-      (a, b) => new Date(b.performed_at).getTime() - new Date(a.performed_at).getTime()
-    );
 
     return res.status(200).json({ team_id: teamId, evaluations });
   } catch (err) {
