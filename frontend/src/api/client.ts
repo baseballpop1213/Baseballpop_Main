@@ -3,7 +3,10 @@ import axios from "axios";
 import { supabase } from "../supabaseClient";
 
 const api = axios.create({
-  baseURL: '', // Uses Vite proxy to forward /api/* to backend
+  // Point all frontend API calls through the Vite proxy to the backend.
+  // Without this prefix, requests (e.g., /coach/my-teams) are served by Vite
+  // and return the index HTML instead of JSON, causing runtime crashes.
+  baseURL: "/api",
 });
 
 // Attach Supabase access token on every request to your backend
