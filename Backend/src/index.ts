@@ -3886,11 +3886,6 @@ interface Assignment {
   locked: boolean;
 }
 
-function toNumberOrNull(val: any): number | null {
-  if (val === null || val === undefined) return null;
-  const n = Number(val);
-  return Number.isFinite(n) ? n : null;
-}
 
 function getPositionScore(p: PlayerWithRatings, pos: PositionCode): number | null {
   const raw = (p.position_scores as any)?.[pos];
