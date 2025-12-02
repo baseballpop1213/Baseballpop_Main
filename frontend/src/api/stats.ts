@@ -6,37 +6,14 @@ import type {
   TeamTrophiesResponse,
   PlayerMedalsResponse,
   TeamOffenseDrilldown,
-  TeamEvaluationListResponse,
-  TeamEvalScope,
 } from "./types";
-
-export interface TeamStatsQuery {
-  evalScope?: TeamEvalScope;
-  assessmentDate?: string | null;
-}
-
-function buildEvalQuery(params?: TeamStatsQuery): string {
-  const searchParams = new URLSearchParams();
-
-  if (params?.evalScope) {
-    searchParams.append("eval_scope", params.evalScope);
-  }
-
-  if (params?.assessmentDate) {
-    searchParams.append("assessment_date", params.assessmentDate);
-  }
-
-  const query = searchParams.toString();
-  return query ? `?${query}` : "";
-}
 
 
 export async function getTeamStatsOverview(
-  teamId: string,
-  params?: TeamStatsQuery
+  teamId: string
 ): Promise<TeamStatsOverview> {
   const res = await api.get<TeamStatsOverview>(
-    `/teams/${teamId}/stats/overview${buildEvalQuery(params)}`
+    `/teams/${teamId}/stats/overview`
   );
   return res.data;
 }
@@ -55,20 +32,10 @@ export async function getPlayerStatsOverview(
  * Backend route: GET /teams/:teamId/stats/offense
  */
 export async function getTeamOffenseDrilldown(
-  teamId: string,
-  params?: TeamStatsQuery
+  teamId: string
 ): Promise<TeamOffenseDrilldown> {
   const res = await api.get<TeamOffenseDrilldown>(
-    `/teams/${teamId}/stats/offense-drilldown${buildEvalQuery(params)}`
-  );
-  return res.data;
-}
-
-export async function getTeamEvaluations(
-  teamId: string
-): Promise<TeamEvaluationListResponse> {
-  const res = await api.get<TeamEvaluationListResponse>(
-    `/teams/${teamId}/stats/evaluations`
+    `/teams/${teamId}/stats/offense-drilldown`
   );
   return res.data;
 }

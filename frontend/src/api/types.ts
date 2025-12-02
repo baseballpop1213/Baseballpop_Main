@@ -142,19 +142,6 @@ export interface TeamStatsOverview {
   metrics: StatsMetricSummary[];
 }
 
-export type TeamEvalScope = "latest_eval" | "all_star" | "specific";
-
-export interface TeamEvaluationOption {
-  id: string;
-  performed_at: string;
-  label: string;
-}
-
-export interface TeamEvaluationListResponse {
-  team_id: string;
-  evaluations: TeamEvaluationOption[];
-}
-
 /**
  * Player-level stats overview used on the Stats page (player view).
  */
