@@ -170,14 +170,6 @@ const ADDITIONAL_PITCH_TYPE_OPTIONS = [
   { value: "other", label: "Other / Misc." },
 ];
 
-const ADDITIONAL_PITCH_METRIC_KEYS = new Set<string>([
-  "tpitch5ap1",
-  "tpitch5ap2",
-  "tpitch5ap3",
-  "tpitch5ap4",
-  "tpitch5ap5",
-]);
-
 // --- Catcher matrix helpers ----------------------------------------------
 
 // Options per pitch for catcher screen tests (C10PCS / C20PCS)
@@ -222,14 +214,12 @@ const ATHLETIC_METRIC_KEYS: Record<AthleticBlock, Set<string>> = {
     "apush_30",
     "asit_30",
     "apull_60",
-    // Some templates use aliases without the underscore
-    "apull60",
-    "pull_60",
   ]),
   power: new Set<string>([
     "asp_jump_inches",
     "aspscp_distance_ft",
     "aspsup_distance_ft",
+    "apull_60",
   ]),
   balance: new Set<string>([
     "sls_eyes_open_right",
@@ -250,47 +240,6 @@ const ATHLETIC_HELPER_METRIC_KEYS = new Set<string>([
   "timed_run_1b_distance_ft",
   "timed_run_4b_distance_ft",
 ]);
-
-const ATHLETIC_GROUP_TO_BLOCK: Record<string, AthleticBlock> = {
-  speed: "speed",
-  strength: "strength",
-  power: "power",
-  balance: "balance",
-  mobility: "mobility",
-};
-
-function resolveAthleticBlock(
-  metric: AssessmentMetric
-): AthleticBlock | null {
-  const metricKey = (metric as any).metric_key as string | undefined;
-
-  if (metricKey && ATHLETIC_HELPER_METRIC_KEYS.has(metricKey)) {
-    return null;
-  }
-
-  if (metricKey) {
-    const match = ATHLETIC_BLOCKS.find((block) =>
-      ATHLETIC_METRIC_KEYS[block].has(metricKey)
-    );
-    if (match) return match;
-  }
-
-  const meta = metricKey ? getMetricMeta(metricKey) : undefined;
-  const rawGroup =
-    (meta?.group || (metric as any).metric_group || "").trim().toLowerCase();
-
-  if (rawGroup) {
-    const direct = ATHLETIC_GROUP_TO_BLOCK[rawGroup];
-    if (direct) return direct;
-
-    const fuzzy = (Object.keys(ATHLETIC_GROUP_TO_BLOCK) as AthleticBlock[]).find(
-      (key) => rawGroup.includes(key)
-    );
-    if (fuzzy) return ATHLETIC_GROUP_TO_BLOCK[fuzzy];
-  }
-
-  return null;
-}
 
 // Hitting tab grouping: which metrics belong to "tee" vs "live"
 const HITTING_TEE_METRIC_KEYS = new Set<string>([
@@ -925,14 +874,18 @@ export default function AssessmentSessionPage() {
     if (effectiveEvalType !== "athletic") return [] as AthleticBlock[];
     if (!metrics.length) return [] as AthleticBlock[];
 
-    const blocks = new Set<AthleticBlock>();
+    const metricKeys = new Set(
+      metrics
+        .map((m) => (m as any).metric_key as string | undefined)
+        .filter((k): k is string => Boolean(k))
+    );
 
-    metrics.forEach((m) => {
-      const block = resolveAthleticBlock(m);
-      if (block) blocks.add(block);
-    });
-
-    return ATHLETIC_BLOCKS.filter((block) => blocks.has(block));
+    return ATHLETIC_BLOCKS.filter((block) =>
+      Array.from(ATHLETIC_METRIC_KEYS[block]).some(
+        (key) =>
+          metricKeys.has(key) && !ATHLETIC_HELPER_METRIC_KEYS.has(key)
+      )
+    );
   }, [effectiveEvalType, metrics]);
 
   useEffect(() => {
@@ -982,60 +935,6 @@ export default function AssessmentSessionPage() {
         : availableHittingSections[0]
     );
   }, [effectiveEvalType, availableHittingSections]);
-
-
-  const metricHasAnyValue = useCallback(
-    (metric: AssessmentMetric) => {
-      if (!sessionData?.values || !gridColumns.length) return false;
-
-      const metricId = metric.id;
-      const values = sessionData.values as any;
-
-      for (const col of gridColumns) {
-        const perPlayer = values[col.id] || {};
-        const v = perPlayer[metricId];
-        const numeric = v?.value_numeric;
-        const text = v?.value_text;
-
-        if (
-          (numeric !== null &&
-            numeric !== undefined &&
-            !Number.isNaN(numeric)) ||
-          (text !== null &&
-            text !== undefined &&
-            String(text).trim() !== "")
-        ) {
-          return true;
-        }
-      }
-
-      return false;
-    },
-    [gridColumns, sessionData]
-  );
-
-  useEffect(() => {
-    if (effectiveEvalType !== "pitching") return;
-    if (!metrics.length) return;
-
-    setVisibleExtraPitchMatrices((prev) => {
-      const next = [...prev];
-
-      metrics.forEach((m) => {
-        const metricKey = (m as any).metric_key as string | undefined;
-        if (
-          metricKey &&
-          ADDITIONAL_PITCH_METRIC_KEYS.has(metricKey) &&
-          metricHasAnyValue(m) &&
-          !next.includes(metricKey)
-        ) {
-          next.push(metricKey);
-        }
-      });
-
-      return next;
-    });
-  }, [effectiveEvalType, metrics, metricHasAnyValue]);
 
 
   // Group metrics by logical group (Speed, Strength, Power, Balance, Mobility, etc.)
@@ -1115,6 +1014,7 @@ export default function AssessmentSessionPage() {
       }
 
       const helperKeysToHide = ATHLETIC_HELPER_METRIC_KEYS;
+      const blockKeys = ATHLETIC_METRIC_KEYS[activeAthleticTab];
 
       groups = groups
         .map((group) => {
@@ -1124,12 +1024,8 @@ export default function AssessmentSessionPage() {
               return false;
             }
 
-            const block = resolveAthleticBlock(m);
-
-            // Show only metrics for the active Athletic section; if we
-            // can't confidently categorize the metric, keep it visible
-            // rather than hiding it everywhere.
-            return !block || block === activeAthleticTab;
+            // Show only metrics for the active Athletic section
+            return blockKeys.has(metricKey);
           });
 
           return {
@@ -1259,8 +1155,6 @@ export default function AssessmentSessionPage() {
     availableAthleticBlocks,
     activeHittingSection,
     availableHittingSections,
-    metricHasAnyValue,
-    visibleExtraPitchMatrices,
     activeFirstBaseSection,
     hasFirstBaseFieldingGroup,
     activeInfieldSection,
@@ -1322,43 +1216,10 @@ export default function AssessmentSessionPage() {
     [gridColumns, sessionData]
   );
 
-  const filterMetricsForProgress = useCallback(
-    (metricList: AssessmentMetric[], evalTypeOverride?: string) => {
-      const evalType = evalTypeOverride || effectiveEvalType || null;
-
-      let filtered = metricList.filter((m) => {
-        const metricKey = (m as any).metric_key as string | undefined;
-        if (metricKey && ATHLETIC_HELPER_METRIC_KEYS.has(metricKey)) {
-          return false;
-        }
-        return true;
-      });
-
-      if (evalType === "pitching") {
-        filtered = filtered.filter((m) => {
-          const metricKey = (m as any).metric_key as string | undefined;
-          if (!metricKey) return true;
-          if (!ADDITIONAL_PITCH_METRIC_KEYS.has(metricKey)) return true;
-
-          return (
-            visibleExtraPitchMatrices.includes(metricKey) || metricHasAnyValue(m)
-          );
-        });
-      }
-
-      return filtered;
-    },
-    [effectiveEvalType, metricHasAnyValue, visibleExtraPitchMatrices]
-  );
-
   // Overall progress for the active tab
   const metricsCompletion = useMemo(
-    () => computeMetricsCompletion(filterMetricsForProgress(progressMetrics)),
-    [
-      progressMetrics,
-      computeMetricsCompletion,
-      filterMetricsForProgress,
-    ]
+    () => computeMetricsCompletion(metrics),
+    [metrics, computeMetricsCompletion]
   );
 
   const fullProgress = useMemo(() => {
@@ -1369,11 +1230,7 @@ export default function AssessmentSessionPage() {
       const cached = templateCache[section.template_id];
       const metricList = cached?.metrics ||
         (section.template_id === activeTemplateId ? metrics : []);
-      const filteredMetrics = filterMetricsForProgress(
-        metricList,
-        section.key
-      );
-      const progress = computeMetricsCompletion(filteredMetrics);
+      const progress = computeMetricsCompletion(metricList);
 
       return {
         ...section,
@@ -1397,7 +1254,6 @@ export default function AssessmentSessionPage() {
     templateCache,
     activeTemplateId,
     metrics,
-    filterMetricsForProgress,
     computeMetricsCompletion,
   ]);
 
@@ -2256,38 +2112,6 @@ export default function AssessmentSessionPage() {
 
     setDirty(true);
   }
-
-  const handleRemoveExtraPitchMatrix = useCallback(
-    (metricId: number, metricKey?: string) => {
-      if (!metricKey || isFinalized) return;
-
-      setVisibleExtraPitchMatrices((prev) =>
-        prev.filter((key) => key !== metricKey)
-      );
-
-      setSessionData((prev) => {
-        if (!prev) return prev;
-
-        const values = { ...(prev.values || {}) } as any;
-        let changed = false;
-
-        for (const col of gridColumns) {
-          const perPlayer = values[col.id];
-          if (perPlayer && perPlayer[metricId]) {
-            delete perPlayer[metricId];
-            changed = true;
-          }
-        }
-
-        if (!changed) return prev;
-
-        return { ...prev, values } as EvalSessionData;
-      });
-
-      setDirty(true);
-    },
-    [gridColumns, isFinalized]
-  );
 
   async function handleAddTryoutPlayerInSession() {
     if (!session || !sessionData) return;
