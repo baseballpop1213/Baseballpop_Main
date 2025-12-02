@@ -1087,6 +1087,33 @@ export default function AssessmentSessionPage() {
     }
 
     // -------------------------------
+    // PITCHING – hide extra matrices until added or filled
+    // -------------------------------
+    if (effectiveEvalType === "pitching") {
+      groups = groups
+        .map((group) => {
+          const filtered = group.metrics.filter((m) => {
+            const metricKey = (m as any).metric_key as string | undefined;
+            if (!metricKey) return true;
+
+            if (ADDITIONAL_PITCH_METRIC_KEYS.has(metricKey)) {
+              return (
+                visibleExtraPitchMatrices.includes(metricKey) ||
+                metricHasAnyValue(m)
+              );
+            }
+
+            return true;
+          });
+
+          return { ...group, metrics: filtered };
+        })
+        .filter((g) => g.metrics.length > 0);
+
+      return groups;
+    }
+
+    // -------------------------------
     // FIRST BASE – Catching vs Fielding tabs
     // -------------------------------
     if (effectiveEvalType === "firstbase" && hasFirstBaseFieldingGroup) {
@@ -1136,6 +1163,16 @@ export default function AssessmentSessionPage() {
     activeInfieldSection,
     hasInfieldFieldingGroup,
   ]);
+
+
+  const progressMetrics = useMemo(
+    () =>
+      visibleGroupedMetrics.reduce<AssessmentMetric[]>((acc, group) => {
+        acc.push(...group.metrics);
+        return acc;
+      }, []),
+    [visibleGroupedMetrics]
+  );
 
 
   
@@ -5009,13 +5046,7 @@ export default function AssessmentSessionPage() {
                 const usedIds = new Set<number>();
 
                 // Which metric_keys are "additional pitch" 5-pitch matrices
-                const extraPitchKeys = new Set<string>([
-                  "tpitch5ap1",
-                  "tpitch5ap2",
-                  "tpitch5ap3",
-                  "tpitch5ap4",
-                  "tpitch5ap5",
-                ]);
+                const extraPitchKeys = ADDITIONAL_PITCH_METRIC_KEYS;
 
                 const metricHasAnyValue = (metric: AssessmentMetric) => {
                   if (!sessionData?.values) return false;
@@ -5085,6 +5116,20 @@ export default function AssessmentSessionPage() {
                         <div className="text-[10px] text-slate-500 mt-0.5">
                           {description}
                         </div>
+                        {isExtraPitchMatrix && metricKey && (
+                          <div className="mt-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleRemoveExtraPitchMatrix(metric.id, metricKey)
+                              }
+                              className="rounded-md border border-red-500/60 bg-red-500/10 px-2 py-1 text-[11px] text-red-200 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                              disabled={isFinalized}
+                            >
+                              Remove pitch
+                            </button>
+                          </div>
+                        )}
                       </td>
 
                       {gridColumns.map((col) => {
