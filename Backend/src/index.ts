@@ -2498,191 +2498,8 @@ function buildOffenseTestBreakdownsForPlayers(
 // Team stats overview (for StatsPage)
 // ---------------------------------------------------------------------------
 
-type TeamEvalScope = "latest_eval" | "all_star" | "specific" | null;
-
-interface TeamEvalSelection {
-  evalScope?: TeamEvalScope;
-  assessmentDate?: string | null;
-}
-
-interface TeamAssessmentMeta {
-  byAssessmentId: Map<number, string>;
-  orderedDates: string[]; // ISO strings, most recent first
-  latestDate: string | null;
-}
-
-function normalizeIsoDate(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toISOString();
-}
-
-async function loadTeamAssessmentMeta(
-  teamId: string
-): Promise<TeamAssessmentMeta> {
-  const byAssessmentId = new Map<number, string>();
-
-  const { data, error } = await supabase
-    .from("player_assessments")
-    .select("id, performed_at, created_at")
-    .eq("team_id", teamId)
-    .eq("kind", "official")
-    .order("performed_at", { ascending: false });
-
-  if (error || !data) {
-    console.error("Error loading assessments for team stats:", error);
-    return { byAssessmentId, orderedDates: [], latestDate: null };
-  }
-
-  const dates: string[] = [];
-
-  for (const row of data as any[]) {
-    const normalized =
-      normalizeIsoDate(row.performed_at) || normalizeIsoDate(row.created_at);
-    if (!normalized) continue;
-    byAssessmentId.set(row.id as number, normalized);
-    dates.push(normalized);
-  }
-
-  const orderedDates = Array.from(new Set(dates)).sort(
-    (a, b) => new Date(b).getTime() - new Date(a).getTime()
-  );
-
-  return {
-    byAssessmentId,
-    orderedDates,
-    latestDate: orderedDates[0] ?? null,
-  };
-}
-
-function mergeBestValues(a: any, b: any): any {
-  if (a === null || a === undefined) return b;
-  if (b === null || b === undefined) return a;
-
-  if (typeof a === "number" && typeof b === "number") {
-    return Math.max(a, b);
-  }
-
-  if (
-    typeof a === "object" &&
-    typeof b === "object" &&
-    !Array.isArray(a) &&
-    !Array.isArray(b)
-  ) {
-    const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
-    const result: Record<string, any> = {};
-    for (const key of keys) {
-      result[key] = mergeBestValues((a as any)[key], (b as any)[key]);
-    }
-    return result;
-  }
-
-  return a ?? b;
-}
-
-function mergeBestBreakdowns(breakdowns: any[]): any {
-  let merged: any = {};
-
-  for (const raw of breakdowns) {
-    let parsed = raw;
-    if (typeof parsed === "string") {
-      try {
-        parsed = JSON.parse(parsed);
-      } catch {
-        parsed = {};
-      }
-    }
-    if (!parsed || typeof parsed !== "object") continue;
-    merged = mergeBestValues(merged, parsed);
-  }
-
-  return merged;
-}
-
-function toNumberOrNull(value: any): number | null {
-  if (value === null || value === undefined) return null;
-  const num = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(num) ? num : null;
-}
-
-function maxNumeric(values: (number | null)[]): number | null {
-  const nums = values.filter((v): v is number => v !== null && !Number.isNaN(v));
-  if (!nums.length) return null;
-  return Math.max(...nums);
-}
-
-type TeamRatingRow = {
-  id: number;
-  player_id: string;
-  age_group_id: number | string | null;
-  assessment_id: number | null;
-  overall_score: string | number | null;
-  offense_score: string | number | null;
-  defense_score: string | number | null;
-  pitching_score: string | number | null;
-  created_at: string | null;
-  breakdown: any;
-};
-
-function buildAllStarRows(
-  rows: TeamRatingRow[]
-): TeamRatingRow[] {
-  const byPlayer = new Map<string, TeamRatingRow[]>();
-
-  for (const row of rows) {
-    if (!row.player_id) continue;
-    const arr = byPlayer.get(row.player_id) ?? [];
-    arr.push(row);
-    byPlayer.set(row.player_id, arr);
-  }
-
-  const combined: TeamRatingRow[] = [];
-
-  for (const [, playerRows] of byPlayer.entries()) {
-    if (!playerRows.length) continue;
-    const sorted = [...playerRows].sort((a, b) => {
-      const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
-      const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
-      return bTime - aTime;
-    });
-
-    const mergedBreakdown = mergeBestBreakdowns(
-      sorted.map((r) => r.breakdown ?? {})
-    );
-
-    const bestOverall = maxNumeric(
-      sorted.map((r) => toNumberOrNull(r.overall_score))
-    );
-
-    const bestOffense = maxNumeric(
-      sorted.map((r) => toNumberOrNull(r.offense_score))
-    );
-
-    const bestDefense = maxNumeric(
-      sorted.map((r) => toNumberOrNull(r.defense_score))
-    );
-
-    const bestPitching = maxNumeric(
-      sorted.map((r) => toNumberOrNull(r.pitching_score))
-    );
-
-    combined.push({
-      ...sorted[0],
-      overall_score: bestOverall ?? sorted[0].overall_score,
-      offense_score: bestOffense ?? sorted[0].offense_score,
-      defense_score: bestDefense ?? sorted[0].defense_score,
-      pitching_score: bestPitching ?? sorted[0].pitching_score,
-      breakdown: mergedBreakdown,
-    });
-  }
-
-  return combined;
-}
-
 async function computeTeamStatsOverview(
-  teamId: string,
-  options: TeamEvalSelection = {}
+  teamId: string
 ): Promise<TeamStatsOverview | null> {
   // 1) Load the team – use age_group and alias it to age_group_label so
   //    we don't rely on a non-existent age_group_label column.
@@ -2708,7 +2525,6 @@ async function computeTeamStatsOverview(
       id,
       player_id,
       age_group_id,
-      assessment_id,
       overall_score,
       offense_score,
       defense_score,
@@ -2739,7 +2555,7 @@ async function computeTeamStatsOverview(
 
   // 3) Optionally filter to a single age_group_id if present on the rows.
   //    (We no longer depend on a team-level age_group_id column.)
-  let filteredRows = ratingRows as TeamRatingRow[];
+  let filteredRows = ratingRows as any[];
 
   const distinctAgeGroupIds = Array.from(
     new Set(
@@ -2759,29 +2575,6 @@ async function computeTeamStatsOverview(
     );
   }
 
-  const assessmentMeta = await loadTeamAssessmentMeta(teamId);
-  const normalizedAssessmentDate = normalizeIsoDate(options.assessmentDate);
-
-  let targetAssessmentDate: string | null = null;
-  if (options.evalScope === "latest_eval") {
-    targetAssessmentDate = assessmentMeta.latestDate;
-  } else if (
-    (options.evalScope === "specific" || normalizedAssessmentDate) &&
-    normalizedAssessmentDate
-  ) {
-    targetAssessmentDate = normalizedAssessmentDate;
-  }
-
-  if (targetAssessmentDate) {
-    filteredRows = filteredRows.filter((row) => {
-      const assessmentId = row.assessment_id;
-      if (!assessmentId) return false;
-      const performedAt = assessmentMeta.byAssessmentId.get(assessmentId);
-      if (!performedAt) return false;
-      return normalizeIsoDate(performedAt) === targetAssessmentDate;
-    });
-  }
-
   if (!filteredRows.length) {
     return {
       team_id: teamRow.id,
@@ -2792,37 +2585,41 @@ async function computeTeamStatsOverview(
     };
   }
 
-  // 4) Determine which rows to use: all-star aggregate or latest per player
-  let rows: TeamRatingRow[] = [];
+  // 4) For each player, keep only their latest rating row
+  type RatingRow = {
+    id: number;
+    player_id: string;
+    age_group_id: number | string | null;
+    overall_score: string | number | null;
+    offense_score: string | number | null;
+    defense_score: string | number | null;
+    pitching_score: string | number | null;
+    created_at: string | null;
+    breakdown: any;
+  };
 
-  if (options.evalScope === "all_star") {
-    rows = buildAllStarRows(filteredRows);
-  } else {
-    const latestByPlayer = new Map<string, TeamRatingRow>();
+  const latestByPlayer = new Map<string, RatingRow>();
 
-    for (const row of filteredRows) {
-      const playerId = row.player_id;
-      const existing = latestByPlayer.get(playerId);
+  for (const row of filteredRows as RatingRow[]) {
+    const playerId = row.player_id;
+    const existing = latestByPlayer.get(playerId);
 
-      if (!existing) {
-        latestByPlayer.set(playerId, row);
-        continue;
-      }
-
-      const existingTime = existing.created_at
-        ? new Date(existing.created_at).getTime()
-        : 0;
-      const rowTime = row.created_at ? new Date(row.created_at).getTime() : 0;
-
-      if (rowTime > existingTime) {
-        latestByPlayer.set(playerId, row);
-      }
+    if (!existing) {
+      latestByPlayer.set(playerId, row);
+      continue;
     }
 
-    rows = Array.from(latestByPlayer.values());
+    const existingTime = existing.created_at
+      ? new Date(existing.created_at).getTime()
+      : 0;
+    const rowTime = row.created_at ? new Date(row.created_at).getTime() : 0;
+
+    if (rowTime > existingTime) {
+      latestByPlayer.set(playerId, row);
+    }
   }
 
-  if (!rows.length) {
+  if (latestByPlayer.size === 0) {
     return {
       team_id: teamRow.id,
       team_name: teamRow.name ?? null,
@@ -2833,6 +2630,8 @@ async function computeTeamStatsOverview(
   }
 
   // 5) Build metrics (BPOP rating + offense/defense/pitching/athletic)
+
+  const rows = Array.from(latestByPlayer.values());
 
   const metricDefs: { code: CoreMetricCode; label: string }[] = [
     { code: "bpoprating", label: "BPOP Rating" },
@@ -2995,8 +2794,7 @@ async function computeTeamStatsOverview(
 }
 
 async function computeTeamOffenseDrilldown(
-  teamId: string,
-  options: TeamEvalSelection = {}
+  teamId: string
 ): Promise<TeamOffenseDrilldown | null> {
   // 1) Load team meta
   const { data: teamRow, error: teamError } = await supabase
@@ -3050,82 +2848,42 @@ async function computeTeamOffenseDrilldown(
     };
   }
 
-  let filteredRows = ratingRows as TeamRatingRow[];
+  // 3) Keep the latest rating row per player
+  type RatingRow = {
+    id: number;
+    player_id: string | null;
+    assessment_id: number | null;
+    created_at: string | null;
+    offense_score: number | null;
+    breakdown: any;
+  };
 
-  const assessmentMeta = await loadTeamAssessmentMeta(teamId);
-  const normalizedAssessmentDate = normalizeIsoDate(options.assessmentDate);
 
-  let targetAssessmentDate: string | null = null;
-  if (options.evalScope === "latest_eval") {
-    targetAssessmentDate = assessmentMeta.latestDate;
-  } else if (
-    (options.evalScope === "specific" || normalizedAssessmentDate) &&
-    normalizedAssessmentDate
-  ) {
-    targetAssessmentDate = normalizedAssessmentDate;
-  }
+  const latestByPlayer = new Map<string, RatingRow>();
 
-  if (targetAssessmentDate) {
-    filteredRows = filteredRows.filter((row) => {
-      const assessmentId = row.assessment_id;
-      if (!assessmentId) return false;
-      const performedAt = assessmentMeta.byAssessmentId.get(assessmentId);
-      if (!performedAt) return false;
-      return normalizeIsoDate(performedAt) === targetAssessmentDate;
-    });
-  }
+  for (const raw of ratingRows as RatingRow[]) {
+    const playerId = raw.player_id;
+    if (!playerId) continue;
 
-  if (!filteredRows.length) {
-    return {
-      team_id: teamRow.id,
-      team_name: teamRow.name ?? null,
-      age_group_label: (teamRow as any).age_group_label ?? null,
-      level: (teamRow as any).level ?? null,
-      metrics: [],
-      players: [],
-      tests_by_metric: {
-        offense: [],
-        contact: [],
-        power: [],
-        speed: [],
-        strikechance: [],
-      },
-    };
-  }
-
-  let latestRows: TeamRatingRow[] = [];
-
-  if (options.evalScope === "all_star") {
-    latestRows = buildAllStarRows(filteredRows);
-  } else {
-    const latestByPlayer = new Map<string, TeamRatingRow>();
-
-    for (const raw of filteredRows as TeamRatingRow[]) {
-      const playerId = raw.player_id;
-      if (!playerId) continue;
-
-      const existing = latestByPlayer.get(playerId);
-      if (!existing) {
-        latestByPlayer.set(playerId, raw);
-        continue;
-      }
-
-      const existingCreated = existing.created_at
-        ? new Date(existing.created_at).getTime()
-        : 0;
-      const rowCreated = raw.created_at
-        ? new Date(raw.created_at).getTime()
-        : 0;
-
-      if (rowCreated > existingCreated) {
-        latestByPlayer.set(playerId, raw);
-      }
+    const existing = latestByPlayer.get(playerId);
+    if (!existing) {
+      latestByPlayer.set(playerId, raw);
+      continue;
     }
 
-    latestRows = Array.from(latestByPlayer.values());
+    const existingCreated = existing.created_at
+      ? new Date(existing.created_at).getTime()
+      : 0;
+    const rowCreated = raw.created_at
+      ? new Date(raw.created_at).getTime()
+      : 0;
+
+    if (rowCreated > existingCreated) {
+      latestByPlayer.set(playerId, raw);
+    }
   }
 
-  if (!latestRows.length) {
+  if (!latestByPlayer.size) {
     return {
       team_id: teamRow.id,
       team_name: teamRow.name ?? null,
@@ -3145,12 +2903,8 @@ async function computeTeamOffenseDrilldown(
 
   // 4) Convert ratings → batting metrics (hitting/contact/power/speed/strikeChance)
   const metricsByPlayerId = new Map<string, BattingPlayerMetrics>();
-  const ratingRowByPlayer = new Map<string, TeamRatingRow>();
 
-  for (const ratingRow of latestRows) {
-    const playerId = ratingRow.player_id;
-    if (!playerId) continue;
-    ratingRowByPlayer.set(playerId, ratingRow);
+  for (const [playerId, ratingRow] of latestByPlayer.entries()) {
     const metrics = getBattingMetricsFromRating(ratingRow);
     if (!metrics) continue;
 
@@ -3227,7 +2981,7 @@ async function computeTeamOffenseDrilldown(
   // the underlying player_assessment_values for just those assessments.
   const assessmentIds = Array.from(
     new Set(
-      (filteredRows ?? [])
+      (ratingRows ?? [])
         .map((row: any) => row.assessment_id as number | null)
         .filter((id): id is number => typeof id === "number")
     )
@@ -3401,7 +3155,7 @@ async function computeTeamOffenseDrilldown(
   const perTestInput: PlayerWithRatingForOffense[] = [];
 
   for (const playerId of playerIds) {
-    const ratingRow = ratingRowByPlayer.get(playerId);
+    const ratingRow = latestByPlayer.get(playerId);
     if (!ratingRow) continue;
 
     let breakdown: any = ratingRow.breakdown ?? null;
@@ -8627,25 +8381,8 @@ app.get("/teams/:teamId/stats/overview", async (req, res) => {
     return res.status(400).json({ error: "Missing teamId" });
   }
 
-  const evalScopeRaw = req.query.eval_scope;
-  const assessmentDateRaw = req.query.assessment_date;
-
-  const evalScope =
-    typeof evalScopeRaw === "string" &&
-    ["latest_eval", "all_star", "specific"].includes(evalScopeRaw)
-      ? (evalScopeRaw as "latest_eval" | "all_star" | "specific")
-      : null;
-
-  const assessmentDate =
-    typeof assessmentDateRaw === "string" && assessmentDateRaw
-      ? assessmentDateRaw
-      : null;
-
   try {
-    const overview = await computeTeamStatsOverview(teamId, {
-      evalScope,
-      assessmentDate,
-    });
+    const overview = await computeTeamStatsOverview(teamId);
     if (!overview) {
       return res.status(404).json({ error: "Team not found or no ratings." });
     }
@@ -8659,33 +8396,6 @@ app.get("/teams/:teamId/stats/overview", async (req, res) => {
   }
 });
 
-// Team stats evaluation options
-app.get("/teams/:teamId/stats/evaluations", async (req, res) => {
-  const teamId = req.params.teamId;
-
-  if (!teamId) {
-    return res.status(400).json({ error: "Missing teamId" });
-  }
-
-  try {
-    const meta = await loadTeamAssessmentMeta(teamId);
-
-    const evaluations = meta.orderedDates.map((iso) => ({
-      id: iso,
-      performed_at: iso,
-      label: iso,
-    }));
-
-    return res.status(200).json({ team_id: teamId, evaluations });
-  } catch (err) {
-    console.error(
-      "Unexpected error in GET /teams/:teamId/stats/evaluations:",
-      err
-    );
-    return res.status(500).json({ error: "Failed to load team evaluations." });
-  }
-});
-
 app.get(
   "/teams/:teamId/stats/offense",
   requireAuth,
@@ -8696,20 +8406,6 @@ app.get(
       return res.status(400).json({ error: "Missing teamId" });
     }
 
-    const evalScopeRaw = req.query.eval_scope;
-    const assessmentDateRaw = req.query.assessment_date;
-
-    const evalScope =
-      typeof evalScopeRaw === "string" &&
-      ["latest_eval", "all_star", "specific"].includes(evalScopeRaw)
-        ? (evalScopeRaw as "latest_eval" | "all_star" | "specific")
-        : null;
-
-    const assessmentDate =
-      typeof assessmentDateRaw === "string" && assessmentDateRaw
-        ? assessmentDateRaw
-        : null;
-
     const role = await assertTeamRoleOr403(
       req,
       res,
@@ -8719,10 +8415,7 @@ app.get(
     if (!role) return;
 
     try {
-      const drilldown = await computeTeamOffenseDrilldown(teamId, {
-        evalScope,
-        assessmentDate,
-      });
+      const drilldown = await computeTeamOffenseDrilldown(teamId);
       if (!drilldown) {
         return res
           .status(404)
@@ -9539,25 +9232,8 @@ app.get(
     );
     if (!role) return;
 
-    const evalScopeRaw = req.query.eval_scope;
-    const assessmentDateRaw = req.query.assessment_date;
-
-    const evalScope =
-      typeof evalScopeRaw === "string" &&
-      ["latest_eval", "all_star", "specific"].includes(evalScopeRaw)
-        ? (evalScopeRaw as "latest_eval" | "all_star" | "specific")
-        : null;
-
-    const assessmentDate =
-      typeof assessmentDateRaw === "string" && assessmentDateRaw
-        ? assessmentDateRaw
-        : null;
-
     try {
-      const payload = await computeTeamOffenseDrilldown(teamId, {
-        evalScope,
-        assessmentDate,
-      });
+      const payload = await computeTeamOffenseDrilldown(teamId);
 
       if (!payload) {
         return res

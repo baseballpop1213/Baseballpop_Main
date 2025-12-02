@@ -8,7 +8,6 @@ import {
   getTeamTrophies,
   getPlayerMedals,
   getTeamOffenseDrilldown,
-  getTeamEvaluations,
 } from "../../api/stats";
 import type {
   CoreMetricCode,
@@ -20,8 +19,6 @@ import type {
   TeamOffenseDrilldown,
   TeamWithRole,
   OffenseTestBreakdown,
-  TeamEvaluationOption,
-  TeamEvalScope,
 } from "../../api/types";
 import { getMetricMeta } from "../../config/metricMeta";
 
@@ -35,12 +32,6 @@ type OffenseMetricCode =
 
 type ViewMode = "team" | "player";
 type OffenseViewMode = "team" | "players";
-type EvaluationSelectOption = {
-  key: string;
-  label: string;
-  evalScope: TeamEvalScope;
-  assessmentDate?: string;
-};
 
 const METRIC_ORDER: CoreMetricCode[] = [
   "bpoprating",
@@ -1275,15 +1266,6 @@ export default function StatsPage() {
   const [teamsError, setTeamsError] = useState<string | null>(null);
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
 
-  const [teamEvaluations, setTeamEvaluations] = useState<
-    TeamEvaluationOption[]
-  >([]);
-  const [teamEvaluationsLoading, setTeamEvaluationsLoading] = useState(false);
-  const [teamEvaluationsError, setTeamEvaluationsError] = useState<string | null>(
-    null
-  );
-  const [selectedEvalKey, setSelectedEvalKey] = useState<string>("latest_eval");
-
   const [teamStats, setTeamStats] = useState<TeamStatsOverview | null>(null);
   const [teamStatsLoading, setTeamStatsLoading] = useState(false);
   const [teamStatsError, setTeamStatsError] = useState<string | null>(null);
@@ -1347,106 +1329,9 @@ export default function StatsPage() {
     };
   }, [isCoachLike, selectedTeamId]);
 
-  useEffect(() => {
-    if (!isCoachLike || viewMode !== "team") return;
-    setSelectedEvalKey("latest_eval");
-  }, [selectedTeamId, isCoachLike, viewMode]);
-
-  useEffect(() => {
-    if (!selectedTeamId || !isCoachLike || viewMode !== "team") {
-      setTeamEvaluations([]);
-      return;
-    }
-
-    let cancelled = false;
-    setTeamEvaluationsLoading(true);
-    setTeamEvaluationsError(null);
-
-    getTeamEvaluations(selectedTeamId)
-      .then((data) => {
-        if (cancelled) return;
-        setTeamEvaluations(data?.evaluations ?? []);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        console.error("Error loading team evaluations:", err);
-        setTeamEvaluationsError(
-          err?.response?.data?.error ||
-            err?.message ||
-            "Failed to load team evaluations."
-        );
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setTeamEvaluationsLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedTeamId, isCoachLike, viewMode]);
-
-  const evaluationSelectOptions = useMemo<EvaluationSelectOption[]>(() => {
-    const base: EvaluationSelectOption[] = [
-      {
-        key: "latest_eval",
-        label: "Latest Eval",
-        evalScope: "latest_eval",
-      },
-      {
-        key: "all_star",
-        label: "All-Star Points",
-        evalScope: "all_star",
-      },
-    ];
-
-    const dated = teamEvaluations.map((ev) => {
-      const date = new Date(ev.performed_at);
-      const label = Number.isNaN(date.getTime())
-        ? ev.label
-        : date.toLocaleDateString(undefined, {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          });
-
-      return {
-        key: `assessment-${ev.id}`,
-        label: label || ev.label,
-        evalScope: "specific" as TeamEvalScope,
-        assessmentDate: ev.performed_at,
-      } satisfies EvaluationSelectOption;
-    });
-
-    return [...base, ...dated];
-  }, [teamEvaluations]);
-
-  useEffect(() => {
-    if (!evaluationSelectOptions.length) return;
-    const exists = evaluationSelectOptions.some(
-      (opt) => opt.key === selectedEvalKey
-    );
-    if (!exists) {
-      setSelectedEvalKey(evaluationSelectOptions[0].key);
-    }
-  }, [evaluationSelectOptions, selectedEvalKey]);
-
-  const selectedEvalOption = useMemo(() => {
-    if (!evaluationSelectOptions.length) return null;
-    return (
-      evaluationSelectOptions.find((opt) => opt.key === selectedEvalKey) ??
-      evaluationSelectOptions[0]
-    );
-  }, [evaluationSelectOptions, selectedEvalKey]);
-
   // Load team stats & trophies when team changes in team view
   useEffect(() => {
-    if (
-      !selectedTeamId ||
-      !isCoachLike ||
-      viewMode !== "team" ||
-      !selectedEvalOption
-    ) {
+    if (!selectedTeamId || !isCoachLike || viewMode !== "team") {
       return;
     }
 
@@ -1456,13 +1341,8 @@ export default function StatsPage() {
 
     (async () => {
       try {
-        const evalParams = {
-          evalScope: selectedEvalOption.evalScope,
-          assessmentDate: selectedEvalOption.assessmentDate ?? null,
-        };
-
         const [stats, trophiesRes] = await Promise.all([
-          getTeamStatsOverview(selectedTeamId, evalParams),
+          getTeamStatsOverview(selectedTeamId),
           getTeamTrophies(selectedTeamId),
         ]);
 
@@ -1488,16 +1368,11 @@ export default function StatsPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedTeamId, isCoachLike, viewMode, selectedEvalOption]);
+  }, [selectedTeamId, isCoachLike, viewMode]);
 
   // Load offense drilldown whenever we’re in team view and have a team
   useEffect(() => {
-    if (
-      !selectedTeamId ||
-      !isCoachLike ||
-      viewMode !== "team" ||
-      !selectedEvalOption
-    ) {
+    if (!selectedTeamId || !isCoachLike || viewMode !== "team") {
       return;
     }
 
@@ -1505,12 +1380,7 @@ export default function StatsPage() {
     setOffenseLoading(true);
     setOffenseError(null);
 
-    const evalParams = {
-      evalScope: selectedEvalOption.evalScope,
-      assessmentDate: selectedEvalOption.assessmentDate ?? null,
-    };
-
-    getTeamOffenseDrilldown(selectedTeamId, evalParams)
+    getTeamOffenseDrilldown(selectedTeamId)
       .then((data) => {
         if (cancelled) return;
         setOffenseDrilldown(data);
@@ -1541,7 +1411,7 @@ export default function StatsPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedTeamId, isCoachLike, viewMode, selectedEvalOption]);
+  }, [selectedTeamId, isCoachLike, viewMode]);
 
   // Load player stats & medals (used for player view and later ranking)
   useEffect(() => {
@@ -1720,56 +1590,29 @@ export default function StatsPage() {
                 </p>
               </div>
 
-              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                <div className="flex items-center gap-2">
-                  {teamsLoading && (
-                    <span className="text-xs text-slate-400">
-                      Loading teams…
-                    </span>
-                  )}
-                  {teamsError && (
-                    <span className="text-xs text-red-400">{teamsError}</span>
-                  )}
-                  {teams.length > 0 && (
-                    <select
-                      value={selectedTeamId ?? ""}
-                      onChange={(e) =>
-                        setSelectedTeamId(e.target.value || null)
-                      }
-                      className="text-xs bg-slate-950/80 border border-slate-700 rounded-md px-2 py-1 text-slate-100"
-                    >
-                      {teams.map((team) => (
-                        <option key={team.id} value={team.id}>
-                          {team.name}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-
-                {selectedTeamId && evaluationSelectOptions.length > 0 && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-slate-300">Evaluation:</span>
-                    {teamEvaluationsLoading && (
-                      <span className="text-xs text-slate-400">Loading…</span>
-                    )}
-                    {teamEvaluationsError && (
-                      <span className="text-xs text-red-400">
-                        {teamEvaluationsError}
-                      </span>
-                    )}
-                    <select
-                      value={selectedEvalKey}
-                      onChange={(e) => setSelectedEvalKey(e.target.value)}
-                      className="text-xs bg-slate-950/80 border border-slate-700 rounded-md px-2 py-1 text-slate-100"
-                    >
-                      {evaluationSelectOptions.map((opt) => (
-                        <option key={opt.key} value={opt.key}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+              <div className="flex items-center gap-2">
+                {teamsLoading && (
+                  <span className="text-xs text-slate-400">
+                    Loading teams…
+                  </span>
+                )}
+                {teamsError && (
+                  <span className="text-xs text-red-400">{teamsError}</span>
+                )}
+                {teams.length > 0 && (
+                  <select
+                    value={selectedTeamId ?? ""}
+                    onChange={(e) =>
+                      setSelectedTeamId(e.target.value || null)
+                    }
+                    className="text-xs bg-slate-950/80 border border-slate-700 rounded-md px-2 py-1 text-slate-100"
+                  >
+                    {teams.map((team) => (
+                      <option key={team.id} value={team.id}>
+                        {team.name}
+                      </option>
+                    ))}
+                  </select>
                 )}
               </div>
             </div>
