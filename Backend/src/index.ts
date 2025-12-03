@@ -196,6 +196,7 @@ function getMetricPercentFromRatings(metricCodeRaw: string, ratings: RatingResul
     case "pitching":
       return safeScoreToPercent(pitching_score ?? b.pitching?.overall_score);
     case "athlete":
+    case "athletic":
       return safeScoreToPercent(athletic.overall_score ?? b.athlete?.overall_score);
 
     // Athletic sub-metrics (0–50)
@@ -2590,6 +2591,7 @@ interface TeamStatsOverview {
   age_group_label: string | null;
   level: string | null;
   metrics: StatsMetricSummary[];
+  breakdown?: Record<string, unknown>;
 }
 
 interface PlayerStatsOverview {
@@ -3934,12 +3936,76 @@ async function computeTeamStatsOverview(
     });
   }
 
+  const buildTeamAthleticBreakdown = (
+    ratingRows: TeamRatingRow[]
+  ): { overall_score: number | null; tests: Record<string, number> } | null => {
+    const testAgg = new Map<string, { sum: number; count: number }>();
+    const overallValues: number[] = [];
+
+    const addValue = (key: string, raw: any) => {
+      if (raw === null || raw === undefined) return;
+      const num = typeof raw === "number" ? raw : Number(raw);
+      if (!Number.isFinite(num)) return;
+
+      if (key === "overall_score") {
+        overallValues.push(num);
+        return;
+      }
+
+      const existing = testAgg.get(key) ?? { sum: 0, count: 0 };
+      existing.sum += num;
+      existing.count += 1;
+      testAgg.set(key, existing);
+    };
+
+    for (const row of ratingRows) {
+      const breakdown: any = (row as any).breakdown ?? {};
+      const athleticSection: any = breakdown.athletic ?? breakdown.athlete ?? {};
+      const tests: any = athleticSection.tests ?? athleticSection ?? {};
+
+      addValue("overall_score", athleticSection.overall_score ?? tests.overall_score);
+
+      if (tests && typeof tests === "object") {
+        for (const [key, value] of Object.entries(tests)) {
+          if (typeof value === "number" || typeof value === "string") {
+            addValue(key, value);
+          }
+        }
+      }
+    }
+
+    const averagedTests: Record<string, number> = {};
+    testAgg.forEach((agg, key) => {
+      if (!agg.count) return;
+      averagedTests[key] = Math.round((agg.sum / agg.count) * 100) / 100;
+    });
+
+    const overallScore = averageNonNull(overallValues);
+    if (overallScore !== null) {
+      averagedTests.overall_score = Math.round(overallScore * 10) / 10;
+    }
+
+    if (!Object.keys(averagedTests).length && overallScore === null) {
+      return null;
+    }
+
+    return {
+      overall_score: overallScore ?? null,
+      tests: averagedTests,
+    };
+  };
+
+  const athleticBreakdown = buildTeamAthleticBreakdown(rows);
+
   return {
     team_id: teamRow.id,
     team_name: teamRow.name ?? null,
     age_group_label: (teamRow as any).age_group_label ?? null,
     level: (teamRow as any).level ?? null,
     metrics,
+    ...(athleticBreakdown
+      ? { breakdown: { athletic: athleticBreakdown, athlete: athleticBreakdown } }
+      : {}),
   };
 }
 
