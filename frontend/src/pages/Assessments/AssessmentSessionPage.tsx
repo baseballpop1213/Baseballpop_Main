@@ -866,12 +866,21 @@ export default function AssessmentSessionPage() {
   >("fielding");
 
 
-  // Pitching: which “additional pitch” matrices are visible in the grid
-  // (we always show any that already have data; this just controls which
-  // empty slots are revealed by the "Add another pitch type" button)
+  // Key: playerId → array of additional pitch metric_keys (tpitch5ap1–tpitch5ap5)
+  // that are currently "turned on" for that player. We still always show any
+  // matrices that already have data in sessionData, even if they aren't in this map.
   const [visibleExtraPitchMatrices, setVisibleExtraPitchMatrices] = useState<
-    string[]
-  >([]);
+    Record<string, string[]>
+  >({});
+
+  const visibleExtraPitchMetricKeySet = useMemo(() => {
+    const s = new Set<string>();
+    Object.values(visibleExtraPitchMatrices).forEach((arr) => {
+      arr.forEach((key) => s.add(key));
+    });
+    return s;
+  }, [visibleExtraPitchMatrices]);
+
 
   const availableAthleticBlocks = useMemo(() => {
     if (effectiveEvalType !== "athletic") return [] as AthleticBlock[];
@@ -1204,9 +1213,11 @@ export default function AssessmentSessionPage() {
           evalType === "pitching" &&
           metricKey &&
           ADDITIONAL_PITCH_METRIC_KEYS.has(metricKey) &&
-          !visibleExtraPitchMatrices.includes(metricKey) &&
+          !visibleExtraPitchMetricKeySet.has(metricKey) &&
           !pitchMetricHasAnyValue(m)
         ) {
+          // Extra pitch matrix that is neither visible for any player nor has
+          // any values anywhere → ignore for progress.
           continue;
         }
 
@@ -1219,8 +1230,9 @@ export default function AssessmentSessionPage() {
 
       return { metricsWithAnyValue, totalMetrics };
     },
-    [effectiveEvalType, visibleExtraPitchMatrices, pitchMetricHasAnyValue]
+    [effectiveEvalType, visibleExtraPitchMetricKeySet, pitchMetricHasAnyValue]
   );
+
 
 
   // Overall progress for the active tab
@@ -2138,52 +2150,59 @@ export default function AssessmentSessionPage() {
     setDirty(true);
   }
 
-  function handleRemoveExtraPitchMatrix(metricId: number, metricKey: string) {
+  function handleRemoveExtraPitchMatrix(
+    metricId: number,
+    metricKey: string,
+    playerId: string
+  ) {
     if (!sessionData || isFinalized) return;
 
+    // Clear this metric only for the selected player
     setSessionData((prev) => {
       if (!prev) return prev;
 
       const values = { ...(prev.values || {}) } as any;
-      let changed = false;
+      const byPlayer = { ...(values[playerId] || {}) };
 
-      for (const col of gridColumns) {
-        const playerId = col.id;
-        const byPlayer = { ...(values[playerId] || {}) };
-
-        if (byPlayer[metricId]) {
-          delete byPlayer[metricId];
-          changed = true;
-        }
-
-        if (Object.keys(byPlayer).length === 0) {
-          delete values[playerId];
-        } else {
-          values[playerId] = byPlayer;
-        }
+      if (!byPlayer[metricId]) {
+        return prev;
       }
 
-      const nextCompleted = (prev.completed_metric_ids || []).filter(
-        (id) => id !== metricId
-      );
+      delete byPlayer[metricId];
 
-      if (!changed && nextCompleted.length === (prev.completed_metric_ids || []).length) {
-        return prev;
+      if (Object.keys(byPlayer).length === 0) {
+        delete values[playerId];
+      } else {
+        values[playerId] = byPlayer;
       }
 
       return {
         ...prev,
         values,
-        completed_metric_ids: nextCompleted,
       };
     });
 
-    setVisibleExtraPitchMatrices((prev) =>
-      prev.filter((key) => key !== metricKey)
-    );
+    // Remove this extra pitch matrix from this player's visible extras
+    setVisibleExtraPitchMatrices((prev) => {
+      const existing = prev[playerId];
+      if (!existing) return prev;
+
+      const filtered = existing.filter((key) => key !== metricKey);
+      if (filtered.length === existing.length) return prev;
+
+      const next = { ...prev };
+      if (filtered.length === 0) {
+        delete next[playerId];
+      } else {
+        next[playerId] = filtered;
+      }
+      return next;
+    });
 
     setDirty(true);
   }
+
+
 
   
   async function handleAddTryoutPlayerInSession() {
@@ -5114,177 +5133,7 @@ export default function AssessmentSessionPage() {
               // Special layout: Pitching command → 10/20-pitch matrices + optional 5‑pitch extras
               if (isPitchCommandGroup) {
                 const usedIds = new Set<number>();
-
-                // Which metric_keys are "additional pitch" 5-pitch matrices
                 const extraPitchKeys = ADDITIONAL_PITCH_METRIC_KEYS;
-
-                const isExtraMetricVisible = (metric: AssessmentMetric) => {
-                  const metricKey = (metric as any).metric_key as string | undefined;
-                  if (!metricKey) return false;
-                  return (
-                    visibleExtraPitchMatrices.includes(metricKey) ||
-                    pitchMetricHasAnyValue(metric)
-                  );
-                };
-
-                const pushPitchMatrixRow = (metric: AssessmentMetric) => {
-                  const metricKey = (metric as any).metric_key as string | undefined;
-                  const config = metricKey ? PITCH_MATRIX_CONFIG[metricKey] : undefined;
-                  if (!config) {
-                    // e.g. max_throwing_speed stays as a simple numeric row
-                    return pushDefaultRow(metric);
-                  }
-
-                  usedIds.add(metric.id);
-
-                  const meta = metricKey ? getMetricMeta(metricKey) : undefined;
-                  const pitchCount = config.pitchCount;
-                  const displayName =
-                    meta?.displayName || (metric as any).label || "Pitching Matrix";
-
-                  const description =
-                    meta?.instructions ||
-                    "For each pitch, mark Miss (0), Hit target (1), or Hit called section (3). The total score is calculated automatically.";
-
-                  const options = PITCH_COMMAND_OPTIONS;
-                  const isExtraPitchMatrix =
-                    metricKey && extraPitchKeys.has(metricKey);
-
-                  rows.push(
-                    <tr
-                      key={`${group.key}-pitch-matrix-${metric.id}`}
-                      className="border-b border-slate-800"
-                    >
-                      <td className="align-top px-2 py-2">
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <div className="font-medium text-slate-100">{displayName}</div>
-                            <div className="text-[10px] text-slate-500 mt-0.5">
-                              {description}
-                            </div>
-                          </div>
-
-                          {isExtraPitchMatrix && metricKey && !isFinalized && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                handleRemoveExtraPitchMatrix(metric.id, metricKey)
-                              }
-                              className="ml-2 px-2 py-0.5 rounded-md border border-rose-500/70 bg-rose-500/5 text-[10px] text-rose-200 hover:bg-rose-500/15"
-                            >
-                              Remove
-                            </button>
-                          )}
-                        </div>
-                      </td>
-
-
-                      {gridColumns.map((col) => {
-                        const playerId = col.id;
-                        const perPlayer =
-                          (sessionData?.values as any)?.[playerId] || {};
-                        const v = perPlayer[metric.id];
-                        const storedText = v?.value_text;
-                        const numericValue = v?.value_numeric;
-
-                        const pitchCountSafe = Math.max(1, pitchCount);
-                        const parsedMatrix = parseMatrixValueText(
-                          storedText,
-                          pitchCountSafe
-                        );
-                        const pitches = parsedMatrix.swings;
-                        const pitchType = parsedMatrix.pitchType;
-                        const keepObjectFormat =
-                          parsedMatrix.format === "object" || !!isExtraPitchMatrix;
-
-                        const displayTotal =
-                          typeof numericValue === "number" &&
-                          !Number.isNaN(numericValue)
-                            ? numericValue
-                            : computeMatrixTotal(pitches, options);
-
-                        return (
-                          <td
-                            key={`${metric.id}-${playerId}`}
-                            className="px-2 py-2 align-top"
-                          >
-                            <div className="flex flex-col gap-1">
-                              {isExtraPitchMatrix && (
-                                <div className="mb-1 flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
-                                  <span>Pitch type:</span>
-                                  <select
-                                    className="rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-100"
-                                    value={pitchType ?? ""}
-                                    onChange={(e) =>
-                                      handlePitchMatrixTypeChange(
-                                        metric.id,
-                                        playerId,
-                                        pitchCountSafe,
-                                        e.target.value
-                                      )
-                                    }
-                                    disabled={isFinalized}
-                                  >
-                                    <option value="">Select</option>
-                                    {ADDITIONAL_PITCH_TYPE_OPTIONS.map((opt) => (
-                                      <option key={opt.value} value={opt.value}>
-                                        {opt.label}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </div>
-                              )}
-                              <div className="grid grid-cols-5 gap-1">
-                                {pitches.map((code, idx) => (
-                                  <div
-                                    key={`${metric.id}-${playerId}-pitch-${idx}`}
-                                    className="flex flex-col items-stretch"
-                                  >
-                                    <div className="text-[9px] text-slate-500 mb-0.5">
-                                      Pitch {idx + 1}
-                                    </div>
-                                    <select
-                                      className="w-full rounded-md bg-slate-950 border border-slate-700 px-1 py-0.5 text-[11px]"
-                                      value={code}
-                                      onChange={(e) =>
-                                        handleHittingMatrixSwingChange(
-                                          metric.id,
-                                          playerId,
-                                          idx,
-                                          e.target.value,
-                                          options,
-                                          pitchCountSafe,
-                                          {
-                                            pitchType,
-                                            forceObject: keepObjectFormat,
-                                          }
-                                        )
-                                      }
-                                      disabled={isFinalized}
-                                    >
-                                      <option value="">—</option>
-                                      {options.map((opt) => (
-                                        <option key={opt.code} value={opt.code}>
-                                          {opt.label}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </div>
-                                ))}
-                              </div>
-                              <div className="mt-1 text-[10px] text-slate-400">
-                                Total:{" "}
-                                <span className="font-mono text-slate-100">
-                                  {displayTotal ?? "—"}
-                                </span>
-                              </div>
-                            </div>
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  );
-                };
 
                 // Split base command metrics vs optional extra pitch types
                 const baseCommandMetrics: AssessmentMetric[] = [];
@@ -5299,76 +5148,334 @@ export default function AssessmentSessionPage() {
                   }
                 }
 
-                // First, render the main command matrices (10/20-pitch fastball tests, etc.)
+                // Per‑player: which extra pitch metric_keys are "in use"
+                // (from UI state OR existing values in sessionData)
+                const perPlayerExtraKeys: Record<string, Set<string>> = {};
+                const perPlayerExtraCounts: Record<string, number> = {};
+
+                for (const col of gridColumns) {
+                  const playerId = col.id;
+                  const fromState = visibleExtraPitchMatrices[playerId] ?? [];
+                  const combined = new Set<string>(fromState);
+
+                  if (sessionData?.values) {
+                    const perPlayerValues = (sessionData.values as any)[playerId] || {};
+                    for (const metric of extraPitchMetrics) {
+                      const metricKey = (metric as any).metric_key as string | undefined;
+                      if (!metricKey) continue;
+
+                      const v = perPlayerValues[metric.id];
+                      const numeric = v?.value_numeric;
+                      const text = v?.value_text;
+
+                      if (
+                        (numeric !== null &&
+                          numeric !== undefined &&
+                          !Number.isNaN(numeric)) ||
+                        (text !== null &&
+                          text !== undefined &&
+                          String(text).trim() !== "")
+                      ) {
+                        combined.add(metricKey);
+                      }
+                    }
+                  }
+
+                  perPlayerExtraKeys[playerId] = combined;
+                  perPlayerExtraCounts[playerId] = combined.size;
+                }
+
+                // Any extra metric that is used by at least one player
+                const activeExtraMetricKeys = new Set<string>();
+                Object.values(perPlayerExtraKeys).forEach((set) => {
+                  set.forEach((key) => activeExtraMetricKeys.add(key));
+                });
+
+                const pushPitchMatrixRow = (metric: AssessmentMetric) => {
+                  const metricKey = (metric as any).metric_key as string | undefined;
+                  const config = metricKey ? PITCH_MATRIX_CONFIG[metricKey] : undefined;
+
+                  if (!config) {
+                    // e.g. max_throwing_speed stays as a simple numeric row
+                    return pushDefaultRow(metric);
+                  }
+
+                  const isExtraPitchMatrix =
+                    metricKey && extraPitchKeys.has(metricKey);
+
+                  // If this is an extra metric and no player is using it, don't render the row
+                  if (
+                    isExtraPitchMatrix &&
+                    metricKey &&
+                    !activeExtraMetricKeys.has(metricKey)
+                  ) {
+                    return;
+                  }
+
+                  usedIds.add(metric.id);
+
+                  const meta = metricKey ? getMetricMeta(metricKey) : undefined;
+                  const pitchCount = config.pitchCount;
+                  const options = PITCH_COMMAND_OPTIONS;
+
+                  const displayName =
+                    meta?.displayName || (metric as any).label || "Pitching Matrix";
+
+                  const description =
+                    meta?.instructions ||
+                    "For each pitch, mark Miss (0), Hit target (1), or Hit called section (3). The total score is calculated automatically.";
+
+                  rows.push(
+                    <tr
+                      key={`${group.key}-pitch-matrix-${metric.id}`}
+                      className="border-b border-slate-800"
+                    >
+                      <td className="align-top px-2 py-2">
+                        <div className="font-medium text-slate-100">{displayName}</div>
+                        <div className="text-[10px] text-slate-500 mt-0.5">
+                          {description}
+                        </div>
+                      </td>
+
+                      {gridColumns.map((col) => {
+                        const playerId = col.id;
+                        const perPlayer =
+                          (sessionData?.values as any)?.[playerId] || {};
+                        const v = perPlayer[metric.id];
+                        const numericValue = v?.value_numeric;
+                        const textValue = v?.value_text;
+
+                        const hasAnyValue =
+                          (numericValue !== null &&
+                            numericValue !== undefined &&
+                            !Number.isNaN(numericValue)) ||
+                          (textValue !== null &&
+                            textValue !== undefined &&
+                            String(textValue).trim() !== "");
+
+                        const isActiveForPlayer =
+                          !isExtraPitchMatrix ||
+                          (metricKey &&
+                            (perPlayerExtraKeys[playerId]?.has(metricKey) ||
+                              hasAnyValue));
+
+                        // Extra matrix, but this player hasn't added it → show placeholder
+                        if (isExtraPitchMatrix && !isActiveForPlayer) {
+                          return (
+                            <td
+                              key={`${metric.id}-${playerId}`}
+                              className="px-2 py-2 align-top text-center text-[10px] text-slate-500"
+                            >
+                              <span className="opacity-60">—</span>
+                            </td>
+                          );
+                        }
+
+                        const pitchCountSafe = Math.max(1, pitchCount);
+                        const parsedMatrix = parseMatrixValueText(
+                          v?.value_text,
+                          pitchCountSafe
+                        );
+                        const pitches = parsedMatrix.swings;
+                        const pitchType = parsedMatrix.pitchType;
+                        const keepObjectFormat =
+                          parsedMatrix.format === "object" || !!isExtraPitchMatrix;
+
+                        const displayTotal =
+                          typeof numericValue === "number" &&
+                          !Number.isNaN(numericValue)
+                            ? numericValue
+                            : computeMatrixTotal(pitches, options);
+
+                      return (
+                        <td
+                          key={`${metric.id}-${playerId}`}
+                          className="px-2 py-2 align-top"
+                        >
+                          <div className="flex flex-col gap-1">
+                            {isExtraPitchMatrix && (
+                              <div className="mb-1 flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
+                                <span>Pitch type:</span>
+                                <select
+                                  className="rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-[11px] text-slate-100"
+                                  value={pitchType ?? ""}
+                                  onChange={(e) =>
+                                    handlePitchMatrixTypeChange(
+                                      metric.id,
+                                      playerId,
+                                      pitchCountSafe,
+                                      e.target.value
+                                    )
+                                  }
+                                  disabled={isFinalized}
+                                >
+                                  <option value="">Select</option>
+                                  {ADDITIONAL_PITCH_TYPE_OPTIONS.map((opt) => (
+                                    <option key={opt.value} value={opt.value}>
+                                      {opt.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            )}
+                            <div className="grid grid-cols-5 gap-1">
+                              {pitches.map((code, idx) => (
+                                <div
+                                  key={`${metric.id}-${playerId}-pitch-${idx}`}
+                                  className="flex flex-col items-stretch"
+                                >
+                                  <div className="text-[9px] text-slate-500 mb-0.5">
+                                    Pitch {idx + 1}
+                                  </div>
+                                  <select
+                                    className="w-full rounded-md bg-slate-950 border border-slate-700 px-1 py-0.5 text-[11px]"
+                                    value={code}
+                                    onChange={(e) =>
+                                      handleHittingMatrixSwingChange(
+                                        metric.id,
+                                        playerId,
+                                        idx,
+                                        e.target.value,
+                                        options,
+                                        pitchCountSafe,
+                                        {
+                                          pitchType,
+                                          forceObject: keepObjectFormat,
+                                        }
+                                      )
+                                    }
+                                    disabled={isFinalized}
+                                  >
+                                    <option value="">—</option>
+                                    {options.map((opt) => (
+                                      <option key={opt.code} value={opt.code}>
+                                        {opt.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="mt-1 text-[10px] text-slate-400">
+                              Total:{" "}
+                              <span className="font-mono text-slate-100">
+                                {displayTotal ?? "—"}
+                              </span>
+                            </div>
+                            {isExtraPitchMatrix && metricKey && (
+                              <div className="mt-1 flex justify-center">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleRemoveExtraPitchMatrix(metric.id, metricKey, playerId)
+                                  }
+                                  disabled={isFinalized}
+                                  className="rounded-md border border-red-500/60 bg-red-500/10 px-2 py-0.5 text-[10px] text-red-200 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  Remove pitch
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      );
+
+                      })}
+                    </tr>
+                  );
+                };
+
+                // Per‑player "Add pitch type" handler
+                const handleAddExtraPitchForPlayer = (playerId: string) => {
+                  if (isFinalized) return;
+
+                  const already = perPlayerExtraKeys[playerId] || new Set<string>();
+
+                  const nextMetric = extraPitchMetrics.find((m) => {
+                    const metricKey = (m as any).metric_key as string | undefined;
+                    return metricKey && !already.has(metricKey);
+                  });
+
+                  if (!nextMetric) return;
+
+                  const nextKey = (nextMetric as any)
+                    .metric_key as string | undefined;
+                  if (!nextKey) return;
+
+                  setVisibleExtraPitchMatrices((prev) => {
+                    const current = prev[playerId] ?? [];
+                    if (current.includes(nextKey)) return prev;
+                    return {
+                      ...prev,
+                      [playerId]: [...current, nextKey],
+                    };
+                  });
+                };
+
+                // 1) Base command matrices (10/20 pitches)
                 baseCommandMetrics.forEach((m) => pushPitchMatrixRow(m));
 
-                // "Add another pitch type" control row (only if there are optional extra matrices)
+                // 2) Per‑player "Add pitch" row (only if the template has extras)
                 if (extraPitchMetrics.length > 0) {
-                  const nextHiddenExtra = extraPitchMetrics.find(
-                    (m) => !isExtraMetricVisible(m)
-                  );
-
-                  const handleAddExtraPitchMatrix = () => {
-                    if (!nextHiddenExtra) return;
-                    const metricKey = (nextHiddenExtra as any)
-                      .metric_key as string | undefined;
-                    if (!metricKey) return;
-
-                    setVisibleExtraPitchMatrices((prev) =>
-                      prev.includes(metricKey) ? prev : [...prev, metricKey]
-                    );
-                  };
-
                   rows.push(
                     <tr
                       key={`${group.key}-add-extra-pitch`}
                       className="border-b border-slate-800 bg-slate-950/40"
                     >
-                      <td
-                        colSpan={1 + gridColumns.length}
-                        className="px-2 py-2 align-top"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="text-[10px] text-slate-400">
-                            Optional: track additional pitch types (change-up, slider,
-                            cutter, etc.). Add up to{" "}
-                            {extraPitchMetrics.length} extra pitch matrices per pitcher.
-                          </div>
-                          <button
-                            type="button"
-                            onClick={handleAddExtraPitchMatrix}
-                            disabled={!nextHiddenExtra || isFinalized}
-                            className={[
-                              "px-3 py-1 rounded-md border text-[11px] font-semibold transition-colors",
-                              !nextHiddenExtra || isFinalized
-                                ? "border-slate-700 text-slate-500 bg-slate-900 cursor-not-allowed opacity-60"
-                                : "border-emerald-500 bg-emerald-500 text-slate-900 hover:bg-emerald-400 hover:border-emerald-400",
-                            ].join(" ")}
-                          >
-                            {nextHiddenExtra
-                              ? "Add additional pitch"
-                              : "All additional pitch slots added"}
-                          </button>
+                      <td className="px-2 py-2 align-top">
+                        <div className="text-[10px] text-slate-400">
+                          Optional: track additional pitch types (change-up, slider,
+                          cutter, etc.). Each player can have up to{" "}
+                          {extraPitchMetrics.length} extra pitch matrices.
                         </div>
                       </td>
+                      {gridColumns.map((col) => {
+                        const playerId = col.id;
+                        const used = perPlayerExtraCounts[playerId] ?? 0;
+                        const max = extraPitchMetrics.length;
+                        const disabled = isFinalized || used >= max;
+
+                        return (
+                          <td
+                            key={`${group.key}-add-extra-pitch-${playerId}`}
+                            className="px-2 py-2 text-center align-top"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => handleAddExtraPitchForPlayer(playerId)}
+                              disabled={disabled}
+                              className={[
+                                "px-2 py-0.5 rounded-md border text-[11px]",
+                                disabled
+                                  ? "border-slate-700 text-slate-500 bg-slate-900 cursor-not-allowed opacity-60"
+                                  : "border-emerald-500/80 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20",
+                              ].join(" ")}
+                            >
+                              {used === 0 ? "Add pitch" : "Add another"}
+                            </button>
+                            <div className="mt-1 text-[10px] text-slate-400">
+                              {used}/{max} added
+                            </div>
+                          </td>
+                        );
+                      })}
                     </tr>
                   );
                 }
 
-
-                // Now render any extra pitch matrices that are visible (either clicked on or already have values)
+                // 3) Extra matrices that are active for at least one player
                 extraPitchMetrics.forEach((m) => {
-                  if (isExtraMetricVisible(m)) {
-                    pushPitchMatrixRow(m);
-                  }
+                  const metricKey = (m as any).metric_key as string | undefined;
+                  if (!metricKey) return;
+                  if (!activeExtraMetricKeys.has(metricKey)) return;
+                  pushPitchMatrixRow(m);
                 });
 
-                // Any remaining non-extra metrics fall back to the generic renderer
+                // 4) Any remaining metrics fall back to generic rendering
                 const remaining = group.metrics.filter((m) => {
                   const metricKey = (m as any).metric_key as string | undefined;
                   if (metricKey && extraPitchKeys.has(metricKey)) {
-                    // extra pitch metrics are either rendered above or intentionally hidden
-                    return false;
+                    return false; // handled above
                   }
                   return !usedIds.has(m.id);
                 });
@@ -5376,6 +5483,7 @@ export default function AssessmentSessionPage() {
 
                 return <Fragment key={group.key}>{rows}</Fragment>;
               }
+
 
 
               // Special layout: First Base (1B) – Catching & Fielding
