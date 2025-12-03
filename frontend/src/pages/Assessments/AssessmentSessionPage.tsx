@@ -1189,15 +1189,40 @@ export default function AssessmentSessionPage() {
   ]);
 
 
-  const progressMetrics = useMemo(
-    () =>
-      visibleGroupedMetrics.reduce<AssessmentMetric[]>((acc, group) => {
+  const visibleMetricsForProgress = useMemo(() => {
+    const all = visibleGroupedMetrics.reduce<AssessmentMetric[]>(
+      (acc, group) => {
         acc.push(...group.metrics);
         return acc;
-      }, []),
-    [visibleGroupedMetrics]
-  );
+      },
+      []
+    );
 
+    if (effectiveEvalType !== "pitching") return all;
+
+    return all.filter((metric) => {
+      const metricKey = (metric as any).metric_key as string | undefined;
+      if (!metricKey) return true;
+
+      if (!ADDITIONAL_PITCH_METRIC_KEYS.has(metricKey)) return true;
+
+      return (
+        visibleExtraPitchMatrices.includes(metricKey) ||
+        pitchMetricHasAnyValue(metric)
+      );
+    });
+  }, [
+    visibleGroupedMetrics,
+    effectiveEvalType,
+    visibleExtraPitchMatrices,
+    pitchMetricHasAnyValue,
+  ]);
+
+  // Overall progress for the active tab
+  const metricsCompletion = useMemo(
+    () => computeMetricsCompletion(visibleMetricsForProgress),
+    [visibleMetricsForProgress, computeMetricsCompletion]
+  );
 
 
   const computeMetricsCompletion = useCallback(
@@ -5119,38 +5144,12 @@ export default function AssessmentSessionPage() {
                 // Which metric_keys are "additional pitch" 5-pitch matrices
                 const extraPitchKeys = ADDITIONAL_PITCH_METRIC_KEYS;
 
-                const metricHasAnyValue = (metric: AssessmentMetric) => {
-                  if (!sessionData?.values) return false;
-                  const metricId = metric.id;
-                  const values = sessionData.values as any;
-
-                  for (const col of gridColumns) {
-                    const perPlayer = values[col.id] || {};
-                    const v = perPlayer[metricId];
-                    const numeric = v?.value_numeric;
-                    const text = v?.value_text;
-
-                    if (
-                      (numeric !== null &&
-                        numeric !== undefined &&
-                        !Number.isNaN(numeric)) ||
-                      (text !== null &&
-                        text !== undefined &&
-                        String(text).trim() !== "")
-                    ) {
-                      return true;
-                    }
-                  }
-
-                  return false;
-                };
-
                 const isExtraMetricVisible = (metric: AssessmentMetric) => {
                   const metricKey = (metric as any).metric_key as string | undefined;
                   if (!metricKey) return false;
                   return (
                     visibleExtraPitchMatrices.includes(metricKey) ||
-                    metricHasAnyValue(metric)
+                    pitchMetricHasAnyValue(metric)
                   );
                 };
 
@@ -5399,6 +5398,7 @@ export default function AssessmentSessionPage() {
 
                 return <Fragment key={group.key}>{rows}</Fragment>;
               }
+
 
               // Special layout: First Base (1B) – Catching & Fielding
               if (isFirstBaseGroup) {
