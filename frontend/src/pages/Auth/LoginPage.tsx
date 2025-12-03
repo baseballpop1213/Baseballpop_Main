@@ -74,6 +74,14 @@ export default function LoginPage() {
           Use the Supabase test user:{" "}
           <span className="font-mono">coachmike@test.com</span>.
         </p>
+
+        <button
+          type="button"
+          onClick={() => navigate("/create-account")}
+          className="mt-4 w-full rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:border-emerald-400 transition"
+        >
+          Create an account
+        </button>
       </div>
     </div>
   );

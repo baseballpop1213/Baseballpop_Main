@@ -3,6 +3,7 @@ import "./index.css";
 import { Routes, Route, Navigate } from "react-router-dom";
 
 import LoginPage from "./pages/Auth/LoginPage";
+import SignupPage from "./pages/Auth/SignupPage";
 import AppLayout from "./layouts/AppLayout";
 import RequireAuth from "./components/RequireAuth";
 
@@ -21,6 +22,7 @@ function App() {
     <Routes>
       {/* Public route */}
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/create-account" element={<SignupPage />} />
 
       {/* Protected routes */}
       <Route element={<RequireAuth />}>
