@@ -226,6 +226,12 @@ export interface TeamStatsOverview {
   age_group_label: string | null;
   level: string | null;
   metrics: StatsMetricSummary[];
+  /**
+   * Optional rating breakdown returned by the backend. This allows drilldowns
+   * (e.g., athletic) to surface the underlying test scores without requiring
+   * an additional request.
+   */
+  breakdown?: Record<string, unknown>;
 }
 
 export type TeamEvalScope = "latest_eval" | "all_star" | "specific";
