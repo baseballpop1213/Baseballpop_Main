@@ -1086,53 +1086,10 @@ export default function AssessmentSessionPage() {
       return groups;
     }
 
-    // PITCHING – hide extra matrices until added or filled
+    // PITCHING – keep all command metrics so the "Add another pitch type" control
+    // can surface optional matrices even before they have values. Visibility for
+    // individual extra matrices is handled later in the pitching renderer.
     if (effectiveEvalType === "pitching") {
-      const metricHasAnyValue = (metric: AssessmentMetric) => {
-        if (!sessionData?.values) return false;
-
-        const metricId = metric.id;
-        const values = sessionData.values as any;
-
-        for (const col of gridColumns) {
-          const perPlayer = values[col.id] || {};
-          const v = perPlayer[metricId];
-          const numeric = v?.value_numeric;
-          const text = v?.value_text;
-
-          if (
-            (numeric !== null &&
-              numeric !== undefined &&
-              !Number.isNaN(numeric)) ||
-            (text !== null && text !== undefined && String(text).trim() !== "")
-          ) {
-            return true;
-          }
-        }
-
-        return false;
-      };
-
-      groups = groups
-        .map((group) => {
-          const filtered = group.metrics.filter((m) => {
-            const metricKey = (m as any).metric_key as string | undefined;
-            if (!metricKey) return true;
-
-            if (ADDITIONAL_PITCH_METRIC_KEYS.has(metricKey)) {
-              return (
-                visibleExtraPitchMatrices.includes(metricKey) ||
-                metricHasAnyValue(m)
-              );
-            }
-
-            return true;
-          });
-
-          return { ...group, metrics: filtered };
-        })
-        .filter((g) => g.metrics.length > 0);
-
       return groups;
     }
 
@@ -1198,25 +1155,36 @@ export default function AssessmentSessionPage() {
       []
     );
 
-    if (effectiveEvalType !== "pitching") return all;
+    return all;
+  }, [visibleGroupedMetrics, effectiveEvalType]);
 
-    return all.filter((metric) => {
-      const metricKey = (metric as any).metric_key as string | undefined;
-      if (!metricKey) return true;
+  const pitchMetricHasAnyValue = useCallback(
+    (metric: AssessmentMetric) => {
+      if (!sessionData?.values) return false;
 
-      if (!ADDITIONAL_PITCH_METRIC_KEYS.has(metricKey)) return true;
+      const metricId = metric.id;
+      const values = sessionData.values as any;
 
-      return (
-        visibleExtraPitchMatrices.includes(metricKey) ||
-        pitchMetricHasAnyValue(metric)
-      );
-    });
-  }, [
-    visibleGroupedMetrics,
-    effectiveEvalType,
-    visibleExtraPitchMatrices,
-    pitchMetricHasAnyValue,
-  ]);
+      for (const col of gridColumns) {
+        const perPlayer = values[col.id] || {};
+        const v = perPlayer[metricId];
+        const numeric = v?.value_numeric;
+        const text = v?.value_text;
+
+        if (
+          (numeric !== null &&
+            numeric !== undefined &&
+            !Number.isNaN(numeric)) ||
+          (text !== null && text !== undefined && String(text).trim() !== "")
+        ) {
+          return true;
+        }
+      }
+
+      return false;
+    },
+    [sessionData?.values, gridColumns]
+  );
 
   // Overall progress for the active tab
   const metricsCompletion = useMemo(
