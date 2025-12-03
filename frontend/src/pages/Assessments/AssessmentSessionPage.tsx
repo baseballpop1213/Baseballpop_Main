@@ -1145,7 +1145,34 @@ export default function AssessmentSessionPage() {
     hasInfieldFieldingGroup,
   ]);
 
+  const pitchMetricHasAnyValue = useCallback(
+    (metric: AssessmentMetric) => {
+      if (!gridColumns.length || !sessionData) return false;
 
+      const metricId = metric.id;
+      const values = sessionData.values || {};
+
+      for (const col of gridColumns) {
+        const perPlayer = (values as any)[col.id] || {};
+        const v = perPlayer[metricId];
+        const numeric = v?.value_numeric;
+        const text = v?.value_text;
+
+        if (
+          (numeric !== null && numeric !== undefined && !Number.isNaN(numeric)) ||
+          (text !== null && text !== undefined && String(text).trim() !== "")
+        ) {
+          return true;
+        }
+      }
+
+      return false;
+    },
+    [gridColumns, sessionData]
+  );
+
+
+  
   const visibleMetricsForProgress = useMemo(() => {
     const all = visibleGroupedMetrics.reduce<AssessmentMetric[]>(
       (acc, group) => {
@@ -1186,24 +1213,34 @@ export default function AssessmentSessionPage() {
     [sessionData?.values, gridColumns]
   );
 
-  // Overall progress for the active tab
-  const metricsCompletion = useMemo(
-    () => computeMetricsCompletion(visibleMetricsForProgress),
-    [visibleMetricsForProgress, computeMetricsCompletion]
-  );
-
-
   const computeMetricsCompletion = useCallback(
     (metricList: AssessmentMetric[]) => {
-      if (!metricList.length || !gridColumns.length || !sessionData) {
-        return { metricsWithAnyValue: 0, totalMetrics: metricList.length };
-      }
-
-      const values = sessionData.values || {};
       let metricsWithAnyValue = 0;
-
+      let totalMetrics = 0;
       for (const m of metricList) {
+        const metricKey = (m as any).metric_key as string | undefined;
+
+        if (
+          effectiveEvalType === "pitching" &&
+          metricKey &&
+          ADDITIONAL_PITCH_METRIC_KEYS.has(metricKey) &&
+          !visibleExtraPitchMatrices.includes(metricKey) &&
+          !pitchMetricHasAnyValue(m)
+        ) {
+          continue;
+        }
+
+        totalMetrics += 1;
+
+        if (pitchMetricHasAnyValue(m)) {
+          metricsWithAnyValue += 1;
+          continue;
+        }
+
+        if (!gridColumns.length || !sessionData) continue;
+
         const metricId = m.id;
+        const values = sessionData.values || {};
         let hasValue = false;
 
         for (const col of gridColumns) {
@@ -1230,15 +1267,21 @@ export default function AssessmentSessionPage() {
         }
       }
 
-      return { metricsWithAnyValue, totalMetrics: metricList.length };
+      return { metricsWithAnyValue, totalMetrics };
     },
-    [gridColumns, sessionData]
+    [
+      effectiveEvalType,
+      gridColumns,
+      sessionData,
+      visibleExtraPitchMatrices,
+      pitchMetricHasAnyValue,
+    ]
   );
 
   // Overall progress for the active tab
   const metricsCompletion = useMemo(
-    () => computeMetricsCompletion(metrics),
-    [metrics, computeMetricsCompletion]
+    () => computeMetricsCompletion(visibleMetricsForProgress),
+    [visibleMetricsForProgress, computeMetricsCompletion]
   );
 
   const fullProgress = useMemo(() => {
