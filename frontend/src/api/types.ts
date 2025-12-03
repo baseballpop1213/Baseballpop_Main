@@ -13,6 +13,89 @@ export interface Profile {
   bio?: string | null;
 }
 
+export interface PlayerProfile {
+  profile_id: string;
+  height_inches: number | null;
+  weight_lbs: number | null;
+  school: string | null;
+  grade: string | null;
+  home_address: string | null;
+  positions: string[];
+  pitches: string[];
+  batting_hand: string | null;
+  throwing_hand: string | null;
+  primary_jersey_number: number | null;
+  walk_up_song: string | null;
+  glove_brand: string | null;
+  glove_size_inches: number | null;
+  bat_length_inches: number | null;
+  bat_weight_oz: number | null;
+}
+
+export interface CoachProfile {
+  profile_id: string;
+  phone: string | null;
+  organization: string | null;
+  title: string | null;
+  years_experience: number | null;
+  bio: string | null;
+  city: string | null;
+  state: string | null;
+  postal_code: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ParentChildLink {
+  link_id: number;
+  relationship: string | null;
+  child: Profile | null;
+}
+
+export interface CreateAccountPayload {
+  role: "player" | "parent" | "coach";
+  display_name: string;
+  first_name?: string | null;
+  last_name?: string | null;
+}
+
+export interface UpdateBasicProfilePayload {
+  display_name?: string;
+  first_name?: string | null;
+  last_name?: string | null;
+  avatar_url?: string | null;
+  birthdate?: string;
+}
+
+export interface UpsertPlayerProfilePayload {
+  height_inches?: number | null;
+  weight_lbs?: number | null;
+  school?: string | null;
+  grade?: string | null;
+  home_address?: string | null;
+  positions?: string[];
+  pitches?: string[];
+  batting_hand?: string | null;
+  throwing_hand?: string | null;
+  primary_jersey_number?: number | null;
+  walk_up_song?: string | null;
+  glove_brand?: string | null;
+  glove_size_inches?: number | null;
+  bat_length_inches?: number | null;
+  bat_weight_oz?: number | null;
+}
+
+export interface UpsertCoachProfilePayload {
+  phone?: string | null;
+  organization?: string | null;
+  title?: string | null;
+  years_experience?: number | null;
+  bio?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+}
+
 export type TeamRole = "coach" | "assistant" | "player" | "parent";
 
 export interface TeamWithRole {
