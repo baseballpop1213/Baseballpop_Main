@@ -34,6 +34,8 @@ const COACH_ONLY: TeamRole[] = ["coach"];
 const COACH_AND_ASSISTANT: TeamRole[] = ["coach", "assistant"];
 const ANY_MEMBER: TeamRole[] = ["coach", "assistant", "player", "parent"];
 
+type RSVPStatus = "invited" | "going" | "maybe" | "declined";
+
 // --- Awards: shared helpers & types ---
 
 type MedalTier = "bronze" | "silver" | "gold" | "platinum";
@@ -376,24 +378,144 @@ async function awardMedalsForAssessment(options: {
  * Look up the user's role for a specific team from user_team_roles.
  * Returns null if they have no role on that team.
  */
+async function getParentTeamRolesForUsers(userIds: string[]) {
+  const uniqueIds = Array.from(new Set(userIds));
+  const { data: links, error: linkError } = await supabase
+    .from("parent_child_links")
+    .select("parent_profile_id, child_profile_id")
+    .in(
+      "parent_profile_id",
+      uniqueIds.length > 0
+        ? uniqueIds
+        : ["00000000-0000-0000-0000-000000000000"]
+    );
+
+  if (linkError) {
+    console.error("Error loading parent_child_links:", linkError);
+    return [] as { user_id: string; team_id: string; role: TeamRole }[];
+  }
+
+  const childIds = Array.from(
+    new Set((links ?? []).map((l) => l.child_profile_id))
+  );
+
+  if (childIds.length === 0) {
+    return [] as { user_id: string; team_id: string; role: TeamRole }[];
+  }
+
+  const { data: teamPlayers, error: tpError } = await supabase
+    .from("team_players")
+    .select("team_id, player_id")
+    .in("player_id", childIds);
+
+  if (tpError) {
+    console.error("Error loading team_players for parents:", tpError);
+    return [] as { user_id: string; team_id: string; role: TeamRole }[];
+  }
+
+  const teamsByPlayer = new Map<string, string[]>();
+  for (const row of teamPlayers ?? []) {
+    const existing = teamsByPlayer.get(row.player_id) ?? [];
+    existing.push(row.team_id);
+    teamsByPlayer.set(row.player_id, existing);
+  }
+
+  const derived: { user_id: string; team_id: string; role: TeamRole }[] = [];
+  for (const link of links ?? []) {
+    const teams = teamsByPlayer.get(link.child_profile_id) ?? [];
+    for (const teamId of teams) {
+      derived.push({ user_id: link.parent_profile_id, team_id: teamId, role: "parent" });
+    }
+  }
+
+  return derived;
+}
+
+async function getTeamMemberships(teamId: string): Promise<{ profile_id: string; role: TeamRole }[]> {
+  const members = new Map<string, TeamRole>();
+
+  const { data: baseMembers, error: membersError } = await supabase
+    .from("user_team_roles")
+    .select("user_id, role")
+    .eq("team_id", teamId);
+
+  if (membersError) {
+    console.error("Error fetching base team members:", membersError);
+  } else {
+    for (const row of baseMembers ?? []) {
+      members.set(row.user_id, row.role as TeamRole);
+    }
+  }
+
+  const { data: teamPlayers, error: teamPlayersError } = await supabase
+    .from("team_players")
+    .select("player_id")
+    .eq("team_id", teamId);
+
+  if (teamPlayersError) {
+    console.error("Error fetching team players for parent membership:", teamPlayersError);
+  }
+
+  const playerIds = Array.from(new Set((teamPlayers ?? []).map((p) => p.player_id)));
+
+  if (playerIds.length > 0) {
+    const { data: parentLinks, error: parentLinkError } = await supabase
+      .from("parent_child_links")
+      .select("parent_profile_id, child_profile_id")
+      .in("child_profile_id", playerIds);
+
+    if (parentLinkError) {
+      console.error("Error fetching parent links for team membership:", parentLinkError);
+    }
+
+    for (const link of parentLinks ?? []) {
+      if (!members.has(link.parent_profile_id)) {
+        members.set(link.parent_profile_id, "parent");
+      }
+    }
+  }
+
+  return Array.from(members.entries()).map(([profile_id, role]) => ({ profile_id, role }));
+}
+
 async function getUserTeamRole(
   userId: string,
   teamId: string
 ): Promise<TeamRole | null> {
-  const { data, error } = await supabase
-    .from("user_team_roles")
-    .select("role")
-    .eq("user_id", userId)
-    .eq("team_id", teamId)
-    .maybeSingle();
+  const members = await getTeamMemberships(teamId);
+  const match = members.find((m) => m.profile_id === userId);
+  return match ? match.role : null;
+}
 
-  if (error) {
-    console.error("Error fetching user_team_roles:", error);
-    return null;
+async function getTeamRolesForUsers(userIds: string[]) {
+  const uniqueIds = Array.from(new Set(userIds));
+
+  const { data: baseRoles, error: rolesError } = await supabase
+    .from("user_team_roles")
+    .select("user_id, team_id, role")
+    .in(
+      "user_id",
+      uniqueIds.length > 0
+        ? uniqueIds
+        : ["00000000-0000-0000-0000-000000000000"]
+    );
+
+  if (rolesError) {
+    console.error("Error loading base team roles for users:", rolesError);
   }
 
-  if (!data || !data.role) return null;
-  return data.role as TeamRole;
+  const parentRoles = await getParentTeamRolesForUsers(uniqueIds);
+
+  const merged = [...(baseRoles ?? []), ...parentRoles];
+  const dedup = new Map<string, { user_id: string; team_id: string; role: TeamRole }>();
+  for (const row of merged) {
+    const key = `${row.user_id}-${row.team_id}`;
+    if (!dedup.has(key)) {
+      dedup.set(key, { user_id: row.user_id, team_id: row.team_id, role: row.role as TeamRole });
+    }
+  }
+
+  return Array.from(dedup.values());
 }
 
 /**
@@ -458,34 +580,27 @@ async function getOrCreateTeamConversation(teamId: string, createdBy: string) {
     throw convoError ?? new Error("Failed to create team conversation");
   }
 
-  // Optionally, add all team members as participants
-  // (Assumes user_team_roles has all members for the team.)
-  const { data: members, error: membersError } = await supabase
-    .from("user_team_roles")
-    .select("user_id")
-    .eq("team_id", teamId);
+  // Optionally, add all team members (including parents) as participants
+  try {
+    const members = await getTeamMemberships(teamId);
+    if (members && members.length > 0) {
+      const participants = members.map((m) => ({
+        conversation_id: convo.id,
+        profile_id: m.profile_id,
+      }));
 
-  if (membersError) {
-    console.error("Error loading team members for conversation:", membersError);
-    // non-fatal; we still return the convo
-    return convo;
-  }
+      const { error: cpError } = await supabase
+        .from("conversation_participants")
+        .insert(participants);
 
-  if (members && members.length > 0) {
-    const participants = members.map((m) => ({
-      conversation_id: convo.id,
-      profile_id: m.user_id,
-    }));
-
-    const { error: cpError } = await supabase
-      .from("conversation_participants")
-      .insert(participants);
-
-    if (cpError) {
-      // If you have a unique constraint on (conversation_id, profile_id),
-      // this is safe to ignore on conflict.
-      console.error("Error inserting conversation participants:", cpError);
+      if (cpError) {
+        // If you have a unique constraint on (conversation_id, profile_id),
+        // this is safe to ignore on conflict.
+        console.error("Error inserting conversation participants:", cpError);
+      }
     }
+  } catch (err) {
+    console.error("Error inserting team members into conversation:", err);
   }
 
   return convo;
@@ -603,23 +718,41 @@ app.get(
     if (!role) return;
 
     try {
-      const { data, error } = await supabase
-        .from("user_team_roles")
-        .select(
-          "team_id, role, user_id, profiles:profiles(id, display_name, first_name, last_name, avatar_url, email)"
-        )
-        .eq("team_id", teamId)
-        .order("role", { ascending: true })
-        .order("user_id", { ascending: true });
+      const members = await getTeamMemberships(teamId);
+      const profileIds = members.map((m) => m.profile_id);
 
-      if (error) {
-        console.error("Error fetching team members:", error);
-        return res.status(500).json({ error: error.message });
+      const { data: profiles, error: profilesError } = await supabase
+        .from("profiles")
+        .select("id, display_name, first_name, last_name, avatar_url, email, role")
+        .in(
+          "id",
+          profileIds.length > 0
+            ? profileIds
+            : ["00000000-0000-0000-0000-000000000000"]
+        );
+
+      if (profilesError) {
+        console.error("Error fetching team member profiles:", profilesError);
+        return res.status(500).json({ error: profilesError.message });
       }
+
+      const profileMap = new Map<string, any>();
+      for (const p of profiles ?? []) {
+        profileMap.set(p.id, p);
+      }
+
+      const response = members
+        .map((m) => ({
+          team_id: teamId,
+          role: m.role,
+          user_id: m.profile_id,
+          profiles: profileMap.get(m.profile_id) ?? null,
+        }))
+        .sort((a, b) => a.role.localeCompare(b.role) || a.user_id.localeCompare(b.user_id));
 
       return res.json({
         team_id: teamId,
-        members: data ?? [],
+        members: response,
       });
     } catch (err) {
       console.error("Unexpected error in GET /teams/:teamId/members:", err);
@@ -1583,6 +1716,85 @@ app.delete("/me/children/:childProfileId", requireAuth, async (req: AuthedReques
  * List all events for a team.
  * Any team member can view.
  */
+function groupAttendeesByRole(attendees: any[]) {
+  const grouped: Record<string, any[]> = {
+    coach: [],
+    assistant: [],
+    player: [],
+    parent: [],
+    admin: [],
+  };
+
+  for (const attendee of attendees) {
+    const role = attendee.profiles?.role ?? "player";
+    if (!grouped[role]) grouped[role] = [];
+    grouped[role].push(attendee);
+  }
+
+  return grouped;
+}
+
+async function fetchEventAttendees(eventIds: string[]) {
+  if (eventIds.length === 0) return new Map<string, any[]>();
+
+  const { data, error } = await supabase
+    .from("event_attendees")
+    .select(
+      "event_id, profile_id, rsvp_status, profiles:profiles(id, display_name, first_name, last_name, role, avatar_url)"
+    )
+    .in("event_id", eventIds);
+
+  if (error) {
+    console.error("Error fetching event attendees:", error);
+    return new Map<string, any[]>();
+  }
+
+  const map = new Map<string, any[]>();
+  for (const row of data ?? []) {
+    const existing = map.get(row.event_id) ?? [];
+    existing.push(row);
+    map.set(row.event_id, existing);
+  }
+
+  return map;
+}
+
+async function sendTeamBroadcastMessage(
+  teamId: string,
+  senderId: string,
+  content: string
+) {
+  const convo = await getOrCreateTeamConversation(teamId, senderId);
+
+  // Make sure sender is a participant
+  const { data: existingParticipant, error: epError } = await supabase
+    .from("conversation_participants")
+    .select("conversation_id")
+    .eq("conversation_id", convo.id)
+    .eq("profile_id", senderId)
+    .maybeSingle();
+
+  if (epError) {
+    console.error("Error checking sender participation:", epError);
+  } else if (!existingParticipant) {
+    await supabase
+      .from("conversation_participants")
+      .insert([{ conversation_id: convo.id, profile_id: senderId }]);
+  }
+
+  const { error: msgError } = await supabase.from("messages").insert([
+    {
+      conversation_id: convo.id,
+      sender_id: senderId,
+      content: content.trim(),
+    },
+  ]);
+
+  if (msgError) {
+    console.error("Error sending broadcast message:", msgError);
+  }
+}
+
 app.get("/teams/:teamId/events", requireAuth, async (req: AuthedRequest, res) => {
   const { teamId } = req.params;
 
@@ -1601,7 +1813,20 @@ app.get("/teams/:teamId/events", requireAuth, async (req: AuthedRequest, res) =>
       return res.status(500).json({ error: error.message });
     }
 
-    return res.json(data ?? []);
+    const events = data ?? [];
+    const attendeesMap = await fetchEventAttendees(events.map((e: any) => e.id));
+
+    const enriched = events.map((event: any) => {
+      const attendees = attendeesMap.get(event.id) ?? [];
+      const myAttendee = attendees.find((a: any) => a.profile_id === req.user!.id);
+      return {
+        ...event,
+        attendees_by_role: groupAttendeesByRole(attendees),
+        my_rsvp_status: myAttendee?.rsvp_status ?? "invited",
+      };
+    });
+
+    return res.json(enriched);
   } catch (err) {
     console.error("Unexpected error in GET /teams/:teamId/events:", err);
     return res.status(500).json({ error: "Failed to load events" });
@@ -1623,10 +1848,24 @@ app.post("/teams/:teamId/events", requireAuth, async (req: AuthedRequest, res) =
     end_at,
     is_all_day,
     location,
+    attachment_url,
   } = req.body || {};
 
-  const role = await assertTeamRoleOr403(req, res, teamId, COACH_AND_ASSISTANT);
-  if (!role) return;
+  const { data: profile, error: profileError } = await supabase
+    .from("profiles")
+    .select("id, role, display_name, first_name, last_name")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (profileError || !profile) {
+    console.error("Error loading profile for event creation:", profileError);
+    return res.status(500).json({ error: profileError?.message ?? "Unable to load profile" });
+  }
+
+  if (profile.role !== "admin") {
+    const role = await assertTeamRoleOr403(req, res, teamId, COACH_AND_ASSISTANT);
+    if (!role) return;
+  }
 
   if (!title || typeof title !== "string") {
     return res.status(400).json({ error: "title is required." });
@@ -1647,6 +1886,7 @@ app.post("/teams/:teamId/events", requireAuth, async (req: AuthedRequest, res) =
       end_at: end_at ?? null,
       is_all_day: !!is_all_day,
       location: location ?? null,
+      attachment_url: attachment_url ?? null,
     };
 
     const { data, error } = await supabase
@@ -1659,11 +1899,366 @@ app.post("/teams/:teamId/events", requireAuth, async (req: AuthedRequest, res) =
       console.error("Error inserting event:", error);
       return res.status(500).json({ error: error.message });
     }
+    const members = await getTeamMemberships(teamId);
+    if (members.length > 0) {
+      const invites = members.map((m) => ({
+        event_id: data.id,
+        profile_id: m.profile_id,
+        rsvp_status: "invited" as RSVPStatus,
+      }));
+
+      const { error: inviteError } = await supabase
+        .from("event_attendees")
+        .insert(invites);
+
+      if (inviteError) {
+        console.error("Error inserting event_attendees:", inviteError);
+      }
+    }
+
+    const when = start_at ? new Date(start_at) : null;
+    const whenLabel = when ? when.toLocaleString() : "TBD";
+    const creatorName =
+      profile.display_name ||
+      [profile.first_name, profile.last_name].filter(Boolean).join(" ") ||
+      "Coach";
+    const broadcastContent = [
+      `New event scheduled by ${creatorName}: ${title}`,
+      `When: ${whenLabel}${end_at ? ` (ends ${new Date(end_at).toLocaleString()})` : ""}`,
+      location ? `Where: ${location}` : null,
+      description ? `Details: ${description}` : null,
+      "Please RSVP in the Events tab.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    await sendTeamBroadcastMessage(teamId, userId, broadcastContent);
 
     return res.status(201).json(data);
   } catch (err) {
     console.error("Unexpected error in POST /teams/:teamId/events:", err);
     return res.status(500).json({ error: "Failed to create event" });
+  }
+});
+
+// Load a single event with attendees
+app.get("/events/:eventId", requireAuth, async (req: AuthedRequest, res) => {
+  const { eventId } = req.params;
+  const userId = req.user!.id;
+
+  try {
+    const { data: event, error: eventError } = await supabase
+      .from("events")
+      .select("*")
+      .eq("id", eventId)
+      .maybeSingle();
+
+    if (eventError) {
+      console.error("Error fetching event:", eventError);
+      return res.status(500).json({ error: eventError.message });
+    }
+
+    if (!event) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("id, role")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (profileError || !profile) {
+      console.error("Error loading profile for GET /events/:id:", profileError);
+      return res.status(500).json({ error: profileError?.message ?? "Unable to load profile" });
+    }
+
+    if (profile.role !== "admin") {
+      const role = await getUserTeamRole(userId, event.team_id);
+      if (!role) {
+        return res.status(403).json({ error: "You do not have access to this event" });
+      }
+    }
+
+    const attendeesMap = await fetchEventAttendees([event.id]);
+    const attendees = attendeesMap.get(event.id) ?? [];
+    const myAttendee = attendees.find((a: any) => a.profile_id === userId);
+
+    return res.json({
+      ...event,
+      attendees_by_role: groupAttendeesByRole(attendees),
+      my_rsvp_status: myAttendee?.rsvp_status ?? "invited",
+    });
+  } catch (err) {
+    console.error("Unexpected error in GET /events/:eventId:", err);
+    return res.status(500).json({ error: "Failed to load event" });
+  }
+});
+
+// Update an event and optionally reset RSVPs if schedule changed
+app.patch("/events/:eventId", requireAuth, async (req: AuthedRequest, res) => {
+  const { eventId } = req.params;
+  const userId = req.user!.id;
+  const updates = req.body || {};
+
+  try {
+    const { data: event, error: eventError } = await supabase
+      .from("events")
+      .select("*")
+      .eq("id", eventId)
+      .maybeSingle();
+
+    if (eventError) {
+      console.error("Error fetching event for update:", eventError);
+      return res.status(500).json({ error: eventError.message });
+    }
+
+    if (!event) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("id, role, display_name, first_name, last_name")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (profileError || !profile) {
+      console.error("Error loading profile for PATCH /events/:id:", profileError);
+      return res.status(500).json({ error: profileError?.message ?? "Unable to load profile" });
+    }
+
+    if (profile.role !== "admin") {
+      const role = await getUserTeamRole(userId, event.team_id);
+      if (!role || !COACH_AND_ASSISTANT.includes(role)) {
+        return res.status(403).json({ error: "You do not have permission to edit this event" });
+      }
+    }
+
+    const allowedFields = [
+      "title",
+      "description",
+      "event_type",
+      "start_at",
+      "end_at",
+      "is_all_day",
+      "location",
+      "attachment_url",
+    ];
+
+    const updatePayload: any = {};
+    for (const field of allowedFields) {
+      if (field in updates) {
+        updatePayload[field] = updates[field];
+      }
+    }
+
+    if (Object.keys(updatePayload).length === 0) {
+      return res.status(400).json({ error: "No valid fields to update." });
+    }
+
+    const resetRSVP =
+      ("start_at" in updatePayload && updatePayload.start_at !== event.start_at) ||
+      ("end_at" in updatePayload && updatePayload.end_at !== event.end_at) ||
+      ("location" in updatePayload && updatePayload.location !== event.location);
+
+    const { data: updated, error: updateError } = await supabase
+      .from("events")
+      .update(updatePayload)
+      .eq("id", eventId)
+      .select()
+      .maybeSingle();
+
+    if (updateError) {
+      console.error("Error updating event:", updateError);
+      return res.status(500).json({ error: updateError.message });
+    }
+
+    const members = await getTeamMemberships(event.team_id);
+    if (members.length > 0) {
+      const invites = members.map((m) => ({
+        event_id: eventId,
+        profile_id: m.profile_id,
+        ...(resetRSVP ? { rsvp_status: "invited" as RSVPStatus } : {}),
+      }));
+
+      const { error: upsertError } = await supabase
+        .from("event_attendees")
+        .upsert(invites, { onConflict: "event_id,profile_id" });
+
+      if (upsertError) {
+        console.error("Error syncing event attendees:", upsertError);
+      }
+    }
+
+    if (resetRSVP) {
+      await supabase
+        .from("event_attendees")
+        .update({ rsvp_status: "invited" as RSVPStatus })
+        .eq("event_id", eventId);
+    }
+
+    const when = updated?.start_at ? new Date(updated.start_at) : null;
+    const whenLabel = when ? when.toLocaleString() : "TBD";
+    const creatorName =
+      profile.display_name ||
+      [profile.first_name, profile.last_name].filter(Boolean).join(" ") ||
+      "Coach";
+    const broadcastContent = [
+      `${creatorName} updated the event: ${updated?.title ?? event.title}`,
+      `When: ${whenLabel}${updated?.end_at ? ` (ends ${new Date(updated.end_at).toLocaleString()})` : ""}`,
+      updated?.location ? `Where: ${updated.location}` : null,
+      updated?.description ? `Details: ${updated.description}` : null,
+      resetRSVP
+        ? "Schedule changed — please RSVP again."
+        : "Event details were updated. RSVP status is unchanged.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    await sendTeamBroadcastMessage(event.team_id, userId, broadcastContent);
+
+    const attendeesMap = await fetchEventAttendees([eventId]);
+    const attendees = attendeesMap.get(eventId) ?? [];
+
+    return res.json({
+      ...updated,
+      attendees_by_role: groupAttendeesByRole(attendees),
+      my_rsvp_status: attendees.find((a: any) => a.profile_id === userId)?.rsvp_status ?? "invited",
+    });
+  } catch (err) {
+    console.error("Unexpected error in PATCH /events/:eventId:", err);
+    return res.status(500).json({ error: "Failed to update event" });
+  }
+});
+
+// RSVP to an event
+app.post("/events/:eventId/rsvp", requireAuth, async (req: AuthedRequest, res) => {
+  const { eventId } = req.params;
+  const userId = req.user!.id;
+  const { status } = req.body || {};
+
+  const allowed: RSVPStatus[] = ["invited", "going", "maybe", "declined"];
+  if (typeof status !== "string" || !allowed.includes(status as RSVPStatus)) {
+    return res.status(400).json({ error: "Invalid RSVP status" });
+  }
+
+  try {
+    const { data: event, error: eventError } = await supabase
+      .from("events")
+      .select("id, team_id")
+      .eq("id", eventId)
+      .maybeSingle();
+
+    if (eventError) {
+      console.error("Error loading event for RSVP:", eventError);
+      return res.status(500).json({ error: eventError.message });
+    }
+
+    if (!event) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("id, role")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (profileError || !profile) {
+      console.error("Error loading profile for RSVP:", profileError);
+      return res.status(500).json({ error: profileError?.message ?? "Unable to load profile" });
+    }
+
+    if (profile.role !== "admin") {
+      const role = await getUserTeamRole(userId, event.team_id);
+      if (!role) {
+        return res.status(403).json({ error: "You are not part of this event's team" });
+      }
+    }
+
+    const { data, error } = await supabase
+      .from("event_attendees")
+      .upsert(
+        [
+          {
+            event_id: eventId,
+            profile_id: userId,
+            rsvp_status: status,
+          },
+        ],
+        { onConflict: "event_id,profile_id" }
+      )
+      .select()
+      .maybeSingle();
+
+    if (error) {
+      console.error("Error saving RSVP:", error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    return res.json(data);
+  } catch (err) {
+    console.error("Unexpected error in POST /events/:eventId/rsvp:", err);
+    return res.status(500).json({ error: "Failed to save RSVP" });
+  }
+});
+
+// My events + invites for current user
+app.get("/me/events", requireAuth, async (req: AuthedRequest, res) => {
+  const userId = req.user!.id;
+
+  try {
+    const { data: attendeeRows, error: attendeeError } = await supabase
+      .from("event_attendees")
+      .select("event_id, rsvp_status")
+      .eq("profile_id", userId);
+
+    if (attendeeError) {
+      console.error("Error loading attendee rows for /me/events:", attendeeError);
+      return res.status(500).json({ error: attendeeError.message });
+    }
+
+    const eventIds = Array.from(new Set((attendeeRows ?? []).map((r) => r.event_id)));
+    if (eventIds.length === 0) {
+      return res.json({ attending: [], invites: [] });
+    }
+
+    const { data: events, error: eventsError } = await supabase
+      .from("events")
+      .select("*")
+      .in("id", eventIds);
+
+    if (eventsError) {
+      console.error("Error loading events for /me/events:", eventsError);
+      return res.status(500).json({ error: eventsError.message });
+    }
+
+    const attendeeMap = new Map<string, RSVPStatus>();
+    for (const row of attendeeRows ?? []) {
+      attendeeMap.set(row.event_id, row.rsvp_status as RSVPStatus);
+    }
+
+    const attending = [] as any[];
+    const invites = [] as any[];
+
+    for (const event of events ?? []) {
+      const status = attendeeMap.get(event.id) ?? "invited";
+      const entry = { ...event, my_rsvp_status: status };
+      if (status === "invited") {
+        invites.push(entry);
+      } else {
+        attending.push(entry);
+      }
+    }
+
+    attending.sort((a, b) => a.start_at.localeCompare(b.start_at));
+    invites.sort((a, b) => a.start_at.localeCompare(b.start_at));
+
+    return res.json({ attending, invites });
+  } catch (err) {
+    console.error("Unexpected error in GET /me/events:", err);
+    return res.status(500).json({ error: "Failed to load your events" });
   }
 });
 
@@ -9590,40 +10185,28 @@ app.post("/conversations", requireAuth, async (req: AuthedRequest, res) => {
   }
 
   try {
-    // Load current user's profile + team roles
-    const [{ data: profile, error: profileError }, { data: userTeams, error: userTeamsError }] =
-      await Promise.all([
-        supabase.from("profiles").select("id, role").eq("id", userId).maybeSingle(),
-        supabase.from("user_team_roles").select("team_id, role").eq("user_id", userId),
-      ]);
+    // Load current user's profile + team roles (including parent-linked teams)
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("id, role")
+      .eq("id", userId)
+      .maybeSingle();
 
     if (profileError || !profile) {
       console.error("Error fetching profile for conversation:", profileError);
       return res.status(500).json({ error: profileError?.message ?? "Unable to load profile" });
     }
 
-    if (userTeamsError) {
-      console.error("Error fetching user teams for conversation:", userTeamsError);
-      return res.status(500).json({ error: userTeamsError.message });
-    }
-
-    const myTeamIds = (userTeams ?? []).map((t: any) => t.team_id);
-
-    // Load participant team memberships limited to the user's teams
     const participantIds = Array.from(participants).filter((id) => id !== userId);
-    const { data: participantRoles, error: participantRolesError } = await supabase
-      .from("user_team_roles")
-      .select("user_id, team_id, role")
-      .in("user_id", participantIds.length > 0 ? participantIds : ["00000000-0000-0000-0000-000000000000"])
-      .in("team_id", myTeamIds.length > 0 ? myTeamIds : ["00000000-0000-0000-0000-000000000000"]);
+    const allRoles = await getTeamRolesForUsers([userId, ...participantIds]);
+    const myTeamIds = allRoles
+      .filter((r) => r.user_id === userId)
+      .map((t) => t.team_id);
 
-    if (participantRolesError) {
-      console.error("Error fetching participant team roles:", participantRolesError);
-      return res.status(500).json({ error: participantRolesError.message });
-    }
-
+    // Limit participant roles to teams the current user is part of
     const participantsByUser = new Map<string, { team_id: string; role: string }[]>();
-    for (const row of participantRoles ?? []) {
+    for (const row of allRoles ?? []) {
+      if (!myTeamIds.includes(row.team_id)) continue;
       const existing = participantsByUser.get(row.user_id) ?? [];
       existing.push({ team_id: row.team_id, role: row.role });
       participantsByUser.set(row.user_id, existing);
