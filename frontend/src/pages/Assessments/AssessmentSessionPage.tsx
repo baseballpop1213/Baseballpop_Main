@@ -150,6 +150,15 @@ const PITCH_MATRIX_CONFIG: Record<string, { pitchCount: number }> = {
   tpitch5ap5: { pitchCount: 5 },
 };
 
+const ADDITIONAL_PITCH_METRIC_KEYS = new Set<string>([
+  "tpitch5ap1",
+  "tpitch5ap2",
+  "tpitch5ap3",
+  "tpitch5ap4",
+  "tpitch5ap5",
+]);
+
+
 
 // Options for each pitch: same 0/1/3 rubric across command tests
 const PITCH_COMMAND_OPTIONS: HittingSwingOption[] = [
@@ -219,7 +228,6 @@ const ATHLETIC_METRIC_KEYS: Record<AthleticBlock, Set<string>> = {
     "asp_jump_inches",
     "aspscp_distance_ft",
     "aspsup_distance_ft",
-    "apull_60",
   ]),
   balance: new Set<string>([
     "sls_eyes_open_right",
@@ -227,12 +235,7 @@ const ATHLETIC_METRIC_KEYS: Record<AthleticBlock, Set<string>> = {
     "sls_eyes_closed_right",
     "sls_eyes_closed_left",
   ]),
-  mobility: new Set<string>([
-    "msr_right",
-    "msr_left",
-    "toe_touch",
-    "deep_squat",
-  ]),
+  mobility: new Set<string>(["msr_right", "msr_left", "toe_touch", "deep_squat"]),
 };
 
 // Helper metrics that should not render as standalone grid rows
@@ -1025,7 +1028,7 @@ export default function AssessmentSessionPage() {
             }
 
             // Show only metrics for the active Athletic section
-            return blockKeys.has(metricKey);
+            return metricKey ? blockKeys.has(metricKey) : false;
           });
 
           return {
@@ -1083,10 +1086,33 @@ export default function AssessmentSessionPage() {
       return groups;
     }
 
-    // -------------------------------
     // PITCHING – hide extra matrices until added or filled
-    // -------------------------------
     if (effectiveEvalType === "pitching") {
+      const metricHasAnyValue = (metric: AssessmentMetric) => {
+        if (!sessionData?.values) return false;
+
+        const metricId = metric.id;
+        const values = sessionData.values as any;
+
+        for (const col of gridColumns) {
+          const perPlayer = values[col.id] || {};
+          const v = perPlayer[metricId];
+          const numeric = v?.value_numeric;
+          const text = v?.value_text;
+
+          if (
+            (numeric !== null &&
+              numeric !== undefined &&
+              !Number.isNaN(numeric)) ||
+            (text !== null && text !== undefined && String(text).trim() !== "")
+          ) {
+            return true;
+          }
+        }
+
+        return false;
+      };
+
       groups = groups
         .map((group) => {
           const filtered = group.metrics.filter((m) => {
@@ -1109,6 +1135,7 @@ export default function AssessmentSessionPage() {
 
       return groups;
     }
+
 
     // -------------------------------
     // FIRST BASE – Catching vs Fielding tabs
@@ -1172,7 +1199,6 @@ export default function AssessmentSessionPage() {
   );
 
 
-  
 
   const computeMetricsCompletion = useCallback(
     (metricList: AssessmentMetric[]) => {
@@ -2113,6 +2139,54 @@ export default function AssessmentSessionPage() {
     setDirty(true);
   }
 
+  function handleRemoveExtraPitchMatrix(metricId: number, metricKey: string) {
+    if (!sessionData || isFinalized) return;
+
+    setSessionData((prev) => {
+      if (!prev) return prev;
+
+      const values = { ...(prev.values || {}) } as any;
+      let changed = false;
+
+      for (const col of gridColumns) {
+        const playerId = col.id;
+        const byPlayer = { ...(values[playerId] || {}) };
+
+        if (byPlayer[metricId]) {
+          delete byPlayer[metricId];
+          changed = true;
+        }
+
+        if (Object.keys(byPlayer).length === 0) {
+          delete values[playerId];
+        } else {
+          values[playerId] = byPlayer;
+        }
+      }
+
+      const nextCompleted = (prev.completed_metric_ids || []).filter(
+        (id) => id !== metricId
+      );
+
+      if (!changed && nextCompleted.length === (prev.completed_metric_ids || []).length) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        values,
+        completed_metric_ids: nextCompleted,
+      };
+    });
+
+    setVisibleExtraPitchMatrices((prev) =>
+      prev.filter((key) => key !== metricKey)
+    );
+
+    setDirty(true);
+  }
+
+  
   async function handleAddTryoutPlayerInSession() {
     if (!session || !sessionData) return;
     if (!isTryoutSession || isFinalized) return;
