@@ -1,0 +1,309 @@
+//player_profiles table structure
+
+[
+  {
+    "column_name": "profile_id",
+    "data_type": "uuid",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "NO",
+    "column_default": null
+  },
+  {
+    "column_name": "height_inches",
+    "data_type": "integer",
+    "character_maximum_length": null,
+    "numeric_precision": 32,
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "weight_lbs",
+    "data_type": "integer",
+    "character_maximum_length": null,
+    "numeric_precision": 32,
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "school",
+    "data_type": "text",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "grade",
+    "data_type": "text",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "home_address",
+    "data_type": "text",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "positions",
+    "data_type": "ARRAY",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "YES",
+    "column_default": "'{}'::text[]"
+  },
+  {
+    "column_name": "pitches",
+    "data_type": "ARRAY",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "YES",
+    "column_default": "'{}'::text[]"
+  },
+  {
+    "column_name": "batting_hand",
+    "data_type": "text",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "throwing_hand",
+    "data_type": "text",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "primary_jersey_number",
+    "data_type": "integer",
+    "character_maximum_length": null,
+    "numeric_precision": 32,
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "walk_up_song",
+    "data_type": "text",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "glove_brand",
+    "data_type": "text",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "glove_size_inches",
+    "data_type": "numeric",
+    "character_maximum_length": null,
+    "numeric_precision": 4,
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "bat_length_inches",
+    "data_type": "numeric",
+    "character_maximum_length": null,
+    "numeric_precision": 4,
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "bat_weight_oz",
+    "data_type": "numeric",
+    "character_maximum_length": null,
+    "numeric_precision": 4,
+    "is_nullable": "YES",
+    "column_default": null
+  }
+]
+
+//player_parent_links table structure
+
+[
+  {
+    "column_name": "id",
+    "data_type": "bigint",
+    "character_maximum_length": null,
+    "numeric_precision": 64,
+    "is_nullable": "NO",
+    "column_default": "nextval('player_parent_links_id_seq'::regclass)"
+  },
+  {
+    "column_name": "player_id",
+    "data_type": "uuid",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "NO",
+    "column_default": null
+  },
+  {
+    "column_name": "parent_id",
+    "data_type": "uuid",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "NO",
+    "column_default": null
+  },
+  {
+    "column_name": "created_at",
+    "data_type": "timestamp with time zone",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "NO",
+    "column_default": "now()"
+  }
+]
+
+//parent_child_links table structure
+
+[
+  {
+    "column_name": "id",
+    "data_type": "bigint",
+    "character_maximum_length": null,
+    "numeric_precision": 64,
+    "is_nullable": "NO",
+    "column_default": "nextval('parent_child_links_id_seq'::regclass)"
+  },
+  {
+    "column_name": "parent_profile_id",
+    "data_type": "uuid",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "NO",
+    "column_default": null
+  },
+  {
+    "column_name": "child_profile_id",
+    "data_type": "uuid",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "NO",
+    "column_default": null
+  },
+  {
+    "column_name": "relationship",
+    "data_type": "text",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "created_at",
+    "data_type": "timestamp with time zone",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "YES",
+    "column_default": "now()"
+  }
+]
+
+//coach_profiles table structure
+
+[
+  {
+    "column_name": "profile_id",
+    "data_type": "uuid",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "NO",
+    "column_default": null
+  },
+  {
+    "column_name": "phone",
+    "data_type": "text",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "organization",
+    "data_type": "text",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "title",
+    "data_type": "text",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "years_experience",
+    "data_type": "integer",
+    "character_maximum_length": null,
+    "numeric_precision": 32,
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "bio",
+    "data_type": "text",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "city",
+    "data_type": "text",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "state",
+    "data_type": "text",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "postal_code",
+    "data_type": "text",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "created_at",
+    "data_type": "timestamp with time zone",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "YES",
+    "column_default": "now()"
+  },
+  {
+    "column_name": "updated_at",
+    "data_type": "timestamp with time zone",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "is_nullable": "YES",
+    "column_default": "now()"
+  }
+]
+
+
