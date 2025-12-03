@@ -2064,9 +2064,21 @@ export default function StatsPage() {
     ];
 
     const normalizeDateOnly = (value: string) => {
-      const d = new Date(value);
-      return Number.isNaN(d.getTime()) ? value : d.toISOString().slice(0, 10);
+      const match = value.match(/^(\d{4}-\d{2}-\d{2})/);
+      return match ? match[1] : value;
     };
+
+    const formatDateLabel = (dateOnly: string) => {
+      // Force midday UTC to avoid off‑by‑one issues
+      const d = new Date(`${dateOnly}T12:00:00Z`);
+      if (Number.isNaN(d.getTime())) return dateOnly;
+      return d.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      });
+    };
+
 
     const buildTemplateKey = (
       templateId?: number | null,
@@ -2119,31 +2131,21 @@ export default function StatsPage() {
     }
 
     const dated = Array.from(dedupedByAssessment.values())
-      .sort(
-        (a, b) =>
-          new Date(b.performed_at).getTime() - new Date(a.performed_at).getTime()
-      )
-      .map((ev) => {
-        const date = new Date(ev.performed_at);
-        const dateLabel = Number.isNaN(date.getTime())
-          ? ev.performed_at
-          : date.toLocaleDateString(undefined, {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            });
+    .sort((a, b) => b.performed_at.localeCompare(a.performed_at))
+    .map((ev) => {
+      const dateLabel = formatDateLabel(ev.performed_at);
+      const typeLabel =
+        (ev.template_name && ev.template_name.trim()) ||
+        formatKindLabel(ev.kind);
+      const label = typeLabel ? `${dateLabel} — ${typeLabel}` : dateLabel;
 
-        const typeLabel =
-          (ev.template_name && ev.template_name.trim()) || formatKindLabel(ev.kind);
-        const label = typeLabel ? `${dateLabel} — ${typeLabel}` : dateLabel;
-
-        return {
-          key: ev.id || `assessment-${ev.performed_at}`,
-          label,
-          evalScope: "specific" as TeamEvalScope,
-          assessmentDate: ev.performed_at,
-        } satisfies EvaluationSelectOption;
-      });
+      return {
+        key: ev.id || `assessment-${ev.performed_at}`,
+        label,
+        evalScope: "specific" as TeamEvalScope,
+        assessmentDate: ev.performed_at,
+      };
+    });
 
     return [...base, ...dated];
   }, [teamEvaluations]);

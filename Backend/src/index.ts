@@ -3356,19 +3356,25 @@ interface TeamAssessmentMeta {
   }[];
 }
 
-function normalizeIsoDate(value: string | null | undefined): string | null {
+function extractDatePart(value: string | null | undefined): string | null {
   if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toISOString();
+  const s = String(value);
+  // Handles "YYYY-MM-DD", "YYYY-MM-DDTHH:MM:SSZ", "YYYY-MM-DD HH:MM:SS+00", etc.
+  const match = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : null;
+}
+
+function normalizeIsoDate(value: string | null | undefined): string | null {
+  const dateOnly = extractDatePart(value);
+  if (!dateOnly) return null;
+  // We just need a consistent ISO string; fix it at midnight UTC
+  return `${dateOnly}T00:00:00.000Z`;
 }
 
 function normalizeDateOnly(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toISOString().slice(0, 10);
+  return extractDatePart(value);
 }
+
 
 async function loadTeamAssessmentMeta(
   teamId: string
@@ -3436,9 +3442,10 @@ async function loadTeamAssessmentMeta(
     template_name: a.template_id ? templateNames.get(a.template_id) ?? null : null,
   }));
 
-  const orderedDates = Array.from(new Set(dates)).sort(
-    (a, b) => new Date(b).getTime() - new Date(a).getTime()
+  const orderedDates = Array.from(new Set(dates)).sort((a, b) =>
+    b.localeCompare(a)
   );
+
 
   return {
     byAssessmentId,
@@ -3475,7 +3482,7 @@ function resolveLatestAssessmentDate(
 
   if (!dates.length) return null;
 
-  return dates.sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0];
+  return dates.sort((a, b) => b.localeCompare(a))[0];
 }
 
 function mergeBestValues(a: any, b: any): any {
@@ -9876,7 +9883,7 @@ app.get("/teams/:teamId/stats/evaluations", async (req, res) => {
     };
 
     const evaluations = Array.from(groupedByDateAndTemplate.values())
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .sort((a, b) => b.date.localeCompare(a.date))
       .map((entry) => {
         const id = `${entry.date}|${buildTemplateKey(
           entry.template_id,
