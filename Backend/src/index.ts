@@ -1240,7 +1240,15 @@ type PublicRole = "player" | "parent" | "coach";
 
 app.post("/accounts/basic", requireAuth, async (req: AuthedRequest, res) => {
   const userId = req.user!.id;
-  const { role, display_name, first_name, last_name } = req.body || {};
+  const {
+    role,
+    display_name,
+    first_name,
+    last_name,
+    phone,
+    organization,
+    email,
+  } = req.body || {};
 
   const allowedRoles: PublicRole[] = ["player", "parent", "coach"];
 
@@ -1260,18 +1268,61 @@ app.post("/accounts/basic", requireAuth, async (req: AuthedRequest, res) => {
     });
   }
 
+  if (!email || typeof email !== "string" || !email.trim()) {
+    return res.status(400).json({
+      error: "email is required and must be a non-empty string.",
+    });
+  }
+
+  if (role === "coach") {
+    if (!first_name || typeof first_name !== "string" || !first_name.trim()) {
+      return res.status(400).json({
+        error: "Coaches must provide a first_name.",
+      });
+    }
+
+    if (!last_name || typeof last_name !== "string" || !last_name.trim()) {
+      return res.status(400).json({
+        error: "Coaches must provide a last_name.",
+      });
+    }
+
+    if (!phone || typeof phone !== "string" || !phone.trim()) {
+      return res.status(400).json({
+        error: "Coaches must provide a phone.",
+      });
+    }
+
+    if (!organization || typeof organization !== "string" || !organization.trim()) {
+      return res.status(400).json({
+        error: "Coaches must provide an organization.",
+      });
+    }
+  } else {
+    if (!first_name || typeof first_name !== "string" || !first_name.trim()) {
+      return res.status(400).json({
+        error: "Please include a first_name for this account.",
+      });
+    }
+
+    if (!last_name || typeof last_name !== "string" || !last_name.trim()) {
+      return res.status(400).json({
+        error: "Please include a last_name for this account.",
+      });
+    }
+  }
+
   const payload: any = {
     id: userId,
     role, // "player" | "parent" | "coach"
     display_name: display_name.trim(),
+    email: email.trim(),
+    first_name: (first_name as string).trim(),
+    last_name: (last_name as string).trim(),
   };
 
-  if (typeof first_name === "string") {
-    payload.first_name = first_name.trim() || null;
-  }
-
-  if (typeof last_name === "string") {
-    payload.last_name = last_name.trim() || null;
+  if (typeof phone === "string") {
+    payload.phone = phone.trim() || null;
   }
 
   try {
@@ -1284,6 +1335,38 @@ app.post("/accounts/basic", requireAuth, async (req: AuthedRequest, res) => {
     if (error) {
       console.error("Error upserting basic profile:", error);
       return res.status(500).json({ error: error.message });
+    }
+
+    if (role === "player") {
+      const { error: ppError } = await supabase
+        .from("player_profiles")
+        .upsert({ profile_id: userId }, { onConflict: "profile_id" });
+
+      if (ppError) {
+        console.error("Error ensuring player_profiles row:", ppError);
+        return res.status(500).json({ error: ppError.message });
+      }
+    }
+
+    if (role === "coach") {
+      const coachPayload: any = { profile_id: userId };
+
+      if (typeof phone === "string") {
+        coachPayload.phone = phone.trim() || null;
+      }
+
+      if (typeof organization === "string") {
+        coachPayload.organization = organization.trim() || null;
+      }
+
+      const { error: cpError } = await supabase
+        .from("coach_profiles")
+        .upsert(coachPayload, { onConflict: "profile_id" });
+
+      if (cpError) {
+        console.error("Error ensuring coach_profiles row:", cpError);
+        return res.status(500).json({ error: cpError.message });
+      }
     }
 
     return res.status(200).json(data);
