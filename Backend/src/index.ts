@@ -538,6 +538,38 @@ app.get("/", (_req, res) => {
  * Get current user's profile from the "profiles" table.
  * Requires Authorization: Bearer <Supabase access token>
  */
+/**
+ * Get current user's profile from the "profiles" table.
+ * Requires Authorization: Bearer <Supabase access token>
+ * Supports both /me and /api/me so it works whether we call backend directly
+ * or via the Vite /api proxy.
+ */
+async function getCurrentUserProfile(req: AuthedRequest, res: any) {
+  const userId = req.user!.id;
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Error fetching profile:", error);
+    return res.status(500).json({ error: error.message });
+  }
+
+  if (!data) {
+    // Logged-in, but no profile row yet
+    return res.status(404).json({ error: "Profile not found" });
+  }
+
+  return res.json(data);
+}
+
+/**
+ * Get current user's profile from the "profiles" table.
+ * Requires Authorization: Bearer <Supabase access token>
+ */
 app.get("/me", requireAuth, async (req: AuthedRequest, res) => {
   const userId = req.user!.id;
 
@@ -1142,54 +1174,7 @@ app.get("/me/coach-profile", requireAuth, async (req: AuthedRequest, res) => {
   }
 });
 
-/**
- * Get the current user's extended coach profile.
- * - Requires: Authorization: Bearer <Supabase access token>
- * - Only works if profiles.role is 'coach' or 'assistant'
- */
-app.get("/me/coach-profile", requireAuth, async (req: AuthedRequest, res) => {
-  const userId = req.user!.id;
 
-  try {
-    // 1) Load base profile
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("id, role, display_name, first_name, last_name, avatar_url, created_at, updated_at")
-      .eq("id", userId)
-      .single();
-
-    if (profileError || !profile) {
-      console.error("Error fetching base profile in GET /me/coach-profile:", profileError);
-      return res.status(500).json({ error: profileError?.message ?? "Failed to load profile" });
-    }
-
-    if (profile.role !== "coach" && profile.role !== "assistant") {
-      return res.status(403).json({
-        error: "This endpoint is only available for coach/assistant accounts.",
-      });
-    }
-
-    // 2) Load coach-specific profile (may or may not exist yet)
-    const { data: coachProfile, error: cpError } = await supabase
-      .from("coach_profiles")
-      .select("*")
-      .eq("profile_id", userId)
-      .maybeSingle();
-
-    if (cpError) {
-      console.error("Error fetching coach_profiles in GET /me/coach-profile:", cpError);
-      return res.status(500).json({ error: cpError.message });
-    }
-
-    return res.json({
-      profile,
-      coach_profile: coachProfile, // may be null if not created yet
-    });
-  } catch (err) {
-    console.error("Unexpected error in GET /me/coach-profile:", err);
-    return res.status(500).json({ error: "Failed to load coach profile" });
-  }
-});
 
 /**
  * Create or update the current coach's extended profile in coach_profiles.

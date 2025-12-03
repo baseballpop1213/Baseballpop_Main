@@ -13,18 +13,18 @@ export default defineConfig({
       clientPort: 443,
     },
     proxy: {
+      // All frontend API calls go to /api/... which Vite forwards to the backend.
+      // We strip the /api prefix so the backend sees /me, /me/teams, /coach/my-teams, etc.
       '/api': {
         target: 'http://localhost:3000',
         changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ''),
       },
+      // Optional: keep health check going directly to the backend
       '/health': {
         target: 'http://localhost:3000',
         changeOrigin: true,
       },
-      '/me': {
-        target: 'http://localhost:3000',
-        changeOrigin: true,
-      }
-    }
+    },
   },
 })
