@@ -70,6 +70,11 @@ export default function SignupPage() {
         setError("Select at least one level you coach.");
         return;
       }
+    } else {
+      if (!form.firstName || !form.lastName) {
+        setError("Please provide your first and last name.");
+        return;
+      }
     }
 
     setLoading(true);
@@ -87,15 +92,38 @@ export default function SignupPage() {
         },
       });
 
-      if (signUpError || !data.session) {
+      let session = data.session;
+
+      // If Supabase email confirmation is enabled, we won't get a session back yet.
+      // Attempt a follow-up sign-in to establish a session so the backend call is authorized.
+      if (!session && !signUpError) {
+        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+          email: form.email,
+          password: form.password,
+        });
+
+        if (signInError) {
+          throw new Error(
+            signInError.message ||
+              "Please confirm your email (if required) before continuing."
+          );
+        }
+
+        session = signInData.session;
+      }
+
+      if (signUpError || !session) {
         throw new Error(signUpError?.message || "Unable to sign up");
       }
 
       await createBasicAccount({
         role: form.role,
         display_name: displayName,
+        email: form.email,
         first_name: form.firstName || null,
         last_name: form.lastName || null,
+        phone: form.phone || null,
+        organization: form.organization || null,
       });
 
       // Coach extra metadata can be captured later in profile page; we only ensure session + profile row now
@@ -190,6 +218,7 @@ export default function SignupPage() {
               className="w-full rounded-lg bg-slate-900/60 border border-slate-700 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
               value={form.firstName}
               onChange={(e) => setForm((f) => ({ ...f, firstName: e.target.value }))}
+              required={!isCoach}
             />
           </div>
           <div>
@@ -199,6 +228,7 @@ export default function SignupPage() {
               className="w-full rounded-lg bg-slate-900/60 border border-slate-700 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
               value={form.lastName}
               onChange={(e) => setForm((f) => ({ ...f, lastName: e.target.value }))}
+              required={!isCoach}
             />
           </div>
 
@@ -211,6 +241,7 @@ export default function SignupPage() {
                   className="w-full rounded-lg bg-slate-900/60 border border-slate-700 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
                   value={form.phone}
                   onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+                  required={isCoach}
                 />
               </div>
               <div>
@@ -221,6 +252,7 @@ export default function SignupPage() {
                   value={form.organization}
                   onChange={(e) => setForm((f) => ({ ...f, organization: e.target.value }))}
                   placeholder="Ripit Raptors, Smoky High School, etc."
+                  required={isCoach}
                 />
               </div>
               <div className="md:col-span-2">

@@ -55,8 +55,11 @@ export interface ParentChildLink {
 export interface CreateAccountPayload {
   role: "player" | "parent" | "coach";
   display_name: string;
+  email: string;
   first_name?: string | null;
   last_name?: string | null;
+  phone?: string | null;
+  organization?: string | null;
 }
 
 export interface UpdateBasicProfilePayload {
