@@ -592,6 +592,42 @@ app.get("/me", requireAuth, async (req: AuthedRequest, res) => {
   return res.json(data);
 });
 
+// Fetch a team's members (profiles + role) for messaging/roster views
+app.get(
+  "/teams/:teamId/members",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    const { teamId } = req.params;
+
+    const role = await assertTeamRoleOr403(req, res, teamId, ANY_MEMBER);
+    if (!role) return;
+
+    try {
+      const { data, error } = await supabase
+        .from("user_team_roles")
+        .select(
+          "team_id, role, user_id, profiles:profiles(id, display_name, first_name, last_name, avatar_url, email)"
+        )
+        .eq("team_id", teamId)
+        .order("role", { ascending: true })
+        .order("user_id", { ascending: true });
+
+      if (error) {
+        console.error("Error fetching team members:", error);
+        return res.status(500).json({ error: error.message });
+      }
+
+      return res.json({
+        team_id: teamId,
+        members: data ?? [],
+      });
+    } catch (err) {
+      console.error("Unexpected error in GET /teams/:teamId/members:", err);
+      return res.status(500).json({ error: "Failed to load team members" });
+    }
+  }
+);
+
 
 // List all teams this user is attached to (coach/assistant/player/parent)
 app.get("/coach/my-teams", requireAuth, async (req: AuthedRequest, res) => {
@@ -9439,12 +9475,12 @@ app.delete(
 );
 
 
-// Get all conversations the current user participates in
+// Get all conversations the current user participates in, including participants
+// and the most recent message for quick previews.
 app.get("/conversations", requireAuth, async (req: AuthedRequest, res) => {
   const userId = req.user!.id;
 
   try {
-    // 1) Find all conversation_ids where this profile is a participant
     const { data: participantRows, error: cpError } = await supabase
       .from("conversation_participants")
       .select("conversation_id")
@@ -9461,7 +9497,6 @@ app.get("/conversations", requireAuth, async (req: AuthedRequest, res) => {
 
     const conversationIds = participantRows.map((r) => r.conversation_id);
 
-    // 2) Load conversations
     const { data: conversations, error: convError } = await supabase
       .from("conversations")
       .select("*")
@@ -9473,25 +9508,67 @@ app.get("/conversations", requireAuth, async (req: AuthedRequest, res) => {
       return res.status(500).json({ error: convError.message });
     }
 
-    return res.json(conversations ?? []);
+    const { data: participantDetails, error: detailsError } = await supabase
+      .from("conversation_participants")
+      .select(
+        "conversation_id, profile:profiles(id, display_name, first_name, last_name, role, avatar_url, email)"
+      )
+      .in("conversation_id", conversationIds);
+
+    if (detailsError) {
+      console.error("Error fetching participant details:", detailsError);
+      return res.status(500).json({ error: detailsError.message });
+    }
+
+    const participantsByConversation = new Map<string, any[]>();
+    for (const row of participantDetails ?? []) {
+      const existing = participantsByConversation.get(row.conversation_id) ?? [];
+      existing.push(row.profile);
+      participantsByConversation.set(row.conversation_id, existing);
+    }
+
+    const lastMessageMap = new Map<string, any | null>();
+    for (const convo of conversations ?? []) {
+      const { data: lastMessage } = await supabase
+        .from("messages")
+        .select("id, conversation_id, sender_id, content, created_at")
+        .eq("conversation_id", convo.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      lastMessageMap.set(convo.id, lastMessage ?? null);
+    }
+
+    const payload = (conversations ?? []).map((convo: any) => ({
+      ...convo,
+      participants: participantsByConversation.get(convo.id) ?? [],
+      last_message: lastMessageMap.get(convo.id) ?? null,
+    }));
+
+    return res.json(payload);
   } catch (err) {
     console.error("Unexpected error in GET /conversations:", err);
     return res.status(500).json({ error: "Failed to load conversations" });
   }
 });
 
+// Enforce role-aware rules when creating a conversation
 app.post("/conversations", requireAuth, async (req: AuthedRequest, res) => {
   const userId = req.user!.id;
   const { type, title, team_id, participant_ids } = req.body || {};
 
   if (!type || typeof type !== "string") {
-    return res.status(400).json({ error: "type is required (e.g. 'direct', 'group', 'team')" });
+    return res
+      .status(400)
+      .json({ error: "type is required (e.g. 'direct', 'group', 'team')" });
   }
 
-  // Basic guard; you can tighten allowed types later if you want.
   const validTypes = ["direct", "group", "team"];
   if (!validTypes.includes(type)) {
-    return res.status(400).json({ error: `type must be one of: ${validTypes.join(", ")}` });
+    return res
+      .status(400)
+      .json({ error: `type must be one of: ${validTypes.join(", ")}` });
   }
 
   // Build unique participant set: current user + any additional IDs
@@ -9507,19 +9584,105 @@ app.post("/conversations", requireAuth, async (req: AuthedRequest, res) => {
   }
 
   if (participants.size < 2 && type === "direct") {
-    return res
-      .status(400)
-      .json({ error: "Direct conversations should include at least 2 participants" });
+    return res.status(400).json({
+      error: "Direct conversations should include at least 2 participants",
+    });
   }
 
   try {
+    // Load current user's profile + team roles
+    const [{ data: profile, error: profileError }, { data: userTeams, error: userTeamsError }] =
+      await Promise.all([
+        supabase.from("profiles").select("id, role").eq("id", userId).maybeSingle(),
+        supabase.from("user_team_roles").select("team_id, role").eq("user_id", userId),
+      ]);
+
+    if (profileError || !profile) {
+      console.error("Error fetching profile for conversation:", profileError);
+      return res.status(500).json({ error: profileError?.message ?? "Unable to load profile" });
+    }
+
+    if (userTeamsError) {
+      console.error("Error fetching user teams for conversation:", userTeamsError);
+      return res.status(500).json({ error: userTeamsError.message });
+    }
+
+    const myTeamIds = (userTeams ?? []).map((t: any) => t.team_id);
+
+    // Load participant team memberships limited to the user's teams
+    const participantIds = Array.from(participants).filter((id) => id !== userId);
+    const { data: participantRoles, error: participantRolesError } = await supabase
+      .from("user_team_roles")
+      .select("user_id, team_id, role")
+      .in("user_id", participantIds.length > 0 ? participantIds : ["00000000-0000-0000-0000-000000000000"])
+      .in("team_id", myTeamIds.length > 0 ? myTeamIds : ["00000000-0000-0000-0000-000000000000"]);
+
+    if (participantRolesError) {
+      console.error("Error fetching participant team roles:", participantRolesError);
+      return res.status(500).json({ error: participantRolesError.message });
+    }
+
+    const participantsByUser = new Map<string, { team_id: string; role: string }[]>();
+    for (const row of participantRoles ?? []) {
+      const existing = participantsByUser.get(row.user_id) ?? [];
+      existing.push({ team_id: row.team_id, role: row.role });
+      participantsByUser.set(row.user_id, existing);
+    }
+
+    const allowedPlayerTargets = new Set(["player", "coach", "assistant"]);
+    const allowedStaffTargets = new Set(["player", "parent", "assistant", "coach"]);
+
+    // Determine a common team (if required) for participant set
+    function findCommonTeam(allowedRoles: Set<string>): string | null {
+      for (const teamId of myTeamIds) {
+        const allValid = participantIds.every((pid) => {
+          const roles = participantsByUser.get(pid) ?? [];
+          return roles.some((r) => r.team_id === teamId && allowedRoles.has(r.role));
+        });
+        if (allValid) return teamId;
+      }
+      return null;
+    }
+
+    let enforcedTeamId: string | null = null;
+    if (profile.role === "player" || profile.role === "parent") {
+      enforcedTeamId = findCommonTeam(allowedPlayerTargets);
+      if (!enforcedTeamId) {
+        return res.status(403).json({
+          error: "You can only message teammates and coaches/assistants from the same team.",
+        });
+      }
+    } else if (profile.role === "assistant") {
+      enforcedTeamId = findCommonTeam(allowedStaffTargets);
+      if (!enforcedTeamId) {
+        return res.status(403).json({
+          error: "Assistants can only start chats with members of the same team.",
+        });
+      }
+    } else if (profile.role === "coach") {
+      for (const pid of participantIds) {
+        const roles = participantsByUser.get(pid) ?? [];
+        const hasSharedTeam = roles.some((r) => myTeamIds.includes(r.team_id));
+        if (!hasSharedTeam) {
+          return res.status(403).json({
+            error: "Coaches can only message members of their teams.",
+          });
+        }
+      }
+    }
+
+    const resolvedTeamId = team_id ?? enforcedTeamId ?? null;
+    if (resolvedTeamId && !myTeamIds.includes(resolvedTeamId)) {
+      return res.status(403).json({ error: "You are not a member of that team." });
+    }
+
     // 1) Create the conversation
     const { data: convo, error: convoError } = await supabase
       .from("conversations")
       .insert([
         {
           type,
-          team_id: team_id ?? null,
+          team_id: resolvedTeamId,
           created_by: userId,
           title: title ?? null,
         },
@@ -9583,7 +9746,9 @@ app.get(
       }
 
       if (!membership) {
-        return res.status(403).json({ error: "You are not a participant in this conversation" });
+        return res
+          .status(403)
+          .json({ error: "You are not a participant in this conversation" });
       }
 
       // 2) Load messages
@@ -9598,7 +9763,34 @@ app.get(
         return res.status(500).json({ error: messagesError.message });
       }
 
-      return res.json(messages ?? []);
+      const messageIds = (messages ?? []).map((m: any) => m.id);
+      const { data: attachments, error: attachmentsError } = await supabase
+        .from("message_attachments")
+        .select("*")
+        .in(
+          "message_id",
+          messageIds.length > 0 ? messageIds : ["00000000-0000-0000-0000-000000000000"]
+        )
+        .order("created_at", { ascending: true });
+
+      if (attachmentsError) {
+        console.error("Error fetching attachments:", attachmentsError);
+        return res.status(500).json({ error: attachmentsError.message });
+      }
+
+      const attachmentsByMessage = new Map<string, any[]>();
+      for (const attachment of attachments ?? []) {
+        const existing = attachmentsByMessage.get(attachment.message_id) ?? [];
+        existing.push(attachment);
+        attachmentsByMessage.set(attachment.message_id, existing);
+      }
+
+      const withAttachments = (messages ?? []).map((m: any) => ({
+        ...m,
+        attachments: attachmentsByMessage.get(m.id) ?? [],
+      }));
+
+      return res.json(withAttachments);
     } catch (err) {
       console.error("Unexpected error in GET /conversations/:id/messages:", err);
       return res.status(500).json({ error: "Failed to load messages" });
@@ -9666,6 +9858,50 @@ app.post(
     } catch (err) {
       console.error("Unexpected error in POST /conversations/:id/messages:", err);
       return res.status(500).json({ error: "Failed to send message" });
+    }
+  }
+);
+
+// Allow a participant to leave a conversation (used by players/parents to clean up chats)
+app.delete(
+  "/conversations/:conversationId/participants/me",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    const userId = req.user!.id;
+    const { conversationId } = req.params;
+
+    try {
+      const { data: membership, error: membershipError } = await supabase
+        .from("conversation_participants")
+        .select("id")
+        .eq("conversation_id", conversationId)
+        .eq("profile_id", userId)
+        .maybeSingle();
+
+      if (membershipError) {
+        console.error("Error checking conversation membership before delete:", membershipError);
+        return res.status(500).json({ error: membershipError.message });
+      }
+
+      if (!membership) {
+        return res.status(404).json({ error: "You are not part of this conversation" });
+      }
+
+      const { error: deleteError } = await supabase
+        .from("conversation_participants")
+        .delete()
+        .eq("conversation_id", conversationId)
+        .eq("profile_id", userId);
+
+      if (deleteError) {
+        console.error("Error leaving conversation:", deleteError);
+        return res.status(500).json({ error: deleteError.message });
+      }
+
+      return res.status(204).send();
+    } catch (err) {
+      console.error("Unexpected error leaving conversation:", err);
+      return res.status(500).json({ error: "Failed to leave conversation" });
     }
   }
 );
