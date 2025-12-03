@@ -1,0 +1,101 @@
+//messages table structure
+
+[
+  {
+    "column_name": "id",
+    "data_type": "uuid",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "numeric_scale": null,
+    "is_nullable": "NO",
+    "column_default": "gen_random_uuid()"
+  },
+  {
+    "column_name": "conversation_id",
+    "data_type": "uuid",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "numeric_scale": null,
+    "is_nullable": "NO",
+    "column_default": null
+  },
+  {
+    "column_name": "sender_id",
+    "data_type": "uuid",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "numeric_scale": null,
+    "is_nullable": "NO",
+    "column_default": null
+  },
+  {
+    "column_name": "content",
+    "data_type": "text",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "numeric_scale": null,
+    "is_nullable": "NO",
+    "column_default": null
+  },
+  {
+    "column_name": "created_at",
+    "data_type": "timestamp with time zone",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "numeric_scale": null,
+    "is_nullable": "NO",
+    "column_default": "now()"
+  }
+]
+
+
+
+//message_attachments table structure
+
+[
+  {
+    "column_name": "id",
+    "data_type": "uuid",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "numeric_scale": null,
+    "is_nullable": "NO",
+    "column_default": "gen_random_uuid()"
+  },
+  {
+    "column_name": "message_id",
+    "data_type": "uuid",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "numeric_scale": null,
+    "is_nullable": "NO",
+    "column_default": null
+  },
+  {
+    "column_name": "url",
+    "data_type": "text",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "numeric_scale": null,
+    "is_nullable": "NO",
+    "column_default": null
+  },
+  {
+    "column_name": "type",
+    "data_type": "text",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "numeric_scale": null,
+    "is_nullable": "YES",
+    "column_default": null
+  },
+  {
+    "column_name": "created_at",
+    "data_type": "timestamp with time zone",
+    "character_maximum_length": null,
+    "numeric_precision": null,
+    "numeric_scale": null,
+    "is_nullable": "NO",
+    "column_default": "now()"
+  }
+]

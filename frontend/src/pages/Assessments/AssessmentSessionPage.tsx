@@ -1145,34 +1145,7 @@ export default function AssessmentSessionPage() {
     hasInfieldFieldingGroup,
   ]);
 
-  const pitchMetricHasAnyValue = useCallback(
-    (metric: AssessmentMetric) => {
-      if (!gridColumns.length || !sessionData) return false;
 
-      const metricId = metric.id;
-      const values = sessionData.values || {};
-
-      for (const col of gridColumns) {
-        const perPlayer = (values as any)[col.id] || {};
-        const v = perPlayer[metricId];
-        const numeric = v?.value_numeric;
-        const text = v?.value_text;
-
-        if (
-          (numeric !== null && numeric !== undefined && !Number.isNaN(numeric)) ||
-          (text !== null && text !== undefined && String(text).trim() !== "")
-        ) {
-          return true;
-        }
-      }
-
-      return false;
-    },
-    [gridColumns, sessionData]
-  );
-
-
-  
   const visibleMetricsForProgress = useMemo(() => {
     const all = visibleGroupedMetrics.reduce<AssessmentMetric[]>(
       (acc, group) => {
@@ -1187,7 +1160,7 @@ export default function AssessmentSessionPage() {
 
   const pitchMetricHasAnyValue = useCallback(
     (metric: AssessmentMetric) => {
-      if (!sessionData?.values) return false;
+      if (!sessionData?.values || !gridColumns.length) return false;
 
       const metricId = metric.id;
       const values = sessionData.values as any;
@@ -1202,7 +1175,9 @@ export default function AssessmentSessionPage() {
           (numeric !== null &&
             numeric !== undefined &&
             !Number.isNaN(numeric)) ||
-          (text !== null && text !== undefined && String(text).trim() !== "")
+          (text !== null &&
+            text !== undefined &&
+            String(text).trim() !== "")
         ) {
           return true;
         }
@@ -1214,14 +1189,19 @@ export default function AssessmentSessionPage() {
   );
 
   const computeMetricsCompletion = useCallback(
-    (metricList: AssessmentMetric[]) => {
+    (metricList: AssessmentMetric[], evalTypeOverride?: string | null) => {
+      const evalType = evalTypeOverride ?? effectiveEvalType;
+
       let metricsWithAnyValue = 0;
       let totalMetrics = 0;
+
       for (const m of metricList) {
         const metricKey = (m as any).metric_key as string | undefined;
 
+        // For pitching, ignore hidden, untouched additional pitch matrices so they
+        // don’t count against progress.
         if (
-          effectiveEvalType === "pitching" &&
+          evalType === "pitching" &&
           metricKey &&
           ADDITIONAL_PITCH_METRIC_KEYS.has(metricKey) &&
           !visibleExtraPitchMatrices.includes(metricKey) &&
@@ -1234,49 +1214,14 @@ export default function AssessmentSessionPage() {
 
         if (pitchMetricHasAnyValue(m)) {
           metricsWithAnyValue += 1;
-          continue;
-        }
-
-        if (!gridColumns.length || !sessionData) continue;
-
-        const metricId = m.id;
-        const values = sessionData.values || {};
-        let hasValue = false;
-
-        for (const col of gridColumns) {
-          const perPlayer = (values as any)[col.id] || {};
-          const v = perPlayer[metricId];
-          const numeric = v?.value_numeric;
-          const text = v?.value_text;
-
-          if (
-            (numeric !== null &&
-              numeric !== undefined &&
-              !Number.isNaN(numeric)) ||
-            (text !== null &&
-              text !== undefined &&
-              String(text).trim() !== "")
-          ) {
-            hasValue = true;
-            break;
-          }
-        }
-
-        if (hasValue) {
-          metricsWithAnyValue += 1;
         }
       }
 
       return { metricsWithAnyValue, totalMetrics };
     },
-    [
-      effectiveEvalType,
-      gridColumns,
-      sessionData,
-      visibleExtraPitchMatrices,
-      pitchMetricHasAnyValue,
-    ]
+    [effectiveEvalType, visibleExtraPitchMatrices, pitchMetricHasAnyValue]
   );
+
 
   // Overall progress for the active tab
   const metricsCompletion = useMemo(
@@ -1288,28 +1233,45 @@ export default function AssessmentSessionPage() {
     if (sessionEvalType !== "full") return null;
     if (!fullSections.length) return null;
 
+    let totalMetricsWithAnyValue = 0;
+    let totalMetrics = 0;
+
     const perSection = fullSections.map((section) => {
       const cached = templateCache[section.template_id];
-      const metricList = cached?.metrics ||
+      const sectionMetrics =
+        cached?.metrics ||
         (section.template_id === activeTemplateId ? metrics : []);
-      const progress = computeMetricsCompletion(metricList);
+
+      if (!sectionMetrics || sectionMetrics.length === 0) {
+        return {
+          ...section,
+          metricsWithAnyValue: 0,
+          totalMetrics: 0,
+        };
+      }
+
+      // Use the section key (e.g. "athletic", "hitting", "pitching") so
+      // pitching sections still get the "ignore hidden extra pitch" behaviour.
+      const { metricsWithAnyValue, totalMetrics: sectionTotal } =
+        computeMetricsCompletion(sectionMetrics, section.key);
+
+      totalMetricsWithAnyValue += metricsWithAnyValue;
+      totalMetrics += sectionTotal;
 
       return {
         ...section,
-        ...progress,
+        metricsWithAnyValue,
+        totalMetrics: sectionTotal,
       };
     });
 
-    const totals = perSection.reduce(
-      (acc, section) => {
-        acc.metricsWithAnyValue += section.metricsWithAnyValue;
-        acc.totalMetrics += section.totalMetrics;
-        return acc;
+    return {
+      perSection,
+      totals: {
+        metricsWithAnyValue: totalMetricsWithAnyValue,
+        totalMetrics,
       },
-      { metricsWithAnyValue: 0, totalMetrics: 0 }
-    );
-
-    return { perSection, totals };
+    };
   }, [
     sessionEvalType,
     fullSections,
@@ -1318,6 +1280,7 @@ export default function AssessmentSessionPage() {
     metrics,
     computeMetricsCompletion,
   ]);
+
 
   function handleSelectFullSection(key: string) {
     if (sessionEvalType !== "full") return;
@@ -5193,25 +5156,28 @@ export default function AssessmentSessionPage() {
                       className="border-b border-slate-800"
                     >
                       <td className="align-top px-2 py-2">
-                        <div className="font-medium text-slate-100">{displayName}</div>
-                        <div className="text-[10px] text-slate-500 mt-0.5">
-                          {description}
-                        </div>
-                        {isExtraPitchMatrix && metricKey && (
-                          <div className="mt-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="font-medium text-slate-100">{displayName}</div>
+                            <div className="text-[10px] text-slate-500 mt-0.5">
+                              {description}
+                            </div>
+                          </div>
+
+                          {isExtraPitchMatrix && metricKey && !isFinalized && (
                             <button
                               type="button"
                               onClick={() =>
                                 handleRemoveExtraPitchMatrix(metric.id, metricKey)
                               }
-                              className="rounded-md border border-red-500/60 bg-red-500/10 px-2 py-1 text-[11px] text-red-200 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-60"
-                              disabled={isFinalized}
+                              className="ml-2 px-2 py-0.5 rounded-md border border-rose-500/70 bg-rose-500/5 text-[10px] text-rose-200 hover:bg-rose-500/15"
                             >
-                              Remove pitch
+                              Remove
                             </button>
-                          </div>
-                        )}
+                          )}
+                        </div>
                       </td>
+
 
                       {gridColumns.map((col) => {
                         const playerId = col.id;
@@ -5365,22 +5331,22 @@ export default function AssessmentSessionPage() {
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="text-[10px] text-slate-400">
                             Optional: track additional pitch types (change-up, slider,
-                            cutter, etc.). Add up to {extraPitchMetrics.length} extra
-                            pitch matrices per pitcher.
+                            cutter, etc.). Add up to{" "}
+                            {extraPitchMetrics.length} extra pitch matrices per pitcher.
                           </div>
                           <button
                             type="button"
                             onClick={handleAddExtraPitchMatrix}
                             disabled={!nextHiddenExtra || isFinalized}
                             className={[
-                              "px-2 py-0.5 rounded-md border text-[11px]",
+                              "px-3 py-1 rounded-md border text-[11px] font-semibold transition-colors",
                               !nextHiddenExtra || isFinalized
                                 ? "border-slate-700 text-slate-500 bg-slate-900 cursor-not-allowed opacity-60"
-                                : "border-emerald-500/80 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20",
+                                : "border-emerald-500 bg-emerald-500 text-slate-900 hover:bg-emerald-400 hover:border-emerald-400",
                             ].join(" ")}
                           >
                             {nextHiddenExtra
-                              ? "Add another pitch type"
+                              ? "Add additional pitch"
                               : "All additional pitch slots added"}
                           </button>
                         </div>
@@ -5388,6 +5354,7 @@ export default function AssessmentSessionPage() {
                     </tr>
                   );
                 }
+
 
                 // Now render any extra pitch matrices that are visible (either clicked on or already have values)
                 extraPitchMetrics.forEach((m) => {
