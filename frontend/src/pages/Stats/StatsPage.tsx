@@ -1251,6 +1251,322 @@ function OffenseDrilldownSection({
   );
 }
 
+
+type AthleticCategoryCode =
+  | "speed"
+  | "strength"
+  | "power"
+  | "balance"
+  | "mobility";
+
+interface AthleticTestDisplay {
+  key: string;
+  label: string;
+  value: number | string | null;
+  unit?: string | null;
+  extra?: string | null;
+  category: AthleticCategoryCode;
+}
+
+interface AthleticSubmetricRow {
+  code: AthleticCategoryCode;
+  label: string;
+  score: number | null;
+  tests: AthleticTestDisplay[];
+}
+
+interface AthleticDrilldownData {
+  overallScore: number | null;
+  submetrics: AthleticSubmetricRow[];
+}
+
+const ATHLETIC_SUBMETRICS: AthleticSubmetricRow["code"][] = [
+  "speed",
+  "strength",
+  "power",
+  "balance",
+  "mobility",
+];
+
+function parseFiniteNumber(value: any): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const n = Number.parseFloat(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function humanizeAthleticLabel(key: string): { label: string; unit?: string } {
+  const meta = getMetricMeta(key) as any;
+  const label =
+    meta?.shortLabel ||
+    meta?.displayName ||
+    key
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+
+  return { label, unit: meta?.unit };
+}
+
+function categorizeAthleticKey(key: string): AthleticCategoryCode | null {
+  const k = key.toLowerCase();
+  if (k.includes("speed") || k.includes("sprint") || k.includes("run")) {
+    return "speed";
+  }
+  if (
+    k.includes("push") ||
+    k.includes("pull") ||
+    k.includes("situp") ||
+    k.includes("sit_up") ||
+    k.includes("plank") ||
+    k.includes("strength")
+  ) {
+    return "strength";
+  }
+  if (
+    k.includes("power") ||
+    k.includes("jump") ||
+    k.includes("chest") ||
+    k.includes("throw")
+  ) {
+    return "power";
+  }
+  if (k.includes("balance") || k.includes("stance")) {
+    return "balance";
+  }
+  if (k.includes("mobility") || k.includes("flex") || k.includes("range")) {
+    return "mobility";
+  }
+  return null;
+}
+
+function buildAthleticDrilldown(
+  teamStats: TeamStatsOverview | null,
+  teamMetricsByCode: Map<
+    CoreMetricCode,
+    { label: string; score: number | null; percent: number | null }
+  >
+): AthleticDrilldownData {
+  const breakdown = (teamStats as any)?.breakdown ?? {};
+  const athleticSection =
+    (breakdown as any).athletic ?? (breakdown as any).athlete ?? {};
+  const testsSource = athleticSection.tests ?? athleticSection ?? {};
+
+  const rawTests =
+    testsSource && typeof testsSource === "object"
+      ? (testsSource as Record<string, any>)
+      : {};
+
+  const submetricTests: Record<AthleticCategoryCode, AthleticTestDisplay[]> = {
+    speed: [],
+    strength: [],
+    power: [],
+    balance: [],
+    mobility: [],
+  };
+
+  for (const [key, value] of Object.entries(rawTests)) {
+    if (key.endsWith("_score") || key === "overall_score") continue;
+
+    const category = categorizeAthleticKey(key);
+    if (!category) continue;
+
+    const { label, unit } = humanizeAthleticLabel(key);
+
+    submetricTests[category].push({
+      key,
+      label,
+      value: value as any,
+      unit: unit ?? null,
+      category,
+    });
+  }
+
+  const derivedScore = parseFiniteNumber(
+    athleticSection.overall_score ?? rawTests.overall_score ?? null
+  );
+
+  const overallScore =
+    derivedScore ??
+    (teamMetricsByCode.get("athletic")?.score != null
+      ? teamMetricsByCode.get("athletic")!.score! / 3
+      : null);
+
+  const submetrics: AthleticSubmetricRow[] = ATHLETIC_SUBMETRICS.map(
+    (code) => {
+      const scoreKey = `${code}_score`;
+      const score = parseFiniteNumber((rawTests as any)[scoreKey]);
+      const label =
+        code === "power"
+          ? "Power score"
+          : code === "balance"
+          ? "Balance score"
+          : `${code.charAt(0).toUpperCase()}${code.slice(1)} score`;
+
+      return {
+        code,
+        label,
+        score,
+        tests: submetricTests[code],
+      };
+    }
+  );
+
+  return { overallScore, submetrics };
+}
+
+function formatAthleticTestValue(test: AthleticTestDisplay): string {
+  if (test.value === null || test.value === undefined) return "—";
+
+  if (typeof test.value === "number") {
+    const unit = test.unit ?? "";
+    const spacer = unit ? " " : "";
+    return `${test.value}${spacer}${unit}`;
+  }
+
+  return String(test.value);
+}
+
+function AthleticDrilldownSection({
+  teamStats,
+  teamMetricsByCode,
+}: {
+  teamStats: TeamStatsOverview | null;
+  teamMetricsByCode: Map<
+    CoreMetricCode,
+    { label: string; score: number | null; percent: number | null }
+  >;
+}) {
+  const drilldown = useMemo(
+    () => buildAthleticDrilldown(teamStats, teamMetricsByCode),
+    [teamStats, teamMetricsByCode]
+  );
+
+  const hasAnyTests = drilldown.submetrics.some(
+    (s) => s.tests.length > 0 || s.score !== null
+  );
+
+  const athleticMetric = teamMetricsByCode.get("athletic") ?? null;
+
+  return (
+    <section className="mt-6">
+      <div className="rounded-xl bg-slate-900/70 border border-slate-700">
+        <div className="px-4 py-3 border-b border-slate-700">
+          <h3 className="text-sm font-semibold text-slate-50">
+            Athletic drilldown
+          </h3>
+          <p className="text-xs text-slate-400">
+            Speed, strength, power, balance, and mobility results for this team.
+          </p>
+        </div>
+
+        <div className="p-4 space-y-4">
+          {!teamStats && (
+            <p className="text-xs text-slate-400">
+              Select a team and evaluation to view athletic details.
+            </p>
+          )}
+
+          {teamStats && !hasAnyTests && (
+            <p className="text-xs text-slate-400">
+              No athletic metrics yet for this team. Once players complete an
+              assessment, we&apos;ll surface their speed, strength, power, balance,
+              and mobility drill results here.
+            </p>
+          )}
+
+          {teamStats && hasAnyTests && (
+            <>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                {drilldown.submetrics.map((sub) => {
+                  const displayScore =
+                    sub.score != null ? formatNumber(sub.score * 3, 0) : "—";
+
+                  return (
+                    <div
+                      key={sub.code}
+                      className="rounded-lg bg-slate-950/40 border border-slate-800 p-3 flex flex-col gap-2"
+                    >
+                      <div>
+                        <div className="text-[11px] uppercase tracking-wide text-slate-400">
+                          {sub.label}
+                        </div>
+                        <div className="text-lg font-semibold text-slate-50">
+                          {displayScore}
+                        </div>
+                        <div className="mt-1">
+                          <RubricBar score={sub.score} showLabels={false} />
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        {sub.tests.length === 0 ? (
+                          <p className="text-[11px] text-slate-500">
+                            No raw tests for this category yet.
+                          </p>
+                        ) : (
+                          sub.tests.map((test) => (
+                            <div
+                              key={test.key}
+                              className="rounded-md bg-slate-900/60 border border-slate-800 px-2 py-1"
+                            >
+                              <div className="flex items-center justify-between text-[11px] text-slate-300">
+                                <span className="font-semibold text-slate-100">
+                                  {test.label}
+                                </span>
+                                <span className="text-slate-200">
+                                  {formatAthleticTestValue(test)}
+                                </span>
+                              </div>
+                              {test.extra && (
+                                <div className="text-[10px] text-slate-500 mt-0.5">
+                                  {test.extra}
+                                </div>
+                              )}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="rounded-lg bg-slate-950/40 border border-slate-800 p-3">
+                <div className="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-2">
+                  <div className="text-xs uppercase tracking-wide text-slate-400">
+                    Team athletic score
+                  </div>
+                  <div className="text-xs text-slate-300">
+                    {athleticMetric?.label ?? "Athletic"}
+                  </div>
+                </div>
+                <div className="mt-1 text-xl font-semibold text-slate-50">
+                  {formatNumber(
+                    drilldown.overallScore != null
+                      ? drilldown.overallScore * 3
+                      : athleticMetric?.score ?? null,
+                    0
+                  )}
+                </div>
+                <div className="mt-2">
+                  <RubricBar score={drilldown.overallScore ?? null} showLabels />
+                </div>
+                <p className="mt-2 text-[11px] text-slate-500">
+                  Scores are shown on a 0–150 visual scale (0–50 engine scale
+                  x3). Raw test outputs (times, reps, distances, and mobility
+                  responses) appear under each category above.
+                </p>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export default function StatsPage() {
   const { profile } = useAuth();
   const role = profile?.role;
@@ -1674,6 +1990,25 @@ export default function StatsPage() {
       }
     }
 
+    // Prefer the breakdown's athletic overall score if it is present so that
+    // the Athletic card always reflects the latest raw calculations.
+    const athleticBreakdown = (teamStats as any)?.breakdown as
+      | Record<string, any>
+      | undefined;
+    const athleticOverall = parseFiniteNumber(
+      athleticBreakdown?.athletic?.overall_score ??
+        athleticBreakdown?.athlete?.overall_score ??
+        athleticBreakdown?.athletic_score
+    );
+
+    if (athleticOverall != null && map.has("athletic")) {
+      const existing = map.get("athletic")!;
+      map.set("athletic", {
+        ...existing,
+        score: athleticOverall * 3,
+      });
+    }
+
     return map;
   }, [teamStats]);
 
@@ -1912,6 +2247,11 @@ export default function StatsPage() {
               error={offenseError}
               viewMode={offenseViewMode}
               onViewModeChange={setOffenseViewMode}
+            />
+          ) : activeCoreMetric === "athletic" ? (
+            <AthleticDrilldownSection
+              teamStats={teamStats}
+              teamMetricsByCode={teamMetricsByCode}
             />
           ) : (
             <section className="mt-6">
