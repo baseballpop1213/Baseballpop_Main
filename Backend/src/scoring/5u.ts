@@ -311,6 +311,7 @@ function computeAthleticSkillsScore(metrics: MetricMap): {
   };
 }
 
+
 function computeHittingScore(metrics: MetricMap): {
   categoryScore: number | null;
   breakdown: {

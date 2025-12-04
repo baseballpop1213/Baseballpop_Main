@@ -6715,6 +6715,141 @@ function computeHSPositionScores(
   };
 }
 
+function computePositionScoresForBreakdown(
+  ageLabel: string,
+  breakdown: any
+): PositionScores5U | null {
+  if (!breakdown) return null;
+
+  // For 5U–8U/9U, the categories are athletic, throwing, catching, fielding
+  const athletic = (breakdown.athletic || breakdown.athletic_skills) as
+    | CategoryComponent
+    | undefined;
+
+  // 5U / 6U share the same positional logic
+  if (
+    (ageLabel === "5U" || ageLabel === "6U") &&
+    athletic &&
+    breakdown.throwing &&
+    breakdown.catching &&
+    breakdown.fielding
+  ) {
+    return compute5UPositionScores(
+      athletic,
+      breakdown.throwing as CategoryComponent,
+      breakdown.catching as CategoryComponent,
+      breakdown.fielding as CategoryComponent
+    );
+  }
+
+  if (
+    ageLabel === "7U" &&
+    athletic &&
+    breakdown.throwing &&
+    breakdown.catching &&
+    breakdown.fielding
+  ) {
+    return compute7UPositionScores(
+      athletic,
+      breakdown.throwing as CategoryComponent,
+      breakdown.catching as CategoryComponent,
+      breakdown.fielding as CategoryComponent
+    );
+  }
+
+  if (
+    ageLabel === "8U" &&
+    athletic &&
+    breakdown.throwing &&
+    breakdown.catching &&
+    breakdown.fielding
+  ) {
+    return compute8UPositionScores(
+      athletic,
+      breakdown.throwing as CategoryComponent,
+      breakdown.catching as CategoryComponent,
+      breakdown.fielding as CategoryComponent
+    );
+  }
+
+  if (
+    ageLabel === "9U" &&
+    athletic &&
+    breakdown.throwing &&
+    breakdown.catching &&
+    breakdown.fielding
+  ) {
+    return compute9UPositionScores(
+      athletic,
+      breakdown.throwing as CategoryComponent,
+      breakdown.catching as CategoryComponent,
+      breakdown.fielding as CategoryComponent
+    );
+  }
+
+  // 10U+ use the eval categories: pitching, catcher, first_base, infield, outfield
+
+  if (
+    (ageLabel === "10U" || ageLabel === "11U") &&
+    athletic &&
+    breakdown.pitching &&
+    breakdown.catcher &&
+    breakdown.first_base &&
+    breakdown.infield &&
+    breakdown.outfield
+  ) {
+    return compute10UPositionScores(
+      athletic,
+      breakdown.pitching as CategoryComponent,
+      breakdown.catcher as CategoryComponent,
+      breakdown.first_base as CategoryComponent,
+      breakdown.infield as CategoryComponent,
+      breakdown.outfield as CategoryComponent
+    );
+  }
+
+  if (
+    (ageLabel === "12U" || ageLabel === "13U" || ageLabel === "14U") &&
+    athletic &&
+    breakdown.pitching &&
+    breakdown.catcher &&
+    breakdown.first_base &&
+    breakdown.infield &&
+    breakdown.outfield
+  ) {
+    return compute12UPositionScores(
+      athletic,
+      breakdown.pitching as CategoryComponent,
+      breakdown.catcher as CategoryComponent,
+      breakdown.first_base as CategoryComponent,
+      breakdown.infield as CategoryComponent,
+      breakdown.outfield as CategoryComponent
+    );
+  }
+
+  // HS / College / Pro share the HS positional model for now
+  if (
+    (ageLabel === "HS" || ageLabel === "College" || ageLabel === "Pro") &&
+    athletic &&
+    breakdown.pitching &&
+    breakdown.catcher &&
+    breakdown.first_base &&
+    breakdown.infield &&
+    breakdown.outfield
+  ) {
+    return computeHSPositionScores(
+      athletic,
+      breakdown.pitching as CategoryComponent,
+      breakdown.catcher as CategoryComponent,
+      breakdown.first_base as CategoryComponent,
+      breakdown.infield as CategoryComponent,
+      breakdown.outfield as CategoryComponent
+    );
+  }
+
+  return null;
+}
+
 
 // ---- Pitching optimization types ----
 
@@ -7660,6 +7795,26 @@ app.post("/assessments", requireAuth, async (req: AuthedRequest, res) => {
 
 
 
+  // 7a) Compute and attach position scores into the rating breakdown
+  //     (these feed the position / defense tiles on the stats page).
+  const positionScores = computePositionScoresForBreakdown(
+    ageLabel,
+    ratings.breakdown
+  );
+
+  if (positionScores) {
+    // Store under breakdown.positions so the stats layer can aggregate it
+    (ratings.breakdown as any).positions = positionScores;
+
+    // If the rating engine didn't set a defense_score yet, fall back to the
+    // composite defense_score from the positional model.
+    if (
+      (ratings.defense_score == null || Number.isNaN(ratings.defense_score)) &&
+      typeof positionScores.defense_score === "number"
+    ) {
+      ratings.defense_score = positionScores.defense_score;
+    }
+  }
 
 
 
