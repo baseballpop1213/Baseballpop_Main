@@ -2066,33 +2066,18 @@ export default function StatsPage() {
       },
     ];
 
-    const normalizeDateOnly = (value: string) => {
-      const match = value.match(/^(\d{4}-\d{2}-\d{2})/);
-      return match ? match[1] : value;
-    };
-
-    const formatDateLabel = (dateOnly: string) => {
-      // Force midday UTC to avoid off‑by‑one issues
-      const d = new Date(`${dateOnly}T12:00:00Z`);
-      if (Number.isNaN(d.getTime())) return dateOnly;
-      return d.toLocaleDateString(undefined, {
+    const formatDateTimeLabel = (timestamp: string | null | undefined) => {
+      if (!timestamp) return "Unknown date";
+      const d = new Date(timestamp);
+      if (Number.isNaN(d.getTime())) return timestamp;
+      // You can decide if you want time-of-day; here I include it to distinguish sessions
+      return d.toLocaleString(undefined, {
         month: "short",
         day: "numeric",
         year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
       });
-    };
-
-
-    const buildTemplateKey = (
-      templateId?: number | null,
-      templateName?: string | null,
-      kind?: string | null
-    ) => {
-      if (typeof templateId === "number") return `template-${templateId}`;
-      if (templateName && templateName.trim())
-        return `name-${templateName.trim().toLowerCase()}`;
-      if (kind && kind.trim()) return `kind-${kind.trim().toLowerCase()}`;
-      return "unknown";
     };
 
     const formatKindLabel = (kind?: string | null) => {
@@ -2100,58 +2085,42 @@ export default function StatsPage() {
       return kind
         .trim()
         .split(/[_\s]+/)
-        .map((p) => (p ? p[0].toUpperCase() + p.slice(1).toLowerCase() : p))
+        .map((p) =>
+          p ? p[0].toUpperCase() + p.slice(1).toLowerCase() : p
+        )
         .join(" ");
     };
 
-    const dedupedByAssessment = new Map<string, typeof teamEvaluations[number]>();
+    const dated = [...teamEvaluations]
+      .sort((a, b) => {
+        const aTs = a.performed_at ?? "";
+        const bTs = b.performed_at ?? "";
+        return bTs.localeCompare(aTs);
+      })
+      .map((ev) => {
+        const dateLabel = formatDateTimeLabel(ev.performed_at);
+        const typeLabel =
+          (ev.template_name && ev.template_name.trim()) ||
+          formatKindLabel(ev.kind);
+        const label = typeLabel ? `${dateLabel} — ${typeLabel}` : dateLabel;
 
-    for (const ev of teamEvaluations) {
-      const dateOnly = normalizeDateOnly(ev.performed_at);
-      const key = `${dateOnly}|${buildTemplateKey(
-        ev.template_id,
-        ev.template_name,
-        ev.kind
-      )}`;
-      const existing = dedupedByAssessment.get(key);
-
-      if (!existing) {
-        dedupedByAssessment.set(key, {
-          ...ev,
-          performed_at: dateOnly,
-        });
-        continue;
-      }
-
-      dedupedByAssessment.set(key, {
-        ...existing,
-        performed_at: dateOnly,
-        template_id: existing.template_id ?? ev.template_id ?? null,
-        template_name: existing.template_name ?? ev.template_name ?? null,
-        kind: existing.kind ?? ev.kind ?? null,
-        label: existing.label ?? ev.label,
+        return {
+          key:
+            ev.id != null
+              ? String(ev.id)
+              : `${ev.performed_at ?? "unknown"}-${
+                  ev.template_id ?? ev.kind ?? "unknown"
+                }`,
+          label,
+          evalScope: "specific" as TeamEvalScope,
+          // ⬇️ Keep the full timestamp; backend can cast it to date if needed
+          assessmentDate: ev.performed_at ?? null,
+        };
       });
-    }
-
-    const dated = Array.from(dedupedByAssessment.values())
-    .sort((a, b) => b.performed_at.localeCompare(a.performed_at))
-    .map((ev) => {
-      const dateLabel = formatDateLabel(ev.performed_at);
-      const typeLabel =
-        (ev.template_name && ev.template_name.trim()) ||
-        formatKindLabel(ev.kind);
-      const label = typeLabel ? `${dateLabel} — ${typeLabel}` : dateLabel;
-
-      return {
-        key: ev.id || `assessment-${ev.performed_at}`,
-        label,
-        evalScope: "specific" as TeamEvalScope,
-        assessmentDate: ev.performed_at,
-      };
-    });
 
     return [...base, ...dated];
   }, [teamEvaluations]);
+
 
   useEffect(() => {
     if (!evaluationSelectOptions.length) return;
@@ -2319,67 +2288,73 @@ export default function StatsPage() {
       { label: string; score: number | null; percent: number | null }
     >();
 
+    // 1) Start with whatever the backend gives us
     if (teamStats?.metrics) {
       for (const metric of teamStats.metrics) {
         map.set(metric.code, {
           label: metric.label,
-          // Frontend‑only scaling: show scores on a 0–150 scale instead of 0–50.
+          // Frontend-only scaling: show scores on a 0–150 scale instead of 0–50.
           score: metric.score != null ? metric.score * 3 : null,
           percent: metric.percent,
         });
       }
     }
 
-    // Prefer the breakdown's athletic overall score if it is present so that
-    // the Athletic card always reflects the latest raw calculations, even if
-    // the backend metric is missing or has a null score.
-    const athleticBreakdown = (teamStats as any)?.breakdown as
+    // 2) Try to backfill / override ATHLETIC from the breakdown
+    const breakdown = (teamStats as any)?.breakdown as
       | Record<string, any>
       | undefined;
 
     const athleticSection =
-      athleticBreakdown?.athletic ?? athleticBreakdown?.athlete ?? null;
+      breakdown?.athletic ?? breakdown?.athlete ?? null;
 
-    const testsAny = (athleticSection?.tests ??
-      athleticSection ??
-      {}) as Record<string, any>;
+    if (athleticSection) {
+      const testsAny = (athleticSection.tests ??
+        athleticSection ??
+        {}) as Record<string, any>;
 
-    const athleticTotalPoints = parseFiniteNumber(
-      athleticSection?.total_points ?? testsAny.total_points
-    );
-    const athleticMaxPoints = parseFiniteNumber(
-      athleticSection?.max_points ?? testsAny.max_points
-    );
+      const totalPoints = parseFiniteNumber(
+        athleticSection.total_points ?? testsAny.total_points
+      );
+      const maxPoints = parseFiniteNumber(
+        athleticSection.max_points ?? testsAny.max_points
+      );
 
-    const athleticFromPoints =
-      athleticTotalPoints !== null &&
-      athleticMaxPoints !== null &&
-      athleticMaxPoints > 0
-        ? (athleticTotalPoints / athleticMaxPoints) * 50
-        : null;
+      const fromPoints =
+        totalPoints !== null &&
+        maxPoints !== null &&
+        maxPoints > 0
+          ? (totalPoints / maxPoints) * 50
+          : null;
 
-    const athleticOverall = parseFiniteNumber(
-      athleticSection?.overall_score ??
-        testsAny.overall_score ??
-        (athleticBreakdown as any)?.athletic_score ??
-        athleticFromPoints
-    );
+      const athleticOverall = parseFiniteNumber(
+        athleticSection.overall_score ??
+          testsAny.overall_score ??
+          (breakdown as any)?.athletic_score ??
+          fromPoints
+      );
 
-    if (athleticOverall != null) {
       const existing = map.get("athletic");
-      const percent = Math.round((athleticOverall / 50) * 100);
+      const label = existing?.label ?? "Athletic";
 
-      map.set("athletic", {
-        label: existing?.label ?? "Athletic",
-        // Store on the same 0–150 visual scale as the other cards.
-        score: athleticOverall * 3,
-        // If backend already had a percent, keep it; otherwise derive from 0–50.
-        percent: existing?.percent ?? percent,
-      });
+      let score: number | null = existing?.score ?? null;
+      let percent: number | null = existing?.percent ?? null;
+
+      if (athleticOverall != null) {
+        score = athleticOverall * 3; // 0–150 visual scale
+        if (percent == null) {
+          percent = Math.round((athleticOverall / 50) * 100);
+        }
+      }
+
+      // 👈 IMPORTANT: we now *always* set an "athletic" metric as long as
+      // the breakdown exists, even if score/percent are null.
+      map.set("athletic", { label, score, percent });
     }
 
     return map;
   }, [teamStats]);
+
 
 
 
