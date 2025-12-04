@@ -237,11 +237,6 @@ export interface TeamStatsOverview {
 export type TeamEvalScope = "latest_eval" | "all_star" | "specific";
 
 export interface TeamEvaluationOption {
-  /**
-   * Unique key for this evaluation option.
-   * In the backend we build this from date + template/kind so it is
-   * already de‑duplicated.
-   */
   id: string;
   performed_at: string;
   label: string;
@@ -268,8 +263,7 @@ export interface PlayerStatsOverview {
 
 // --- Offense drilldown (Stats page Block 2A) -------------------
 
-// Keep this union in sync with the frontend OffenseMetricCode.
-export type OffenseSubmetricCode =
+export type OffenseSubMetricCode =
   | "offense"
   | "contact"
   | "power"
@@ -277,17 +271,12 @@ export type OffenseSubmetricCode =
   | "strikechance";
 
 export interface OffenseDrilldownMetric {
-  code: OffenseSubmetricCode;
+  code: OffenseSubMetricCode;
   label: string;
   team_average: number | null;
-  /**
-   * Number of players contributing to this metric (optional for backwards
-   * compatibility with older responses).
-   */
-  player_count?: number;
 }
 
-export interface OffenseDrilldownPlayerRow {
+export interface OffenseDrilldownPlayerMetrics {
   player_id: string;
   player_name: string | null;
   jersey_number: number | null;
@@ -301,89 +290,13 @@ export interface OffenseDrilldownPlayerRow {
   strike_chance: number | null;
 }
 
-export interface OffenseTestPlayerRow {
-  player_id: string;
-  player_name: string | null;
-  jersey_number: number | null;
-
-  /**
-   * Main numeric value for this test.
-   *
-   * - Contact tests: quality points (higher is better)
-   * - Power tests: bat speed / exit velo in MPH
-   * - Speed tests: feet per second (ft/s) for the run
-   */
-  value: number | null;
-
-  /** Raw MPH for power tests (bat speed / exit velo). */
-  raw_mph?: number | null;
-
-  /**
-   * Optional raw time in seconds for timed‑run tests.
-   * (Filled for timed_run_1b / timed_run_4b once backend is updated.)
-   */
-  raw_seconds?: number | null;
-
-  /**
-   * Optional base‑path distance in feet for timed‑run tests.
-   * (e.g. 60/70/90 ft; we can default to the longest in multi‑eval scenarios.)
-   */
-  raw_distance_ft?: number | null;
-
-  /**
-   * Optional feet‑per‑second speed for timed‑run tests.
-   */
-  feet_per_second?: number | null;
-}
-
-export interface OffenseTestBreakdown {
-  id: string;
-  label: string;
-  description?: string | null;
-  submetric: OffenseSubmetricCode;
-
-  /**
-   * Team‑average 0–50 “score” for this test.
-   */
-  team_average: number | null;
-  player_count: number;
-  per_player: OffenseTestPlayerRow[];
-
-  /** Team-average raw MPH for power tests (bat speed / exit velo). */
-  team_avg_mph?: number | null;
-
-  /** Team-average raw time in seconds for timed‑run tests. */
-  team_avg_seconds?: number | null;
-
-  /** Base‑path distance in feet for timed‑run tests. */
-  base_path_feet?: number | null;
-
-  /** Team-average feet‑per‑second for timed‑run tests. */
-  team_avg_feet_per_second?: number | null;
-
-  // Legacy / alternate field names used by older backends:
-  avg_seconds?: number | null;
-  base_feet?: number | null;
-  avg_feet_per_second?: number | null;
-}
-
 export interface TeamOffenseDrilldown {
   team_id: string;
   team_name: string | null;
-  /**
-   * Optional extras for display – older clients may not rely on these.
-   */
-  age_group_label?: string | null;
-  level?: string | null;
+  age_group_label: string | null;
+  level: string | null;
   metrics: OffenseDrilldownMetric[];
-  players: OffenseDrilldownPlayerRow[];
-  tests_by_metric: {
-    offense?: OffenseTestBreakdown[];
-    contact?: OffenseTestBreakdown[];
-    power?: OffenseTestBreakdown[];
-    speed?: OffenseTestBreakdown[];
-    strikechance?: OffenseTestBreakdown[];
-  };
+  players: OffenseDrilldownPlayerMetrics[];
 }
 
 /**
@@ -440,6 +353,89 @@ export interface PlayerMedalWithDefinition {
 export interface PlayerMedalsResponse {
   player_id: string;
   medals: PlayerMedalWithDefinition[];
+}
+
+export type OffenseSubmetricCode =
+  | "offense"
+  | "contact"
+  | "power"
+  | "speed"
+  | "strikechance"; // hitters' StrikeChance (pitchers will use StrikeoutChance later)
+
+export interface OffenseDrilldownMetric {
+  code: OffenseSubmetricCode;
+  label: string;
+  team_average: number | null;
+  player_count: number;
+}
+
+export interface OffenseTestPlayerRow {
+  player_id: string;
+  player_name: string | null;
+  jersey_number: number | null;
+
+  /**
+   * Main numeric value for this test.
+   *
+   * - Contact tests: quality points (higher is better)
+   * - Power tests: bat speed / exit velo in MPH (once backend is updated)
+   * - Speed tests: feet per second (ft/s) for the run (once backend is updated)
+   */
+  value: number | null;
+
+  /** Raw MPH for power tests (bat speed / exit velo). */
+  raw_mph?: number | null;
+
+  /**
+   * Optional raw time in seconds for timed‑run tests.
+   * (Filled for timed_run_1b / timed_run_4b once backend is updated.)
+   */
+  raw_seconds?: number | null;
+
+  /**
+   * Optional basepath distance in feet for timed‑run tests.
+   * (e.g. 60/70/90 ft; we can default to the longest in multi‑eval scenarios.)
+   */
+  raw_distance_ft?: number | null;
+}
+
+
+export interface OffenseTestBreakdown {
+  id: string;
+  label: string;
+  description?: string | null;
+  submetric: OffenseSubmetricCode;
+  team_average: number | null;
+  player_count: number;
+  per_player: OffenseTestPlayerRow[];
+
+  /** Team-average raw MPH for power tests (bat speed / exit velo). */
+  team_avg_mph?: number | null;
+}
+
+export interface OffenseDrilldownPlayerRow {
+  player_id: string;
+  player_name: string | null;
+  jersey_number: number | null;
+  hitting_score: number | null;
+  contact_score: number | null;
+  power_score: number | null;
+  speed_score: number | null;
+  strike_chance: number | null; // 0–1
+}
+
+export interface TeamOffenseDrilldown {
+  team_id: string;
+  team_name: string | null;
+  metrics: OffenseDrilldownMetric[];
+  players: OffenseDrilldownPlayerRow[];
+  tests_by_metric: {
+    offense?: OffenseTestBreakdown[];
+    contact?: OffenseTestBreakdown[];
+    power?: OffenseTestBreakdown[];
+    speed?: OffenseTestBreakdown[];
+    strikechance?: OffenseTestBreakdown[];
+  };
 }
 
 // You can expand this file as we go:

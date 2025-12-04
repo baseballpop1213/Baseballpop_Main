@@ -2053,7 +2053,6 @@ export default function StatsPage() {
   }, [selectedTeamId, isCoachLike, viewMode]);
 
   const evaluationSelectOptions = useMemo<EvaluationSelectOption[]>(() => {
-    // Always include the two aggregate modes first
     const base: EvaluationSelectOption[] = [
       {
         key: "all_star",
@@ -2067,24 +2066,59 @@ export default function StatsPage() {
       },
     ];
 
-    if (!teamEvaluations || teamEvaluations.length === 0) {
-      return base;
-    }
+    const formatDateTimeLabel = (timestamp: string | null | undefined) => {
+      if (!timestamp) return "Unknown date";
+      const d = new Date(timestamp);
+      if (Number.isNaN(d.getTime())) return timestamp;
+      // You can decide if you want time-of-day; here I include it to distinguish sessions
+      return d.toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+    };
 
-    // Backend already:
-    //  - groups rows by date+template/kind
-    //  - sorts them newest → oldest
-    //  - builds a human‑friendly label string
-    const specificEvals: EvaluationSelectOption[] = teamEvaluations.map(
-      (ev) => ({
-        key: String(ev.id), // id is already unique per evaluation group
-        label: ev.label || ev.performed_at,
-        evalScope: "specific" as TeamEvalScope,
-        assessmentDate: ev.performed_at ?? null,
+    const formatKindLabel = (kind?: string | null) => {
+      if (!kind || !kind.trim()) return null;
+      return kind
+        .trim()
+        .split(/[_\s]+/)
+        .map((p) =>
+          p ? p[0].toUpperCase() + p.slice(1).toLowerCase() : p
+        )
+        .join(" ");
+    };
+
+    const dated = [...teamEvaluations]
+      .sort((a, b) => {
+        const aTs = a.performed_at ?? "";
+        const bTs = b.performed_at ?? "";
+        return bTs.localeCompare(aTs);
       })
-    );
+      .map((ev) => {
+        const dateLabel = formatDateTimeLabel(ev.performed_at);
+        const typeLabel =
+          (ev.template_name && ev.template_name.trim()) ||
+          formatKindLabel(ev.kind);
+        const label = typeLabel ? `${dateLabel} — ${typeLabel}` : dateLabel;
 
-    return [...base, ...specificEvals];
+        return {
+          key:
+            ev.id != null
+              ? String(ev.id)
+              : `${ev.performed_at ?? "unknown"}-${
+                  ev.template_id ?? ev.kind ?? "unknown"
+                }`,
+          label,
+          evalScope: "specific" as TeamEvalScope,
+          // ⬇️ Keep the full timestamp; backend can cast it to date if needed
+          assessmentDate: ev.performed_at ?? null,
+        };
+      });
+
+    return [...base, ...dated];
   }, [teamEvaluations]);
 
 
@@ -2574,9 +2608,9 @@ export default function StatsPage() {
                 </h3>
                 <p className="mt-1 text-xs text-slate-400">
                   We&apos;ll add{" "}
-                  {(
-                    teamMetricsByCode.get(activeCoreMetric)?.label ?? "this metric"
-                  ).toLowerCase()}{" "}
+                  {teamMetricsByCode
+                    .get(activeCoreMetric)
+                    ?.label.toLowerCase() ?? "this metric"}{" "}
                   drilldowns here in a later block. For now, select{" "}
                   <span className="font-semibold text-amber-400">Offense</span>{" "}
                   above to view the full contact/power/speed/strikeout
