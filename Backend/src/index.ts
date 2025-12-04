@@ -3947,60 +3947,86 @@ async function computeTeamStatsOverview(
     ratingRows: TeamRatingRow[]
   ): { overall_score: number | null; tests: Record<string, number> } | null => {
     const testAgg = new Map<string, { sum: number; count: number }>();
-    const overallValues: number[] = [];
 
-    const addValue = (key: string, raw: any) => {
-      if (raw === null || raw === undefined) return;
-      const num = typeof raw === "number" ? raw : Number(raw);
-      if (!Number.isFinite(num)) return;
+    const addValue = (key: string, value: any) => {
+      if (value === null || value === undefined) return;
 
-      if (key === "overall_score") {
-        overallValues.push(num);
+      let numeric: number;
+      if (typeof value === "number") {
+        if (!Number.isFinite(value)) return;
+        numeric = value;
+      } else if (typeof value === "string") {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed)) return;
+        numeric = parsed;
+      } else {
         return;
       }
 
-      const existing = testAgg.get(key) ?? { sum: 0, count: 0 };
-      existing.sum += num;
-      existing.count += 1;
-      testAgg.set(key, existing);
+      const agg = testAgg.get(key) ?? { sum: 0, count: 0 };
+      agg.sum += numeric;
+      agg.count += 1;
+      testAgg.set(key, agg);
     };
 
     for (const row of ratingRows) {
-      const breakdown: any = (row as any).breakdown ?? {};
+      let breakdown: any = (row as any).breakdown ?? {};
+
+      // Supabase can occasionally hand back JSON as a string; normalize that.
+      if (typeof breakdown === "string") {
+        try {
+          breakdown = JSON.parse(breakdown);
+        } catch {
+          breakdown = {};
+        }
+      }
+
       const athleticSection: any = breakdown.athletic ?? breakdown.athlete ?? {};
       const tests: any = athleticSection.tests ?? athleticSection ?? {};
 
-      addValue("overall_score", athleticSection.overall_score ?? tests.overall_score);
+      // Overall score may be stored on the section or inside tests.
+      const rawOverall =
+        athleticSection.overall_score ?? (tests as any).overall_score ?? null;
+      if (rawOverall != null) {
+        addValue("overall_score", rawOverall);
+      }
 
       if (tests && typeof tests === "object") {
         for (const [key, value] of Object.entries(tests)) {
-          if (typeof value === "number" || typeof value === "string") {
-            addValue(key, value);
-          }
+          // we've already handled overall_score above
+          if (key === "overall_score") continue;
+          addValue(key, value);
         }
       }
     }
 
     const averagedTests: Record<string, number> = {};
-    testAgg.forEach((agg, key) => {
-      if (!agg.count) return;
+    for (const [key, agg] of testAgg.entries()) {
+      if (!agg.count) continue;
+      // two decimals for raw times/distances/points
       averagedTests[key] = Math.round((agg.sum / agg.count) * 100) / 100;
-    });
-
-    const overallScore = averageNonNull(overallValues);
-    if (overallScore !== null) {
-      averagedTests.overall_score = Math.round(overallScore * 10) / 10;
     }
 
-    if (!Object.keys(averagedTests).length && overallScore === null) {
+    if (!Object.keys(averagedTests).length) {
       return null;
     }
 
+    // Expose a team‑level 0–50 engine score for Athletic, with one decimal.
+    const overallScore =
+      typeof averagedTests.overall_score === "number"
+        ? Math.round(averagedTests.overall_score * 10) / 10
+        : null;
+
+    if (overallScore !== null) {
+      averagedTests.overall_score = overallScore;
+    }
+
     return {
-      overall_score: overallScore ?? null,
+      overall_score: overallScore,
       tests: averagedTests,
     };
   };
+
 
   const athleticBreakdown = buildTeamAthleticBreakdown(rows);
 

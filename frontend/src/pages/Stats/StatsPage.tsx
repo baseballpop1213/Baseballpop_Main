@@ -171,43 +171,46 @@ const ATHLETIC_TEST_KEY_CONFIG: Record<string, AthleticTestConfig> = {
   // --------------------- BALANCE ---------------------
   sls_open_avg_seconds: {
     category: "balance",
-    metricKey: "sls_eyes_open_right", // use one side for label
+    metricKey: "sls_eyes_open_right",
+    visible: false, // hide the synthetic average row
   },
   sls_open_left_seconds: {
     category: "balance",
-    metricKey: "sls_eyes_open_left",
-    visible: false,
+    metricKey: "sls_eyes_open_left", // use the actual left-side metric
+    // visible by default
   },
   sls_open_right_seconds: {
     category: "balance",
-    metricKey: "sls_eyes_open_right",
-    visible: false,
+    metricKey: "sls_eyes_open_right", // use the actual right-side metric
+    // visible by default
   },
   sls_open_points: {
     category: "balance",
     metricKey: "sls_eyes_open_right",
-    visible: false,
+    visible: false, // helper points row – keep hidden
   },
 
   sls_closed_avg_seconds: {
     category: "balance",
     metricKey: "sls_eyes_closed_right",
+    visible: false, // hide the synthetic average row
   },
   sls_closed_left_seconds: {
     category: "balance",
-    metricKey: "sls_eyes_closed_left",
-    visible: false,
+    metricKey: "sls_eyes_closed_left", // actual left-side test
+    // visible by default
   },
   sls_closed_right_seconds: {
     category: "balance",
-    metricKey: "sls_eyes_closed_right",
-    visible: false,
+    metricKey: "sls_eyes_closed_right", // actual right-side test
+    // visible by default
   },
   sls_closed_points: {
     category: "balance",
     metricKey: "sls_eyes_closed_right",
-    visible: false,
+    visible: false, // helper points row – hidden
   },
+
 
   // --------------------- MOBILITY --------------------
   msr_right_raw: {
@@ -2328,7 +2331,8 @@ export default function StatsPage() {
     }
 
     // Prefer the breakdown's athletic overall score if it is present so that
-    // the Athletic card always reflects the latest raw calculations.
+    // the Athletic card always reflects the latest raw calculations, even if
+    // the backend metric is missing or has a null score.
     const athleticBreakdown = (teamStats as any)?.breakdown as
       | Record<string, any>
       | undefined;
@@ -2347,7 +2351,6 @@ export default function StatsPage() {
       athleticSection?.max_points ?? testsAny.max_points
     );
 
-    // If we have total_points / max_points, derive a 0–50 "engine" score.
     const athleticFromPoints =
       athleticTotalPoints !== null &&
       athleticMaxPoints !== null &&
@@ -2358,21 +2361,26 @@ export default function StatsPage() {
     const athleticOverall = parseFiniteNumber(
       athleticSection?.overall_score ??
         testsAny.overall_score ??
-        athleticBreakdown?.athletic_score ??
+        (athleticBreakdown as any)?.athletic_score ??
         athleticFromPoints
     );
 
-    if (athleticOverall != null && map.has("athletic")) {
-      const existing = map.get("athletic")!;
+    if (athleticOverall != null) {
+      const existing = map.get("athletic");
+      const percent = Math.round((athleticOverall / 50) * 100);
+
       map.set("athletic", {
-        ...existing,
-        // Store the 0–150 visual scale in the map, consistent with other metrics.
+        label: existing?.label ?? "Athletic",
+        // Store on the same 0–150 visual scale as the other cards.
         score: athleticOverall * 3,
+        // If backend already had a percent, keep it; otherwise derive from 0–50.
+        percent: existing?.percent ?? percent,
       });
     }
 
     return map;
   }, [teamStats]);
+
 
 
 
