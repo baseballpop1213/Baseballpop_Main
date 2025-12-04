@@ -3345,22 +3345,11 @@ interface TeamEvalSelection {
 
 interface TeamAssessmentMeta {
   byAssessmentId: Map<number, string>;
-  assessmentDetailsById: Map<
-    number,
-    {
-      date: string;
-      performed_at: string | null;
-      template_id: number | null;
-      template_name: string | null;
-      kind: string | null;
-    }
-  >;
   orderedDates: string[]; // ISO date-only strings (YYYY-MM-DD), most recent first
   latestDate: string | null;
   assessments: {
     id: number;
     date: string; // YYYY-MM-DD
-    performed_at: string | null;
     template_id: number | null;
     template_name: string | null;
     kind: string | null;
@@ -3391,15 +3380,6 @@ async function loadTeamAssessmentMeta(
   teamId: string
 ): Promise<TeamAssessmentMeta> {
   const byAssessmentId = new Map<number, string>();
-  const assessmentDetailsById = new Map<
-    number,
-    {
-      date: string;
-      template_id: number | null;
-      template_name: string | null;
-      kind: string | null;
-    }
-  >();
   const assessments: TeamAssessmentMeta["assessments"] = [];
 
   const { data, error } = await supabase
@@ -3411,28 +3391,16 @@ async function loadTeamAssessmentMeta(
 
   if (error || !data) {
     console.error("Error loading assessments for team stats:", error);
-    return {
-      byAssessmentId,
-      assessmentDetailsById,
-      orderedDates: [],
-      latestDate: null,
-      assessments,
-    };
+    return { byAssessmentId, orderedDates: [], latestDate: null, assessments };
   }
 
   const templateIds = new Set<number>();
   const dates: string[] = [];
 
   for (const row of data as any[]) {
-    const performedAtRaw =
-      typeof row.performed_at === "string" ? (row.performed_at as string) : null;
-    const createdAtRaw =
-      typeof row.created_at === "string" ? (row.created_at as string) : null;
-
     const normalizedDate =
-      normalizeDateOnly(performedAtRaw) || normalizeDateOnly(createdAtRaw);
+      normalizeDateOnly(row.performed_at) || normalizeDateOnly(row.created_at);
     if (!normalizedDate) continue;
-    const performedAtTimestamp = performedAtRaw || createdAtRaw || null;
     const templateId =
       typeof row.template_id === "number" ? (row.template_id as number) : null;
     if (typeof row.template_id === "number") {
@@ -3444,7 +3412,6 @@ async function loadTeamAssessmentMeta(
     assessments.push({
       id: row.id as number,
       date: normalizedDate,
-      performed_at: performedAtTimestamp,
       template_id: templateId,
       template_name: null,
       kind: typeof row.kind === "string" ? (row.kind as string) : null,
@@ -3479,20 +3446,9 @@ async function loadTeamAssessmentMeta(
     b.localeCompare(a)
   );
 
-  for (const a of assessmentsWithNames) {
-    assessmentDetailsById.set(a.id, {
-      date: a.date,
-      performed_at: a.performed_at ?? null,
-      template_id: a.template_id,
-      template_name: a.template_name,
-      kind: a.kind,
-    });
-  }
-
 
   return {
     byAssessmentId,
-    assessmentDetailsById,
     orderedDates,
     latestDate: orderedDates[0] ?? null,
     assessments: assessmentsWithNames,
@@ -3995,40 +3951,22 @@ async function computeTeamStatsOverview(
     const addValue = (key: string, value: any) => {
       if (value === null || value === undefined) return;
 
-      const numeric =
-        typeof value === "number"
-          ? Number.isFinite(value)
-            ? value
-            : null
-          : typeof value === "string" && Number.isFinite(Number(value))
-          ? Number(value)
-          : null;
-
-      if (numeric == null) return;
+      let numeric: number;
+      if (typeof value === "number") {
+        if (!Number.isFinite(value)) return;
+        numeric = value;
+      } else if (typeof value === "string") {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed)) return;
+        numeric = parsed;
+      } else {
+        return;
+      }
 
       const agg = testAgg.get(key) ?? { sum: 0, count: 0 };
       agg.sum += numeric;
       agg.count += 1;
       testAgg.set(key, agg);
-    };
-
-    const normalizeKey = (key: string): string => {
-      switch (key) {
-        case "speedScore":
-          return "speed_score";
-        case "strengthScore":
-          return "strength_score";
-        case "powerScore":
-          return "power_score";
-        case "balanceScore":
-          return "balance_score";
-        case "mobilityScore":
-          return "mobility_score";
-        case "staminaScore":
-          return "stamina_score";
-        default:
-          return key;
-      }
     };
 
     for (const row of ratingRows) {
@@ -4053,26 +3991,11 @@ async function computeTeamStatsOverview(
         addValue("overall_score", rawOverall);
       }
 
-      const rawTotalPoints =
-        athleticSection.total_points ?? (tests as any).total_points ?? null;
-      const rawMaxPoints =
-        athleticSection.max_points ?? (tests as any).max_points ?? null;
-
-      if (rawTotalPoints != null) addValue("total_points", rawTotalPoints);
-      if (rawMaxPoints != null) addValue("max_points", rawMaxPoints);
-
       if (tests && typeof tests === "object") {
         for (const [key, value] of Object.entries(tests)) {
-          // we've already handled overall_score / total_points / max_points above
-          if (
-            key === "overall_score" ||
-            key === "total_points" ||
-            key === "max_points"
-          ) {
-            continue;
-          }
-
-          addValue(normalizeKey(key), value);
+          // we've already handled overall_score above
+          if (key === "overall_score") continue;
+          addValue(key, value);
         }
       }
     }
@@ -4089,22 +4012,10 @@ async function computeTeamStatsOverview(
     }
 
     // Expose a team‑level 0–50 engine score for Athletic, with one decimal.
-    let overallScore =
+    const overallScore =
       typeof averagedTests.overall_score === "number"
         ? Math.round(averagedTests.overall_score * 10) / 10
         : null;
-
-    if (overallScore == null) {
-      const totalPoints = averagedTests.total_points;
-      const maxPoints = averagedTests.max_points;
-      if (
-        typeof totalPoints === "number" &&
-        typeof maxPoints === "number" &&
-        maxPoints > 0
-      ) {
-        overallScore = Math.round((totalPoints / maxPoints) * 50 * 10) / 10;
-      }
-    }
 
     if (overallScore !== null) {
       averagedTests.overall_score = overallScore;
@@ -4118,21 +4029,6 @@ async function computeTeamStatsOverview(
 
 
   const athleticBreakdown = buildTeamAthleticBreakdown(rows);
-
-  if (athleticBreakdown?.overall_score != null) {
-    const athleticScore = Number(athleticBreakdown.overall_score.toFixed(1));
-    const athleticPercent = Math.round((athleticBreakdown.overall_score / 50) * 100);
-
-    metrics = metrics.map((m) =>
-      m.code === "athletic"
-        ? {
-            ...m,
-            score: m.score ?? athleticScore,
-            percent: m.percent ?? athleticPercent,
-          }
-        : m
-    );
-  }
 
   return {
     team_id: teamRow.id,
@@ -9890,121 +9786,108 @@ app.get("/teams/:teamId/stats/evaluations", async (req, res) => {
 
   try {
     const meta = await loadTeamAssessmentMeta(teamId);
-    const { data: ratingRows, error: ratingErr } = await supabase
-      .from("player_ratings")
-      .select("assessment_id, player_assessment_id, created_at")
-      .eq("team_id", teamId)
-      .order("created_at", { ascending: false });
 
-    if (ratingErr) {
-      console.error(
-        "Error loading player_ratings for team evaluation options:",
-        ratingErr
-      );
-    }
-
-    const evaluationsBySession = new Map<
-      number,
+    const groupedByDateAndTemplate = new Map<
+      string,
       {
         date: string;
-        performed_at: string | null;
         template_id: number | null;
         template_name: string | null;
         kind: string | null;
       }
     >();
 
-    const upsertFromMeta = (
-      assessmentId: number,
-      fallbackDate: string | null,
-      fallbackPerformedAt: string | null
+    const buildTemplateKey = (
+      template_id: number | null,
+      template_name: string | null,
+      kind: string | null
     ) => {
-      const metaDetails = meta.assessmentDetailsById.get(assessmentId);
-      const date = metaDetails?.date ?? fallbackDate;
-      if (!date) return;
+      if (typeof template_id === "number") return `template-${template_id}`;
+      if (template_name && template_name.trim().length) {
+        return `name-${template_name.trim().toLowerCase()}`;
+      }
+      if (kind && kind.trim().length) {
+        return `kind-${kind.trim().toLowerCase()}`;
+      }
+      return "unknown";
+    };
 
-      const existing = evaluationsBySession.get(assessmentId) ?? {
-        date,
-        performed_at: fallbackPerformedAt,
-        template_id: null as number | null,
-        template_name: null as string | null,
-        kind: null as string | null,
-      };
+    const upsertGroupedEntry = (
+      dateOnly: string,
+      template_id: number | null,
+      template_name: string | null,
+      kind: string | null
+    ) => {
+      const key = `${dateOnly}|${buildTemplateKey(
+        template_id,
+        template_name,
+        kind
+      )}`;
 
-      evaluationsBySession.set(assessmentId, {
-        date: existing.date || date,
-        performed_at:
-          metaDetails?.performed_at ?? existing.performed_at ?? fallbackPerformedAt ?? null,
-        template_id: metaDetails?.template_id ?? existing.template_id ?? null,
-        template_name:
-          metaDetails?.template_name ?? existing.template_name ?? null,
-        kind: metaDetails?.kind ?? existing.kind ?? null,
+      const existing = groupedByDateAndTemplate.get(key);
+      if (!existing) {
+        groupedByDateAndTemplate.set(key, {
+          date: dateOnly,
+          template_id,
+          template_name,
+          kind,
+        });
+        return;
+      }
+
+      groupedByDateAndTemplate.set(key, {
+        date: existing.date,
+        template_id: existing.template_id ?? template_id ?? null,
+        template_name: existing.template_name ?? template_name ?? null,
+        kind: existing.kind ?? kind ?? null,
       });
     };
 
-    if (ratingRows && ratingRows.length) {
-      for (const row of ratingRows as any[]) {
-        const sessionId =
-          typeof row.assessment_id === "number"
-            ? (row.assessment_id as number)
-            : typeof row.player_assessment_id === "number"
-            ? (row.player_assessment_id as number)
-            : null;
-
-        if (sessionId == null) continue;
-
-        const dateOnly = normalizeDateOnly(row.created_at);
-        const performedAt =
-          typeof row.created_at === "string" ? (row.created_at as string) : null;
-        upsertFromMeta(sessionId, dateOnly, performedAt);
-      }
+    for (const assessment of meta.assessments) {
+      upsertGroupedEntry(
+        assessment.date,
+        assessment.template_id,
+        assessment.template_name,
+        assessment.kind
+      );
     }
 
-    // Ensure any assessments known to metadata but not present in the rating rows
-    // still show up as selectable options.
-    if (!evaluationsBySession.size) {
-      for (const assessment of meta.assessments) {
-        if (!assessment.date) continue;
-        evaluationsBySession.set(assessment.id, {
-          date: assessment.date,
-          performed_at: assessment.performed_at ?? null,
-          template_id: assessment.template_id,
-          template_name: assessment.template_name,
-          kind: assessment.kind,
-        });
-      }
-    } else {
-      for (const assessment of meta.assessments) {
-        if (evaluationsBySession.has(assessment.id)) continue;
-        if (!assessment.date) continue;
-        evaluationsBySession.set(assessment.id, {
-          date: assessment.date,
-          performed_at: assessment.performed_at ?? null,
-          template_id: assessment.template_id,
-          template_name: assessment.template_name,
-          kind: assessment.kind,
-        });
+    // Fallback: if we didn't find assessment rows, pull distinct created_at dates
+    // from player_ratings to avoid showing one option per player row.
+    if (!groupedByDateAndTemplate.size) {
+      const { data: ratingRows, error: ratingErr } = await supabase
+        .from("player_ratings")
+        .select("created_at")
+        .eq("team_id", teamId)
+        .order("created_at", { ascending: false });
+
+      if (ratingErr) {
+        console.error(
+          "Team evaluations fallback: error loading player_ratings:",
+          ratingErr
+        );
+      } else if (ratingRows && ratingRows.length) {
+        for (const row of ratingRows as any[]) {
+          const dateOnly = normalizeDateOnly(row.created_at);
+          if (!dateOnly) continue;
+          upsertGroupedEntry(dateOnly, null, null, null);
+        }
       }
     }
 
     const formatEvalLabel = (
-      performedAt: string | null,
-      fallbackDate: string,
+      dateOnly: string,
       templateName: string | null,
       kind: string | null
     ): string => {
-      const raw = performedAt ?? fallbackDate;
-      const date = raw ? new Date(raw) : null;
-      const dateLabel =
-        date && !Number.isNaN(date.getTime())
-          ? date.toLocaleString(undefined, {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-              hour: "numeric",
-              minute: "2-digit",
-            })
-          : fallbackDate;
+      const date = new Date(dateOnly);
+      const dateLabel = Number.isNaN(date.getTime())
+        ? dateOnly
+        : date.toLocaleDateString(undefined, {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          });
 
       const typeLabel =
         (templateName && templateName.trim()) ||
@@ -10025,25 +9908,23 @@ app.get("/teams/:teamId/stats/evaluations", async (req, res) => {
       return dateLabel;
     };
 
-    const evaluations = Array.from(evaluationsBySession.entries())
-      .sort((a, b) => {
-        const aKey = (a[1].performed_at ?? a[1].date) || "";
-        const bKey = (b[1].performed_at ?? b[1].date) || "";
-        return bKey.localeCompare(aKey);
-      })
-      .map(([assessmentId, entry]) => ({
-        id: String(assessmentId),
-        performed_at: entry.performed_at ?? entry.date,
-        label: formatEvalLabel(
-          entry.performed_at ?? null,
-          entry.date,
+    const evaluations = Array.from(groupedByDateAndTemplate.values())
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .map((entry) => {
+        const id = `${entry.date}|${buildTemplateKey(
+          entry.template_id,
           entry.template_name,
           entry.kind
-        ),
-        template_id: entry.template_id,
-        template_name: entry.template_name,
-        kind: entry.kind,
-      }));
+        )}`;
+        return {
+          id,
+          performed_at: entry.date,
+          label: formatEvalLabel(entry.date, entry.template_name, entry.kind),
+          template_id: entry.template_id,
+          template_name: entry.template_name,
+          kind: entry.kind,
+        };
+      });
 
     return res.status(200).json({ team_id: teamId, evaluations });
   } catch (err) {
