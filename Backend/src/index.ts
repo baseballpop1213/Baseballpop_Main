@@ -654,38 +654,6 @@ app.get("/", (_req, res) => {
  * Get current user's profile from the "profiles" table.
  * Requires Authorization: Bearer <Supabase access token>
  */
-/**
- * Get current user's profile from the "profiles" table.
- * Requires Authorization: Bearer <Supabase access token>
- * Supports both /me and /api/me so it works whether we call backend directly
- * or via the Vite /api proxy.
- */
-async function getCurrentUserProfile(req: AuthedRequest, res: any) {
-  const userId = req.user!.id;
-
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", userId)
-    .maybeSingle();
-
-  if (error) {
-    console.error("Error fetching profile:", error);
-    return res.status(500).json({ error: error.message });
-  }
-
-  if (!data) {
-    // Logged-in, but no profile row yet
-    return res.status(404).json({ error: "Profile not found" });
-  }
-
-  return res.json(data);
-}
-
-/**
- * Get current user's profile from the "profiles" table.
- * Requires Authorization: Bearer <Supabase access token>
- */
 app.get("/me", requireAuth, async (req: AuthedRequest, res) => {
   const userId = req.user!.id;
 
@@ -3340,8 +3308,21 @@ type TeamEvalScope = "latest_eval" | "all_star" | "specific" | null;
 
 interface TeamEvalSelection {
   evalScope?: TeamEvalScope;
+  /**
+   * Optional exact rating session id (player_ratings.assessment_id) to
+   * filter to a single eval run. For older data we also fall back to
+   * player_assessment_id if needed.
+   */
+  assessmentId?: number | null;
+  /**
+   * Optional date filter (YYYY-MM-DD or full ISO). Kept for
+   * backwards compatibility. When both assessmentId and
+   * assessmentDate are provided, assessmentId wins.
+   */
   assessmentDate?: string | null;
 }
+
+
 
 interface TeamAssessmentMeta {
   byAssessmentId: Map<number, string>;
@@ -3364,13 +3345,6 @@ function extractDatePart(value: string | null | undefined): string | null {
   return match ? match[1] : null;
 }
 
-function normalizeIsoDate(value: string | null | undefined): string | null {
-  const dateOnly = extractDatePart(value);
-  if (!dateOnly) return null;
-  // We just need a consistent ISO string; fix it at midnight UTC
-  return `${dateOnly}T00:00:00.000Z`;
-}
-
 function normalizeDateOnly(value: string | null | undefined): string | null {
   return extractDatePart(value);
 }
@@ -3384,7 +3358,8 @@ async function loadTeamAssessmentMeta(
 
   const { data, error } = await supabase
     .from("player_assessments")
-    .select("id, performed_at, created_at, template_id, kind")
+    // ❌ removed created_at (column does not exist on player_assessments)
+    .select("id, performed_at, template_id, kind")
     .eq("team_id", teamId)
     .in("kind", ["official", "practice"])
     .order("performed_at", { ascending: false });
@@ -3398,13 +3373,14 @@ async function loadTeamAssessmentMeta(
   const dates: string[] = [];
 
   for (const row of data as any[]) {
-    const normalizedDate =
-      normalizeDateOnly(row.performed_at) || normalizeDateOnly(row.created_at);
+    // We only have performed_at on player_assessments; normalize that.
+    const normalizedDate = normalizeDateOnly(row.performed_at);
     if (!normalizedDate) continue;
+
     const templateId =
       typeof row.template_id === "number" ? (row.template_id as number) : null;
-    if (typeof row.template_id === "number") {
-      templateIds.add(row.template_id as number);
+    if (templateId !== null) {
+      templateIds.add(templateId);
     }
 
     byAssessmentId.set(row.id as number, normalizedDate);
@@ -3446,7 +3422,6 @@ async function loadTeamAssessmentMeta(
     b.localeCompare(a)
   );
 
-
   return {
     byAssessmentId,
     orderedDates,
@@ -3454,6 +3429,7 @@ async function loadTeamAssessmentMeta(
     assessments: assessmentsWithNames,
   };
 }
+
 
 function getAssessmentDateForRatingRow(
   row: { assessment_id?: any; player_assessment_id?: any; created_at?: any },
@@ -3690,11 +3666,25 @@ async function computeTeamStatsOverview(
     );
   }
 
+  // 4) Apply eval scoping: assessmentId (session) wins over date.
   const assessmentMeta = await loadTeamAssessmentMeta(teamId);
   const normalizedAssessmentDate = normalizeDateOnly(options.assessmentDate);
 
+  const targetAssessmentId =
+    typeof options.assessmentId === "number" &&
+    Number.isFinite(options.assessmentId)
+      ? options.assessmentId
+      : null;
+
   let targetAssessmentDate: string | null = null;
-  if (options.evalScope === "latest_eval") {
+
+  if (targetAssessmentId != null) {
+    // Optional: if this ID maps to a player_assessments row, capture its date
+    const fromMeta = assessmentMeta.byAssessmentId.get(targetAssessmentId);
+    if (fromMeta) {
+      targetAssessmentDate = fromMeta;
+    }
+  } else if (options.evalScope === "latest_eval") {
     targetAssessmentDate = resolveLatestAssessmentDate(
       assessmentMeta,
       filteredRows
@@ -3706,7 +3696,34 @@ async function computeTeamStatsOverview(
     targetAssessmentDate = normalizedAssessmentDate;
   }
 
-  if (targetAssessmentDate) {
+  if (targetAssessmentId != null) {
+    // Primary filter: match rating session id (assessment_id), with a
+    // fallback to player_assessment_id for older data.
+    const filteredById = filteredRows.filter((row) => {
+      const candidates = [
+        (row as any).assessment_id,
+        (row as any).player_assessment_id,
+      ];
+      return candidates.some(
+        (v) => typeof v === "number" && v === targetAssessmentId
+      );
+    });
+
+    if (filteredById.length > 0) {
+      filteredRows = filteredById;
+    } else if (targetAssessmentDate) {
+      // Fallback: if we couldn't find rows by ID, fall back to date
+      const filteredByDate = filteredRows.filter((row) => {
+        const performedAt = getAssessmentDateForRatingRow(row, assessmentMeta);
+        if (!performedAt) return false;
+        return normalizeDateOnly(performedAt) === targetAssessmentDate;
+      });
+
+      if (filteredByDate.length > 0) {
+        filteredRows = filteredByDate;
+      }
+    }
+  } else if (targetAssessmentDate) {
     const filteredByDate = filteredRows.filter((row) => {
       const performedAt = getAssessmentDateForRatingRow(row, assessmentMeta);
       if (!performedAt) return false;
@@ -3728,7 +3745,8 @@ async function computeTeamStatsOverview(
     };
   }
 
-  // 4) Determine which rows to use: all-star aggregate or latest per player
+  // 5) Determine which rows to use: all‑star aggregate or the single latest
+  //    row per player (within the team / age group / eval scope above).
   let rows: TeamRatingRow[] = [];
 
   if (options.evalScope === "all_star") {
@@ -3736,22 +3754,25 @@ async function computeTeamStatsOverview(
   } else {
     const latestByPlayer = new Map<string, TeamRatingRow>();
 
-    for (const row of filteredRows) {
-      const playerId = row.player_id;
-      const existing = latestByPlayer.get(playerId);
+    for (const raw of filteredRows) {
+      const playerId = raw.player_id;
+      if (!playerId) continue;
 
+      const existing = latestByPlayer.get(playerId);
       if (!existing) {
-        latestByPlayer.set(playerId, row);
+        latestByPlayer.set(playerId, raw);
         continue;
       }
 
-      const existingTime = existing.created_at
+      const existingCreated = existing.created_at
         ? new Date(existing.created_at).getTime()
         : 0;
-      const rowTime = row.created_at ? new Date(row.created_at).getTime() : 0;
+      const rowCreated = raw.created_at
+        ? new Date(raw.created_at).getTime()
+        : 0;
 
-      if (rowTime > existingTime) {
-        latestByPlayer.set(playerId, row);
+      if (rowCreated > existingCreated) {
+        latestByPlayer.set(playerId, raw);
       }
     }
 
@@ -3768,7 +3789,7 @@ async function computeTeamStatsOverview(
     };
   }
 
-  // 5) Build metrics (BPOP rating + offense/defense/pitching/athletic)
+  // 6) Build metrics (BPOP rating + offense/defense/pitching/athletic)
 
   const buildMetricsForRows = (
     ratingRows: TeamRatingRow[]
@@ -3926,6 +3947,8 @@ async function computeTeamStatsOverview(
 
   let metrics = buildMetricsForRows(rows);
 
+  // When we’re pinned to a specific eval, fall back to all‑star rows
+  // if a particular metric is missing from this session.
   if (options.evalScope === "specific") {
     const fallbackRows = buildAllStarRows(filteredRows);
     const fallbackMetrics = buildMetricsForRows(fallbackRows);
@@ -3943,6 +3966,8 @@ async function computeTeamStatsOverview(
     });
   }
 
+  // 7) Athletic breakdown – aggregate tests, including Pro total/max points
+  //    and normalize camelCase → snake_case keys.
   const buildTeamAthleticBreakdown = (
     ratingRows: TeamRatingRow[]
   ): { overall_score: number | null; tests: Record<string, number> } | null => {
@@ -3969,6 +3994,35 @@ async function computeTeamStatsOverview(
       testAgg.set(key, agg);
     };
 
+    const normalizeKey = (raw: string): string => {
+      if (!raw) return raw;
+      if (raw.includes("_")) return raw.toLowerCase();
+
+      const withUnderscores = raw.replace(/([a-z0-9])([A-Z])/g, "$1_$2");
+      const lower = withUnderscores.toLowerCase();
+
+      switch (lower) {
+        case "speedscore":
+          return "speed_score";
+        case "strengthscore":
+          return "strength_score";
+        case "powerscore":
+          return "power_score";
+        case "balancescore":
+          return "balance_score";
+        case "mobilityscore":
+          return "mobility_score";
+        case "totalpoints":
+          return "total_points";
+        case "maxpoints":
+          return "max_points";
+        case "overallscore":
+          return "overall_score";
+        default:
+          return lower;
+      }
+    };
+
     for (const row of ratingRows) {
       let breakdown: any = (row as any).breakdown ?? {};
 
@@ -3982,28 +4036,72 @@ async function computeTeamStatsOverview(
       }
 
       const athleticSection: any = breakdown.athletic ?? breakdown.athlete ?? {};
-      const tests: any = athleticSection.tests ?? athleticSection ?? {};
+      const testsRaw: any =
+        athleticSection.tests && typeof athleticSection.tests === "object"
+          ? athleticSection.tests
+          : athleticSection ?? {};
 
-      // Overall score may be stored on the section or inside tests.
+      // Normalize keys (handles camelCase variants from Pro templates).
+      const tests: Record<string, any> = {};
+      if (testsRaw && typeof testsRaw === "object") {
+        for (const [rawKey, value] of Object.entries(testsRaw)) {
+          const key = normalizeKey(rawKey);
+          tests[key] = value;
+        }
+      }
+
+      // Pull overall_score, total_points, max_points from either the section
+      // or the tests object (Pro templates often store them differently).
       const rawOverall =
-        athleticSection.overall_score ?? (tests as any).overall_score ?? null;
+        athleticSection.overall_score ??
+        (athleticSection as any).overallScore ??
+        tests.overall_score ??
+        (tests as any).overallscore ??
+        null;
+
       if (rawOverall != null) {
         addValue("overall_score", rawOverall);
       }
 
-      if (tests && typeof tests === "object") {
-        for (const [key, value] of Object.entries(tests)) {
-          // we've already handled overall_score above
-          if (key === "overall_score") continue;
-          addValue(key, value);
+      const rawTotalPoints =
+        athleticSection.total_points ??
+        (athleticSection as any).totalPoints ??
+        tests.total_points ??
+        (tests as any).totalpoints ??
+        null;
+
+      if (rawTotalPoints != null) {
+        addValue("total_points", rawTotalPoints);
+      }
+
+      const rawMaxPoints =
+        athleticSection.max_points ??
+        (athleticSection as any).maxPoints ??
+        tests.max_points ??
+        (tests as any).maxpoints ??
+        null;
+
+      if (rawMaxPoints != null) {
+        addValue("max_points", rawMaxPoints);
+      }
+
+      // Aggregate all other test fields (speed_score, situps, etc.)
+      for (const [rawKey, value] of Object.entries(tests)) {
+        const key = normalizeKey(rawKey);
+        if (
+          key === "overall_score" ||
+          key === "total_points" ||
+          key === "max_points"
+        ) {
+          continue;
         }
+        addValue(key, value);
       }
     }
 
     const averagedTests: Record<string, number> = {};
     for (const [key, agg] of testAgg.entries()) {
       if (!agg.count) continue;
-      // two decimals for raw times/distances/points
       averagedTests[key] = Math.round((agg.sum / agg.count) * 100) / 100;
     }
 
@@ -4011,13 +4109,29 @@ async function computeTeamStatsOverview(
       return null;
     }
 
-    // Expose a team‑level 0–50 engine score for Athletic, with one decimal.
-    const overallScore =
-      typeof averagedTests.overall_score === "number"
-        ? Math.round(averagedTests.overall_score * 10) / 10
-        : null;
+    let overallScore: number | null = null;
 
-    if (overallScore !== null) {
+    if (typeof averagedTests.overall_score === "number") {
+      // Already a 0–50 engine score
+      overallScore = Math.round(averagedTests.overall_score * 10) / 10;
+    } else {
+      const avgTotal =
+        typeof averagedTests.total_points === "number"
+          ? averagedTests.total_points
+          : null;
+      const avgMax =
+        typeof averagedTests.max_points === "number"
+          ? averagedTests.max_points
+          : null;
+
+      if (avgTotal != null && avgMax != null && avgMax > 0) {
+        // Derive 0–50 score from total_points / max_points
+        const ratio = avgTotal / avgMax;
+        overallScore = Math.round(ratio * 50 * 10) / 10;
+      }
+    }
+
+    if (overallScore != null) {
       averagedTests.overall_score = overallScore;
     }
 
@@ -4027,9 +4141,31 @@ async function computeTeamStatsOverview(
     };
   };
 
-
   const athleticBreakdown = buildTeamAthleticBreakdown(rows);
 
+  // If the athletic breakdown has an engine score, prefer it to the
+  // metric-derived value when the metric is missing.
+  if (athleticBreakdown && athleticBreakdown.overall_score != null) {
+    const idx = metrics.findIndex((m) => m.code === "athletic");
+    if (idx !== -1) {
+      const current = metrics[idx];
+
+      const derivedScore = Number(
+        athleticBreakdown.overall_score.toFixed(1)
+      );
+      const derivedPercent = Math.round(
+        (athleticBreakdown.overall_score / 50) * 100
+      );
+
+      metrics[idx] = {
+        ...current,
+        score: current.score ?? derivedScore,
+        percent: current.percent ?? derivedPercent,
+      };
+    }
+  }
+
+  // 8) Final payload
   return {
     team_id: teamRow.id,
     team_name: teamRow.name ?? null,
@@ -4041,6 +4177,7 @@ async function computeTeamStatsOverview(
       : {}),
   };
 }
+
 
 async function computeTeamOffenseDrilldown(
   teamId: string,
@@ -4103,8 +4240,20 @@ async function computeTeamOffenseDrilldown(
   const assessmentMeta = await loadTeamAssessmentMeta(teamId);
   const normalizedAssessmentDate = normalizeDateOnly(options.assessmentDate);
 
+  const targetAssessmentId =
+    typeof options.assessmentId === "number" &&
+    Number.isFinite(options.assessmentId)
+      ? options.assessmentId
+      : null;
+
   let targetAssessmentDate: string | null = null;
-  if (options.evalScope === "latest_eval") {
+
+  if (targetAssessmentId != null) {
+    const fromMeta = assessmentMeta.byAssessmentId.get(targetAssessmentId);
+    if (fromMeta) {
+      targetAssessmentDate = fromMeta;
+    }
+  } else if (options.evalScope === "latest_eval") {
     targetAssessmentDate = resolveLatestAssessmentDate(
       assessmentMeta,
       filteredRows
@@ -4116,7 +4265,31 @@ async function computeTeamOffenseDrilldown(
     targetAssessmentDate = normalizedAssessmentDate;
   }
 
-  if (targetAssessmentDate) {
+  if (targetAssessmentId != null) {
+    const filteredById = filteredRows.filter((row) => {
+      const candidates = [
+        (row as any).player_assessment_id,
+        (row as any).assessment_id,
+      ];
+      return candidates.some(
+        (v) => typeof v === "number" && v === targetAssessmentId
+      );
+    });
+
+    if (filteredById.length > 0) {
+      filteredRows = filteredById;
+    } else if (targetAssessmentDate) {
+      const filteredByDate = filteredRows.filter((row) => {
+        const performedAt = getAssessmentDateForRatingRow(row, assessmentMeta);
+        if (!performedAt) return false;
+        return normalizeDateOnly(performedAt) === targetAssessmentDate;
+      });
+
+      if (filteredByDate.length > 0) {
+        filteredRows = filteredByDate;
+      }
+    }
+  } else if (targetAssessmentDate) {
     const filteredByDate = filteredRows.filter((row) => {
       const performedAt = getAssessmentDateForRatingRow(row, assessmentMeta);
       if (!performedAt) return false;
@@ -4129,6 +4302,7 @@ async function computeTeamOffenseDrilldown(
   }
 
   if (!filteredRows.length) {
+    // existing "empty payload" return here stays the same
     return {
       team_id: teamRow.id,
       team_name: teamRow.name ?? null,
@@ -4145,6 +4319,7 @@ async function computeTeamOffenseDrilldown(
       },
     };
   }
+
 
   let latestRows: TeamRatingRow[] = [];
 
@@ -9746,6 +9921,7 @@ app.get("/teams/:teamId/stats/overview", async (req, res) => {
 
   const evalScopeRaw = req.query.eval_scope;
   const assessmentDateRaw = req.query.assessment_date;
+  const assessmentIdRaw = req.query.assessment_id;
 
   const evalScope =
     typeof evalScopeRaw === "string" &&
@@ -9758,9 +9934,18 @@ app.get("/teams/:teamId/stats/overview", async (req, res) => {
       ? assessmentDateRaw
       : null;
 
+  let assessmentId: number | null = null;
+  if (typeof assessmentIdRaw === "string" && assessmentIdRaw.trim().length) {
+    const parsed = Number(assessmentIdRaw);
+    if (Number.isFinite(parsed)) {
+      assessmentId = parsed;
+    }
+  }
+
   try {
     const overview = await computeTeamStatsOverview(teamId, {
       evalScope,
+      assessmentId,
       assessmentDate,
     });
     if (!overview) {
@@ -9776,7 +9961,8 @@ app.get("/teams/:teamId/stats/overview", async (req, res) => {
   }
 });
 
-// Team stats evaluation options
+
+// Team stats evaluation options – Option B: one row per rating session
 app.get("/teams/:teamId/stats/evaluations", async (req, res) => {
   const teamId = req.params.teamId;
 
@@ -9785,111 +9971,106 @@ app.get("/teams/:teamId/stats/evaluations", async (req, res) => {
   }
 
   try {
-    const meta = await loadTeamAssessmentMeta(teamId);
+    // 1) Find which assessments actually produced ratings for this team
+    const { data: ratingRows, error: ratingErr } = await supabase
+      .from("player_ratings")
+      .select("assessment_id, player_assessment_id")
+      .eq("team_id", teamId);
 
-    const groupedByDateAndTemplate = new Map<
-      string,
-      {
-        date: string;
-        template_id: number | null;
-        template_name: string | null;
-        kind: string | null;
-      }
-    >();
-
-    const buildTemplateKey = (
-      template_id: number | null,
-      template_name: string | null,
-      kind: string | null
-    ) => {
-      if (typeof template_id === "number") return `template-${template_id}`;
-      if (template_name && template_name.trim().length) {
-        return `name-${template_name.trim().toLowerCase()}`;
-      }
-      if (kind && kind.trim().length) {
-        return `kind-${kind.trim().toLowerCase()}`;
-      }
-      return "unknown";
-    };
-
-    const upsertGroupedEntry = (
-      dateOnly: string,
-      template_id: number | null,
-      template_name: string | null,
-      kind: string | null
-    ) => {
-      const key = `${dateOnly}|${buildTemplateKey(
-        template_id,
-        template_name,
-        kind
-      )}`;
-
-      const existing = groupedByDateAndTemplate.get(key);
-      if (!existing) {
-        groupedByDateAndTemplate.set(key, {
-          date: dateOnly,
-          template_id,
-          template_name,
-          kind,
-        });
-        return;
-      }
-
-      groupedByDateAndTemplate.set(key, {
-        date: existing.date,
-        template_id: existing.template_id ?? template_id ?? null,
-        template_name: existing.template_name ?? template_name ?? null,
-        kind: existing.kind ?? kind ?? null,
-      });
-    };
-
-    for (const assessment of meta.assessments) {
-      upsertGroupedEntry(
-        assessment.date,
-        assessment.template_id,
-        assessment.template_name,
-        assessment.kind
+    if (ratingErr) {
+      console.error(
+        "Team evaluations: error loading player_ratings:",
+        ratingErr
       );
+      return res
+        .status(500)
+        .json({ error: "Failed to load team evaluations." });
     }
 
-    // Fallback: if we didn't find assessment rows, pull distinct created_at dates
-    // from player_ratings to avoid showing one option per player row.
-    if (!groupedByDateAndTemplate.size) {
-      const { data: ratingRows, error: ratingErr } = await supabase
-        .from("player_ratings")
-        .select("created_at")
-        .eq("team_id", teamId)
-        .order("created_at", { ascending: false });
+    const assessmentIdSet = new Set<number>();
 
-      if (ratingErr) {
-        console.error(
-          "Team evaluations fallback: error loading player_ratings:",
-          ratingErr
-        );
-      } else if (ratingRows && ratingRows.length) {
-        for (const row of ratingRows as any[]) {
-          const dateOnly = normalizeDateOnly(row.created_at);
-          if (!dateOnly) continue;
-          upsertGroupedEntry(dateOnly, null, null, null);
+    for (const row of (ratingRows ?? []) as any[]) {
+      const candidates = [row.assessment_id, row.player_assessment_id];
+      for (const raw of candidates) {
+        if (typeof raw === "number" && Number.isFinite(raw)) {
+          assessmentIdSet.add(raw);
         }
       }
     }
 
+    if (!assessmentIdSet.size) {
+      // No ratings yet – frontend will still show All‑Star / Latest Eval
+      return res.status(200).json({
+        team_id: teamId,
+        evaluations: [],
+      });
+    }
+
+    const assessmentIds = Array.from(assessmentIdSet);
+
+    // 2) Load the corresponding player_assessments rows
+    const { data: assessmentRows, error: assessmentErr } = await supabase
+      .from("player_assessments")
+      // ❌ removed created_at (column does not exist on player_assessments)
+      .select("id, performed_at, template_id, kind")
+      .in("id", assessmentIds);
+
+
+    if (assessmentErr) {
+      console.error(
+        "Team evaluations: error loading player_assessments:",
+        assessmentErr
+      );
+      return res
+        .status(500)
+        .json({ error: "Failed to load team evaluations." });
+    }
+
+    if (!assessmentRows || !assessmentRows.length) {
+      return res.status(200).json({
+        team_id: teamId,
+        evaluations: [],
+      });
+    }
+
+    // 3) Load template names (if any)
+    const templateIdSet = new Set<number>();
+    for (const row of assessmentRows as any[]) {
+      if (typeof row.template_id === "number") {
+        templateIdSet.add(row.template_id as number);
+      }
+    }
+
+    let templateNames = new Map<number, string>();
+
+    if (templateIdSet.size > 0) {
+      const { data: templates, error: templateErr } = await supabase
+        .from("assessment_templates")
+        .select("id, name")
+        .in("id", Array.from(templateIdSet));
+
+      if (templateErr) {
+        console.error(
+          "Team evaluations: error loading assessment_templates:",
+          templateErr
+        );
+      } else if (templates) {
+        templateNames = new Map(
+          (templates as any[])
+            .filter(
+              (t) => typeof t.id === "number" && typeof t.name === "string"
+            )
+            .map((t) => [t.id as number, t.name as string])
+        );
+      }
+    }
+
     const formatEvalLabel = (
-      dateOnly: string,
+      timestamp: string | null,
       templateName: string | null,
       kind: string | null
     ): string => {
-      const date = new Date(dateOnly);
-      const dateLabel = Number.isNaN(date.getTime())
-        ? dateOnly
-        : date.toLocaleDateString(undefined, {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          });
-
-      const typeLabel =
+      const humanType =
         (templateName && templateName.trim()) ||
         (kind && kind.trim()
           ? kind
@@ -9903,28 +10084,56 @@ app.get("/teams/:teamId/stats/evaluations", async (req, res) => {
               .join(" ")
           : null);
 
-      if (typeLabel) return `${dateLabel} — ${typeLabel}`;
+      if (!timestamp) {
+        return humanType ?? "Unknown date";
+      }
 
-      return dateLabel;
+      const d = new Date(timestamp);
+      const dateLabel = Number.isNaN(d.getTime())
+        ? timestamp
+        : d.toLocaleString(undefined, {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+          });
+
+      return humanType ? `${dateLabel} — ${humanType}` : dateLabel;
     };
 
-    const evaluations = Array.from(groupedByDateAndTemplate.values())
-      .sort((a, b) => b.date.localeCompare(a.date))
-      .map((entry) => {
-        const id = `${entry.date}|${buildTemplateKey(
-          entry.template_id,
-          entry.template_name,
-          entry.kind
-        )}`;
-        return {
-          id,
-          performed_at: entry.date,
-          label: formatEvalLabel(entry.date, entry.template_name, entry.kind),
-          template_id: entry.template_id,
-          template_name: entry.template_name,
-          kind: entry.kind,
-        };
-      });
+    const evaluations = (assessmentRows as any[])
+    .map((row) => {
+      const performedAt =
+        (row.performed_at as string | null) ?? null;
+
+      const templateId =
+        typeof row.template_id === "number"
+          ? (row.template_id as number)
+          : null;
+      const templateName =
+        templateId != null ? templateNames.get(templateId) ?? null : null;
+      const kind =
+        typeof row.kind === "string" ? (row.kind as string) : null;
+
+      const label = formatEvalLabel(performedAt, templateName, kind);
+
+      return {
+        id: String(row.id), // stringified player_assessments.id
+        performed_at: performedAt ?? "",
+        label,
+        template_id: templateId,
+        template_name: templateName,
+        kind,
+      };
+    })
+    // Most recent first
+    .sort((a, b) => {
+      const aTs = a.performed_at || "";
+      const bTs = b.performed_at || "";
+      return bTs.localeCompare(aTs);
+    });
+
 
     return res.status(200).json({ team_id: teamId, evaluations });
   } catch (err) {
@@ -9932,9 +10141,12 @@ app.get("/teams/:teamId/stats/evaluations", async (req, res) => {
       "Unexpected error in GET /teams/:teamId/stats/evaluations:",
       err
     );
-    return res.status(500).json({ error: "Failed to load team evaluations." });
+    return res
+      .status(500)
+      .json({ error: "Failed to load team evaluations." });
   }
 });
+
 
 app.get(
   "/teams/:teamId/stats/offense",
@@ -9948,6 +10160,7 @@ app.get(
 
     const evalScopeRaw = req.query.eval_scope;
     const assessmentDateRaw = req.query.assessment_date;
+    const assessmentIdRaw = req.query.assessment_id;
 
     const evalScope =
       typeof evalScopeRaw === "string" &&
@@ -9960,6 +10173,14 @@ app.get(
         ? assessmentDateRaw
         : null;
 
+    let assessmentId: number | null = null;
+    if (typeof assessmentIdRaw === "string" && assessmentIdRaw.trim().length) {
+      const parsed = Number(assessmentIdRaw);
+      if (Number.isFinite(parsed)) {
+        assessmentId = parsed;
+      }
+    }
+
     const role = await assertTeamRoleOr403(
       req,
       res,
@@ -9971,6 +10192,7 @@ app.get(
     try {
       const drilldown = await computeTeamOffenseDrilldown(teamId, {
         evalScope,
+        assessmentId,
         assessmentDate,
       });
       if (!drilldown) {
@@ -9991,6 +10213,7 @@ app.get(
     }
   }
 );
+
 
 
 // Player stats overview
