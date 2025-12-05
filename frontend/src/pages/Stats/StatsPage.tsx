@@ -211,25 +211,28 @@ const ATHLETIC_TEST_KEY_CONFIG: Record<string, AthleticTestConfig> = {
     visible: false, // helper points row – hidden
   },
 
-
   // --------------------- MOBILITY --------------------
+  // Show raw mobility entries (user selections) in the UI,
+  // and keep the points-based fields hidden for rubric-only use.
   msr_right_raw: {
     category: "mobility",
     metricKey: "msr_right",
-    visible: false,
+    visible: true,
   },
   msr_left_raw: {
     category: "mobility",
     metricKey: "msr_left",
-    visible: false,
+    visible: true,
   },
   msr_right_points: {
     category: "mobility",
     metricKey: "msr_right",
+    visible: false,
   },
   msr_left_points: {
     category: "mobility",
     metricKey: "msr_left",
+    visible: false,
   },
   msr_points_total: {
     category: "mobility",
@@ -240,24 +243,63 @@ const ATHLETIC_TEST_KEY_CONFIG: Record<string, AthleticTestConfig> = {
   toe_touch_raw_points: {
     category: "mobility",
     metricKey: "toe_touch",
-    visible: false,
+    visible: true,
   },
   toe_touch_points: {
     category: "mobility",
     metricKey: "toe_touch",
+    visible: false,
   },
 
   deep_squat_raw_points: {
     category: "mobility",
     metricKey: "deep_squat",
-    visible: false,
+    visible: true,
   },
   deep_squat_points: {
     category: "mobility",
     metricKey: "deep_squat",
+    visible: false,
   },
 };
 
+/**
+ * Map visible raw tests → which hidden *_points key to use for their rubric
+ * (0–50 engine scale per test).
+ */
+const ATHLETIC_TEST_POINTS_SOURCE: Record<string, string> = {
+  // Speed
+  run_1b_seconds: "run_1b_points",
+  run_1b_fps: "run_1b_points",
+  run_1b_distance_ft: "run_1b_points",
+  run_4b_seconds: "run_4b_points",
+  run_4b_fps: "run_4b_points",
+  run_4b_distance_ft: "run_4b_points",
+
+  // Strength
+  situps_30_raw: "situps_30_points",
+  pushups_30_raw: "pushups_30_points",
+  situps_60_raw: "situps_60_points",
+  pushups_60_raw: "pushups_60_points",
+  pullups_60_raw: "pullups_60_points",
+
+  // Power
+  vjump_inches_raw: "vjump_points",
+  aspscp_distance_ft: "aspscp_points",
+  aspsup_distance_ft: "aspsup_points",
+
+  // Balance
+  sls_open_left_seconds: "sls_open_points",
+  sls_open_right_seconds: "sls_open_points",
+  sls_closed_left_seconds: "sls_closed_points",
+  sls_closed_right_seconds: "sls_closed_points",
+
+  // Mobility – show entry fields, but rubric off the points keys
+  msr_left_raw: "msr_left_points",
+  msr_right_raw: "msr_right_points",
+  toe_touch_raw_points: "toe_touch_points",
+  deep_squat_raw_points: "deep_squat_points",
+};
 
 // Local union for the offense drilldown cards we show in the UI
 type OffenseMetricCode =
@@ -355,8 +397,6 @@ function computeStrikePercentFromContactScore(
   const clamped = Math.max(0, Math.min(100, raw));
   return clamped;
 }
-
-
 
 function pickBestTrophyForMetric(
   metric: CoreMetricCode,
@@ -633,8 +673,6 @@ function getHumanizedTestMeta(
   };
 }
 
-
-
 type OffenseDrilldownViewMode = "team" | "players";
 
 interface OffenseTestsForMetricProps {
@@ -646,30 +684,6 @@ interface OffenseTestsForMetricProps {
 /**
  * Per‑metric test breakdown chip list + per‑test leaderboards.
  * Uses TeamOffenseDrilldown.tests_by_metric.
- *
- * Backend contract (per OffenseTestBreakdown):
- *
- *  - For ALL non‑strike tests:
- *      - test.team_average = 0–50 normalized "score" (used for rubrics)
- *      - per_player[].value = 0–50 normalized "score"
- *
- *  - Power tests (bat speed / exit velo):
- *      - test.team_avg_mph: number | null  // NEW – avg raw MPH for the team
- *      - per_player[].raw_mph: number | null  // NEW – raw MPH for this player
- *
- *  - Speed tests (1B / 4B):
- *      - test.team_avg_seconds: number | null          // NEW – avg time (s)
- *      - test.base_path_feet: number | null            // NEW – max/base distance (ft)
- *      - test.team_avg_feet_per_second?: number | null // optional – avg ft/s
- *
- *      - per_player[].raw_seconds: number | null       // NEW – raw time in seconds
- *      - per_player[].raw_distance_ft: number | null   // NEW – base path for that run
- *      - per_player[].feet_per_second?: number | null  // optional – ft/s for that player
- *
- *  - Strikechance tests:
- *      - test.submetric === "strikechance"
- *      - test.team_average + per_player[].value contain the raw K%ish value
- *        (0–1 or 0–100; frontend normalizes either way).
  */
 function OffenseTestsForMetric({
   metricCode,
@@ -879,6 +893,9 @@ function OffenseTestsForMetric({
 
           const perPlayer = [...(test.per_player ?? [])];
 
+          const parseNum = (v: unknown): number | null =>
+            typeof v === "number" && Number.isFinite(v) ? v : null;
+
           // Helper: which value do we sort by?
           const getSortValue = (row: any): number => {
             if (metricCode === "strikechance") {
@@ -1044,8 +1061,6 @@ function OffenseTestsForMetric({
     </div>
   );
 }
-
-
 
 function PlayerGridForMetric({
   code,
@@ -1217,13 +1232,13 @@ function PlayerGridForMetric({
   );
 }
 
-
 /**
  * Offense drilldown section – no accordion.
  * - Header contains the "Team averages / Player grid" toggle
  * - Top row = clickable summary cards (Offense / Contact / Power / Speed / K%)
  * - Below that:
- *   - Team view: per‑metric panels + test‑level tiles
+ *   - Team view: per‑metric test panels, *without* repeating the "X score" header;
+ *               just "Contact tests", "Power tests", etc.
  *   - Player view: per‑metric leaderboard + per‑test mini leaderboards
  */
 function OffenseDrilldownSection({
@@ -1271,7 +1286,6 @@ function OffenseDrilldownSection({
 
     return map;
   }, [drilldown]);
-
 
   const hasAnyData =
     !!drilldown && !!drilldown.metrics && drilldown.metrics.length > 0;
@@ -1409,61 +1423,23 @@ function OffenseDrilldownSection({
                 })}
               </div>
 
-
               {/* Detail area */}
               {viewMode === "team" ? (
+                // Team view: just the "Contact tests", "Power tests", etc. sections
+                // (no extra "Contact score" / "Power score" header repeated).
                 <div className="space-y-4">
-                  {activeMetrics.map((code) => {
-                    const m = metricsByCode.get(code);
-                    if (!m) return null;
-
-                    const isStrike = code === "strikechance";
-                    const rawValue = m.value;
-
-                    let displayMain = "—";
-                    if (rawValue !== null && rawValue !== undefined) {
-                      if (isStrike) {
-                        displayMain = formatStrikePercent(rawValue, 1);
-                      } else {
-                        const scaled = rawValue * 3;
-                        displayMain = formatNumber(scaled, 0);
-                      }
-                    }
-
-                    return (
-                      <div
-                        key={code}
-                        className="rounded-lg bg-slate-950/40 border border-slate-800 p-3"
-                      >
-                        <div className="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-1">
-                          <div className="text-xs uppercase tracking-wide text-slate-400">
-                            {m.label}
-                          </div>
-                          <div className="text-xs text-slate-300">
-                            Team average:{" "}
-                            <span className="font-semibold text-slate-50">
-                              {displayMain}
-                            </span>
-                          </div>
-                        </div>
-
-                        {!isStrike && (
-                          <div className="mt-2">
-                          </div>
-                        )}
-
-                        {/* Test‑level tiles for this metric */}
-                        <OffenseTestsForMetric
-                          metricCode={code}
-                          drilldown={drilldown}
-                          viewMode="team"
-                        />
-                      </div>
-                    );
-                  })}
+                  {activeMetrics.map((code) => (
+                    <OffenseTestsForMetric
+                      key={code}
+                      metricCode={code}
+                      drilldown={drilldown}
+                      viewMode="team"
+                    />
+                  ))}
                 </div>
               ) : (
-
+                // Player view: player grid + per-test leaderboards,
+                // with the tests section headers handling the "Contact tests" labels.
                 <div className="space-y-6">
                   {activeMetrics.map((code) => (
                     <div key={code} className="space-y-3">
@@ -1485,7 +1461,6 @@ function OffenseDrilldownSection({
   );
 }
 
-
 interface AthleticTestDisplay {
   key: string;
   label: string;
@@ -1493,6 +1468,8 @@ interface AthleticTestDisplay {
   unit?: string | null;
   extra?: string | null;
   category: AthleticCategoryCode;
+  /** 0–50 normalized score for this test (for rubric), if available. */
+  score50?: number | null;
 }
 
 interface AthleticSubmetricRow {
@@ -1514,7 +1491,6 @@ const ATHLETIC_SUBMETRICS: AthleticSubmetricRow["code"][] = [
   "balance",
   "mobility",
 ];
-
 
 function parseFiniteNumber(value: any): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -1640,6 +1616,20 @@ function buildAthleticDrilldown(
   const rawTests: Record<string, any> =
     testsSource && typeof testsSource === "object" ? testsSource : {};
 
+  const rawEntries = Object.entries(rawTests);
+
+  // Collect 0–50 scores from *_points and *_score keys for later rubric use.
+  const pointsByKey: Record<string, number> = {};
+  for (const [key, rawValue] of rawEntries) {
+    const lowerKey = key.toLowerCase();
+    if (lowerKey.endsWith("_points") || lowerKey.endsWith("_score")) {
+      const numeric = parseFiniteNumber(rawValue);
+      if (numeric !== null) {
+        pointsByKey[key] = numeric;
+      }
+    }
+  }
+
   const submetricTests: Record<AthleticCategoryCode, AthleticTestDisplay[]> = {
     speed: [],
     strength: [],
@@ -1648,7 +1638,7 @@ function buildAthleticDrilldown(
     mobility: [],
   };
 
-  for (const [key, rawValue] of Object.entries(rawTests)) {
+  for (const [key, rawValue] of rawEntries) {
     const lowerKey = key.toLowerCase();
 
     // Skip summary / helper fields – handled separately below.
@@ -1659,7 +1649,8 @@ function buildAthleticDrilldown(
       lowerKey.endsWith("_score") ||
       lowerKey.endsWith("_points_total") ||
       lowerKey.endsWith("_total_points") ||
-      lowerKey.endsWith("_max_points")
+      lowerKey.endsWith("_max_points") ||
+      lowerKey.includes("points_max")
     ) {
       continue;
     }
@@ -1679,6 +1670,12 @@ function buildAthleticDrilldown(
     const value: number | string | null =
       numericValue !== null ? numericValue : (rawValue as any);
 
+    const pointsKey = ATHLETIC_TEST_POINTS_SOURCE[key];
+    const score50 =
+      pointsKey && pointsByKey[pointsKey] != null
+        ? pointsByKey[pointsKey]
+        : null;
+
     submetricTests[category].push({
       key,
       label,
@@ -1686,6 +1683,7 @@ function buildAthleticDrilldown(
       unit: unit ?? null,
       extra: null,
       category,
+      score50,
     });
   }
 
@@ -1781,6 +1779,22 @@ function AthleticDrilldownSection({
 
   const athleticMetric = teamMetricsByCode.get("athletic") ?? null;
 
+  const testsHeaderFor = (code: AthleticCategoryCode) => {
+    switch (code) {
+      case "speed":
+        return "Speed tests";
+      case "strength":
+        return "Strength tests";
+      case "power":
+        return "Power tests";
+      case "balance":
+        return "Balance tests";
+      case "mobility":
+      default:
+        return "Mobility tests";
+    }
+  };
+
   return (
     <section className="mt-6">
       <div className="rounded-xl bg-slate-900/70 border border-slate-700">
@@ -1810,7 +1824,7 @@ function AthleticDrilldownSection({
 
           {teamStats && hasAnyTests && (
             <>
-              {/* Per‑category tiles */}
+              {/* Per‑category score tiles (summary only) */}
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                 {drilldown.submetrics.map((sub) => {
                   const displayScore =
@@ -1819,7 +1833,7 @@ function AthleticDrilldownSection({
                   return (
                     <div
                       key={sub.code}
-                      className="rounded-lg bg-slate-950/40 border border-slate-800 p-3 flex flex-col gap-2"
+                      className="rounded-lg bg-slate-950/40 border border-slate-800 p-3 flex flex-col justify-between"
                     >
                       <div>
                         <div className="text-[11px] uppercase tracking-wide text-slate-400">
@@ -1832,38 +1846,83 @@ function AthleticDrilldownSection({
                           <RubricBar score={sub.score} showLabels={false} />
                         </div>
                       </div>
-
-                      <div className="space-y-1">
-                        {sub.tests.length === 0 ? (
-                          <p className="text-[11px] text-slate-500">
-                            No raw tests for this category yet.
-                          </p>
-                        ) : (
-                          sub.tests.map((test) => (
-                            <div
-                              key={test.key}
-                              className="rounded-md bg-slate-900/60 border border-slate-800 px-2 py-1"
-                            >
-                              <div className="flex items-center justify-between text-[11px] text-slate-300">
-                                <span className="font-semibold text-slate-100">
-                                  {test.label}
-                                </span>
-                                <span className="text-slate-200">
-                                  {formatAthleticTestValue(test)}
-                                </span>
-                              </div>
-                              {test.extra && (
-                                <div className="text-[10px] text-slate-500 mt-0.5">
-                                  {test.extra}
-                                </div>
-                              )}
-                            </div>
-                          ))
-                        )}
-                      </div>
+                      <p className="mt-2 text-[11px] text-slate-500">
+                        {sub.tests.length === 0
+                          ? "No raw tests for this category yet."
+                          : `${sub.tests.length} test${
+                              sub.tests.length > 1 ? "s" : ""
+                            } recorded.`}
+                      </p>
                     </div>
                   );
                 })}
+              </div>
+
+              {/* Detailed tests by category – separate cards, with their own rubrics */}
+              <div className="space-y-4">
+                {drilldown.submetrics.map((sub) => (
+                  <div
+                    key={sub.code}
+                    className="rounded-lg bg-slate-950/40 border border-slate-800 p-3"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-1">
+                      <div className="text-xs uppercase tracking-wide text-slate-400">
+                        {testsHeaderFor(sub.code)}
+                      </div>
+                      {sub.score != null && (
+                        <div className="text-xs text-slate-300">
+                          Category score:{" "}
+                          <span className="font-semibold text-slate-50">
+                            {formatNumber(sub.score * 3, 0)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {sub.tests.length === 0 ? (
+                      <p className="mt-2 text-[11px] text-slate-500">
+                        No raw tests for this category yet.
+                      </p>
+                    ) : (
+                      <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {sub.tests.map((test) => (
+                          <div
+                            key={test.key}
+                            className="rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2"
+                          >
+                            <div className="text-sm font-medium text-slate-100">
+                              {test.label}
+                            </div>
+                            <div className="mt-1 flex items-center justify-between text-xs text-slate-300">
+                              <span>
+                                Result:{" "}
+                                <span className="font-mono text-slate-50">
+                                  {formatAthleticTestValue(test)}
+                                </span>
+                              </span>
+                            </div>
+
+                            {/* Per‑test rubric bar (0–50 engine scale) */}
+                            {typeof test.score50 === "number" && (
+                              <div className="mt-1 max-w-[140px]">
+                                <RubricBar
+                                  score={test.score50}
+                                  showLabels={false}
+                                />
+                              </div>
+                            )}
+
+                            {test.extra && (
+                              <div className="mt-1 text-[10px] text-slate-500">
+                                {test.extra}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
 
               {/* Overall team athletic score */}
@@ -1903,7 +1962,6 @@ function AthleticDrilldownSection({
     </section>
   );
 }
-
 
 export default function StatsPage() {
   const { profile } = useAuth();
@@ -2070,7 +2128,6 @@ export default function StatsPage() {
       if (!timestamp) return "Unknown date";
       const d = new Date(timestamp);
       if (Number.isNaN(d.getTime())) return timestamp;
-      // You can decide if you want time-of-day; here I include it to distinguish sessions
       return d.toLocaleString(undefined, {
         month: "short",
         day: "numeric",
@@ -2113,14 +2170,12 @@ export default function StatsPage() {
                 }`,
           label,
           evalScope: "specific" as TeamEvalScope,
-          // ⬇️ Keep the full timestamp; backend can cast it to date if needed
           assessmentDate: ev.performed_at ?? null,
         };
       });
 
     return [...base, ...dated];
   }, [teamEvaluations]);
-
 
   useEffect(() => {
     if (!evaluationSelectOptions.length) return;
@@ -2347,17 +2402,12 @@ export default function StatsPage() {
         }
       }
 
-      // 👈 IMPORTANT: we now *always* set an "athletic" metric as long as
-      // the breakdown exists, even if score/percent are null.
+      // Always set an "athletic" metric if the breakdown exists.
       map.set("athletic", { label, score, percent });
     }
 
     return map;
   }, [teamStats]);
-
-
-
-
 
   const bestTrophiesByMetric = useMemo(() => {
     const result: Partial<
@@ -2443,9 +2493,9 @@ export default function StatsPage() {
                   ? "bg-amber-500 text-slate-900"
                   : "text-slate-300",
               ].join(" ")}
-              >
-                Team view
-              </button>
+            >
+              Team view
+            </button>
             {hasPlayerProfile && (
               <button
                 type="button"
@@ -2665,7 +2715,8 @@ export default function StatsPage() {
                             )}
                           </div>
                           <div className="text-xs text-slate-400">
-                            {metric.percent !== null && metric.percent !== undefined
+                            {metric.percent !== null &&
+                            metric.percent !== undefined
                               ? `${formatNumber(metric.percent, 0)}%`
                               : "—"}
                           </div>
