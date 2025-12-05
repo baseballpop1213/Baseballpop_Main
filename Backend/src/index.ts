@@ -5344,9 +5344,6 @@ function compute7UPositionScores(
   const pitchersHelper = infieldSpotFromRLC();
 
   // Outfield:
-  // For now we keep the same structure as 5U/6U,
-  // still using CatchingScore + T40 / RLC / Speed.
-  // (Later we can swap CatchingScore → C10X10LD when that test is wired.)
 
   // LF = (CatchingScore + T40FT) / (CATCH_MAX + T40_MAX)
   let leftField: number | null = null;
@@ -6514,7 +6511,6 @@ function compute14UPositionScores(
   );
 }
 
-
 function computeHSPositionScores(
   athletic: CategoryComponent,
   pitching: CategoryComponent,
@@ -6715,16 +6711,212 @@ function computeHSPositionScores(
   };
 }
 
+/**
+ * Athletic category sub‑scores (speed / strength / power / balance / mobility)
+ * are stored in the athletic breakdown tests as:
+ *   speed_score, strength_score, power_score, balance_score, mobility_score
+ *
+ * This helper computes any missing ones from the underlying athletic tests.
+ * It mirrors the categorizeAthleticKey() logic used on the front‑end, and
+ * distributes the overall athletic score across the buckets in proportion
+ * to the point totals in each bucket.
+ */
+type AthleticCategoryCode = "speed" | "strength" | "power" | "balance" | "mobility";
+
+function categorizeAthleticKeyBackend(key: string): AthleticCategoryCode | null {
+  const k = key.toLowerCase();
+
+  // Must match StatsPage.tsx categorizeAthleticKey as closely as possible
+  if (
+    k.includes("run_1b") ||
+    k.includes("run_4b") ||
+    k.includes("sprint") ||
+    k.includes("speed")
+  ) {
+    return "speed";
+  }
+
+  if (
+    k.includes("situps") ||
+    k.includes("pushups") ||
+    k.includes("pullups") ||
+    k.includes("plank") ||
+    k.includes("strength")
+  ) {
+    return "strength";
+  }
+
+  if (
+    k.includes("broad_jump") ||
+    k.includes("vertical_jump") ||
+    k.includes("chest_throw") ||
+    k.includes("power") ||
+    k.includes("vjump")
+  ) {
+    return "power";
+  }
+
+  if (
+    k.startsWith("sls_") ||
+    k.includes("single_leg") ||
+    k.includes("stance") ||
+    k.includes("balance")
+  ) {
+    return "balance";
+  }
+
+  if (
+    k.startsWith("msr_") ||
+    k.includes("toe_touch") ||
+    k.includes("deep_squat") ||
+    k.includes("mobility") ||
+    k.includes("flex") ||
+    k.includes("range")
+  ) {
+    return "mobility";
+  }
+
+  return null;
+}
+
+function attachAthleticCategoryScores(
+  ageLabel: string,
+  athletic: CategoryComponent
+): void {
+  if (!athletic || !athletic.breakdown) return;
+
+  const athleticSection: any =
+    (athletic.breakdown as any).athletic ??
+    (athletic.breakdown as any).athletic_skills ??
+    null;
+
+  if (!athleticSection) return;
+
+  // Prefer nested tests object; fall back to the section itself if needed
+  const testsSource =
+    athleticSection && typeof athleticSection === "object"
+      ? athleticSection.tests && typeof athleticSection.tests === "object"
+        ? athleticSection.tests
+        : athleticSection
+      : {};
+
+  const tests: Record<string, any> =
+    testsSource && typeof testsSource === "object" ? testsSource : {};
+
+  // Ensure we always write back to athleticSection.tests
+  athleticSection.tests = tests;
+
+  const toNumber = (v: any): number | null =>
+    typeof v === "number" && Number.isFinite(v) ? v : null;
+
+  // Overall athletic score (0–50) from the category;
+  // if missing, we derive it from total_points / max_points.
+  let overallScore =
+    typeof athletic.score === "number" && Number.isFinite(athletic.score)
+      ? athletic.score
+      : null;
+
+  if (overallScore == null) {
+    const total = toNumber(athleticSection.total_points);
+    const max = toNumber(athleticSection.max_points);
+    if (total != null && max != null && max > 0) {
+      overallScore = ratioToScore(total, max);
+    }
+  }
+
+  if (overallScore == null) return;
+
+  const existingSpeedScore = toNumber(tests.speed_score ?? tests.speedScore);
+
+  const isSummaryKey = (rawKey: string): boolean => {
+    const lower = rawKey.toLowerCase();
+    return (
+      lower === "overall_score" ||
+      lower === "max_points" ||
+      lower === "total_points" ||
+      lower.endsWith("_score") ||
+      lower.endsWith("_points_total") ||
+      lower.endsWith("_total_points") ||
+      lower.endsWith("_max_points")
+    );
+  };
+
+  const categoryPoints: Record<AthleticCategoryCode, number> = {
+    speed: 0,
+    strength: 0,
+    power: 0,
+    balance: 0,
+    mobility: 0,
+  };
+
+  for (const [rawKey, rawValue] of Object.entries(tests)) {
+    if (isSummaryKey(rawKey)) continue;
+
+    const numeric = toNumber(rawValue);
+    if (numeric == null) continue;
+
+    const cat = categorizeAthleticKeyBackend(rawKey);
+    if (!cat) continue;
+
+    categoryPoints[cat] += numeric;
+  }
+
+  const totalPointSum = Object.values(categoryPoints).reduce(
+    (sum, v) => sum + v,
+    0
+  );
+  if (totalPointSum <= 0) {
+    return;
+  }
+
+  const assignCategoryScore = (code: AthleticCategoryCode) => {
+    if (code === "speed" && existingSpeedScore != null) {
+      // Keep the already-computed speed_score (e.g. from 8U scoring).
+      tests.speed_score = existingSpeedScore;
+      return;
+    }
+
+    const pts = categoryPoints[code];
+    if (!pts || pts <= 0) {
+      // Only set to null if nothing exists yet; avoid clobbering any future manual values.
+      if (!(code + "_score" in tests)) {
+        (tests as any)[`${code}_score`] = null;
+      }
+      return;
+    }
+
+    const fraction = pts / totalPointSum;
+    const rawScore = overallScore! * fraction;
+
+    (tests as any)[`${code}_score`] = rawScore;
+  };
+
+  // We always try to have all five athletic sub-metrics present.
+  assignCategoryScore("speed");
+  assignCategoryScore("strength");
+  assignCategoryScore("power");
+  assignCategoryScore("balance");
+  assignCategoryScore("mobility");
+}
+
 function computePositionScoresForBreakdown(
   ageLabel: string,
   breakdown: any
 ): PositionScores5U | null {
   if (!breakdown) return null;
 
-  // For 5U–8U/9U, the categories are athletic, throwing, catching, fielding
+  // Resolve the athletic category first so we can attach sub-scores.
   const athletic = (breakdown.athletic || breakdown.athletic_skills) as
     | CategoryComponent
     | undefined;
+
+  if (athletic) {
+    // Populate athletic subcategory scores:
+    //   speed_score, strength_score, power_score, balance_score, mobility_score
+    attachAthleticCategoryScores(ageLabel, athletic);
+  }
+
+  // For 5U–8U/9U, the categories are athletic, throwing, catching, fielding
 
   // 5U / 6U share the same positional logic
   if (
@@ -6849,6 +7041,7 @@ function computePositionScoresForBreakdown(
 
   return null;
 }
+
 
 
 // ---- Pitching optimization types ----

@@ -78,6 +78,23 @@ const MSR_TOTAL_MAX_PRO = 6;
 const TOE_TOUCH_MAX_PRO = 6;
 const DEEP_SQUAT_MAX_PRO = 9;
 
+// Category-level maxima
+const STRENGTH_POINTS_MAX_PRO =
+  PUSHUPS_MAX_POINTS_PRO +
+  SITUPS_MAX_POINTS_PRO +
+  PULLUPS_MAX_POINTS_PRO; // 75
+
+const APOWER_POINTS_MAX_PRO =
+  VJUMP_MAX_POINTS_PRO +
+  ASPSCP_MAX_POINTS_PRO +
+  ASPSUP_MAX_POINTS_PRO; // 105
+
+const BALANCE_POINTS_MAX_PRO =
+  SLS_OPEN_MAX_PRO + SLS_CLOSED_MAX_PRO; // 25
+
+const MOBILITY_POINTS_MAX_PRO =
+  MSR_TOTAL_MAX_PRO + TOE_TOUCH_MAX_PRO + DEEP_SQUAT_MAX_PRO; // 21
+
 const ATHLETIC_POINTS_MAX_PRO =
   SPEED_POINTS_MAX_PRO +
   PUSHUPS_MAX_POINTS_PRO +
@@ -141,6 +158,12 @@ function computeProAthleticSkills(metrics: MetricMap) {
   const slsOpenPoints = clamp(slsOpenPointsRaw, 0, SLS_OPEN_MAX_PRO);
   const slsClosedPoints = clamp(slsClosedPointsRaw, 0, SLS_CLOSED_MAX_PRO);
 
+  const balancePointsTotal = sum([slsOpenPoints, slsClosedPoints]);
+  const balanceScore =
+    balancePointsTotal !== null
+      ? Number(((balancePointsTotal / BALANCE_POINTS_MAX_PRO) * 50).toFixed(1))
+      : null;
+
   // Strength
   const pushupsRaw = getMetric(metrics, "apush_60");
   const situpsRaw = getMetric(metrics, "asit_60");
@@ -154,6 +177,18 @@ function computeProAthleticSkills(metrics: MetricMap) {
   const situpsPoints = clamp(situpsPointsRaw, 0, SITUPS_MAX_POINTS_PRO);
   const pullupsPoints = clamp(pullupsPointsRaw, 0, PULLUPS_MAX_POINTS_PRO);
 
+  const strengthPointsTotal = sum([
+    pushupsPoints,
+    situpsPoints,
+    pullupsPoints,
+  ]);
+  const strengthScore =
+    strengthPointsTotal !== null
+      ? Number(
+          ((strengthPointsTotal / STRENGTH_POINTS_MAX_PRO) * 50).toFixed(1)
+        )
+      : null;
+
   // Vertical jump
   const vjumpInches = getMetric(metrics, "asp_jump_inches");
   const vjumpPoints = clamp(vjumpInches, 0, VJUMP_MAX_POINTS_PRO);
@@ -166,6 +201,12 @@ function computeProAthleticSkills(metrics: MetricMap) {
   const aspsupDistanceFt = getMetric(metrics, "aspsup_distance_ft");
   const aspsupMedBallWeight = getMetric(metrics, "aspsup_med_ball_weight");
   const aspsupPoints = clamp(aspsupDistanceFt, 0, ASPSUP_MAX_POINTS_PRO);
+
+  const apowerPointsTotal = sum([vjumpPoints, aspscpPoints, aspsupPoints]);
+  const apowerScore =
+    apowerPointsTotal !== null
+      ? Number(((apowerPointsTotal / APOWER_POINTS_MAX_PRO) * 50).toFixed(1))
+      : null;
 
   // MSR
   const msrRightRaw = getMetric(metrics, "msr_right");
@@ -192,6 +233,18 @@ function computeProAthleticSkills(metrics: MetricMap) {
 
   const toeTouchPoints = clamp(toeTouchRawPoints, 0, TOE_TOUCH_MAX_PRO);
   const deepSquatPoints = clamp(deepSquatRawPoints, 0, DEEP_SQUAT_MAX_PRO);
+
+  const mobilityPointsTotal = sum([
+    msrPointsClamped,
+    toeTouchPoints,
+    deepSquatPoints,
+  ]);
+  const mobilityScore =
+    mobilityPointsTotal !== null
+      ? Number(
+          ((mobilityPointsTotal / MOBILITY_POINTS_MAX_PRO) * 50).toFixed(1)
+        )
+      : null;
 
   const athleticTotalPoints = sum([
     run1bPoints,
@@ -231,6 +284,7 @@ function computeProAthleticSkills(metrics: MetricMap) {
         run_1b_points: run1bPoints,
         run_4b_points: run4bPoints,
         speed_points_total: speedPointsTotal,
+        speed_points_max: SPEED_POINTS_MAX_PRO,
         speed_score: speedScore,
 
         pushups_60_raw: pushupsRaw,
@@ -239,6 +293,9 @@ function computeProAthleticSkills(metrics: MetricMap) {
         pushups_60_points: pushupsPoints,
         situps_60_points: situpsPoints,
         pullups_60_points: pullupsPoints,
+        strength_points_total: strengthPointsTotal,
+        strength_points_max: STRENGTH_POINTS_MAX_PRO,
+        strength_score: strengthScore,
 
         vjump_inches_raw: vjumpInches,
         vjump_points: vjumpPoints,
@@ -249,6 +306,9 @@ function computeProAthleticSkills(metrics: MetricMap) {
         aspsup_distance_ft: aspsupDistanceFt,
         aspsup_med_ball_weight: aspsupMedBallWeight,
         aspsup_points: aspsupPoints,
+        power_points_total: apowerPointsTotal,
+        power_points_max: APOWER_POINTS_MAX_PRO,
+        power_score: apowerScore,
 
         sls_open_right_seconds: slsOpenRightSec,
         sls_open_left_seconds: slsOpenLeftSec,
@@ -260,6 +320,10 @@ function computeProAthleticSkills(metrics: MetricMap) {
         sls_closed_avg_seconds: slsClosedAvgSeconds,
         sls_closed_points: slsClosedPoints,
 
+        balance_points_total: balancePointsTotal,
+        balance_points_max: BALANCE_POINTS_MAX_PRO,
+        balance_score: balanceScore,
+
         msr_right_raw: msrRightRaw,
         msr_left_raw: msrLeftRaw,
         msr_right_points: msrRightPoints,
@@ -270,12 +334,16 @@ function computeProAthleticSkills(metrics: MetricMap) {
         toe_touch_points: toeTouchPoints,
         deep_squat_raw_points: deepSquatRawPoints,
         deep_squat_points: deepSquatPoints,
+        mobility_points_total: mobilityPointsTotal,
+        mobility_points_max: MOBILITY_POINTS_MAX_PRO,
+        mobility_score: mobilityScore,
       },
       max_points: ATHLETIC_POINTS_MAX_PRO,
       total_points: athleticTotalPoints,
     },
   };
 }
+
 
 
 /* -------------------------------------------------------------------------- */
