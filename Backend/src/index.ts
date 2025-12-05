@@ -4141,7 +4141,113 @@ async function computeTeamStatsOverview(
     };
   };
 
+  async function buildTeamAthleticPlayers(
+    rows: TeamRatingRow[]
+  ): Promise<
+    {
+      player_id: string;
+      player_name: string | null;
+      jersey_number: number | null;
+      athletic_tests: Record<string, any>;
+    }[]
+  > {
+    if (!rows.length) return [];
+
+    // Collect player IDs
+    const playerIds = Array.from(
+      new Set(
+        rows
+          .map((r) => r.player_id)
+          .filter((id): id is string => !!id)
+      )
+    );
+
+    const nameByPlayer: Record<string, string | null> = {};
+    const jerseyByPlayer: Record<string, number | null> = {};
+
+    if (playerIds.length) {
+      const { data: playerRows, error: playersError } = await supabase
+        .from("players")
+        .select("id, full_name, jersey_number")
+        .in("id", playerIds);
+
+      if (playersError) {
+        console.error(
+          "computeTeamStatsOverview: error loading players for athletic breakdown:",
+          playersError
+        );
+      } else if (playerRows) {
+        for (const p of playerRows as any[]) {
+          const pid = p.id as string;
+          nameByPlayer[pid] = (p.full_name as string) ?? null;
+          jerseyByPlayer[pid] =
+            p.jersey_number != null ? Number(p.jersey_number) : null;
+        }
+      }
+    }
+
+    // Use the same key-normalization as the team tests
+    const normalizeKey = (raw: string): string => {
+      if (!raw) return raw;
+      if (raw.includes("_")) return raw.toLowerCase();
+      const withUnderscores = raw.replace(/([a-z0-9])([A-Z])/g, "$1_$2");
+      return withUnderscores.toLowerCase();
+    };
+
+    const result: {
+      player_id: string;
+      player_name: string | null;
+      jersey_number: number | null;
+      athletic_tests: Record<string, any>;
+    }[] = [];
+
+    for (const row of rows) {
+      const playerId = row.player_id;
+      if (!playerId) continue;
+
+      let breakdown: any = (row as any).breakdown ?? null;
+      if (typeof breakdown === "string") {
+        try {
+          breakdown = JSON.parse(breakdown);
+        } catch {
+          breakdown = null;
+        }
+      }
+
+      const athleticSection =
+        breakdown?.athletic ?? breakdown?.athlete ?? null;
+
+      if (!athleticSection) continue;
+
+      const testsSource =
+        athleticSection.tests && typeof athleticSection.tests === "object"
+          ? athleticSection.tests
+          : athleticSection;
+
+      if (!testsSource || typeof testsSource !== "object") continue;
+
+      const tests: Record<string, any> = {};
+      for (const [rawKey, value] of Object.entries(testsSource)) {
+        const key = normalizeKey(rawKey);
+        tests[key] = value;
+      }
+
+      result.push({
+        player_id: playerId,
+        player_name:
+          nameByPlayer[playerId] ?? `Player ${playerId.slice(0, 8)}…`,
+        jersey_number: jerseyByPlayer[playerId] ?? null,
+        athletic_tests: tests,
+      });
+    }
+
+    return result;
+  }
+
+  
   const athleticBreakdown = buildTeamAthleticBreakdown(rows);
+  const athleticPlayers = await buildTeamAthleticPlayers(rows);
+
 
   // If the athletic breakdown has an engine score, prefer it to the
   // metric-derived value when the metric is missing.
@@ -4165,6 +4271,20 @@ async function computeTeamStatsOverview(
     }
   }
 
+  const breakdown =
+    athleticBreakdown || athleticPlayers.length
+      ? {
+          athletic: {
+            ...(athleticBreakdown ?? { overall_score: null, tests: {} }),
+            players: athleticPlayers,
+          },
+          athlete: {
+            ...(athleticBreakdown ?? { overall_score: null, tests: {} }),
+            players: athleticPlayers,
+          },
+        }
+      : undefined;
+
   // 8) Final payload
   return {
     team_id: teamRow.id,
@@ -4172,9 +4292,7 @@ async function computeTeamStatsOverview(
     age_group_label: (teamRow as any).age_group_label ?? null,
     level: (teamRow as any).level ?? null,
     metrics,
-    ...(athleticBreakdown
-      ? { breakdown: { athletic: athleticBreakdown, athlete: athleticBreakdown } }
-      : {}),
+    ...(breakdown ? { breakdown } : {}),
   };
 }
 
