@@ -6398,13 +6398,7 @@ export default function AssessmentSessionPage() {
       </section>
 
 
-      {/* Debug: raw session JSON */}
-      <section className="rounded-xl bg-slate-900/70 border border-slate-700 p-3 text-xs text-slate-300">
-        <div className="font-semibold mb-1">Raw session data (debug)</div>
-        <pre className="text-[10px] whitespace-pre-wrap break-all">
-          {JSON.stringify({ session, sessionData }, null, 2)}
-        </pre>
-      </section>
+
     </div>
   );
 }
