@@ -1207,6 +1207,16 @@ export default function AssessmentSessionPage() {
       for (const m of metricList) {
         const metricKey = (m as any).metric_key as string | undefined;
 
+        // NEW: For Athletic Skills, ignore helper metrics that never show up in the UI.
+        if (
+          evalType &&
+          evalType.toLowerCase().startsWith("athletic") && // handles "athletic", "athletic_skills", etc.
+          metricKey &&
+          ATHLETIC_HELPER_METRIC_KEYS.has(metricKey)
+        ) {
+          continue;
+        }
+
         // For pitching, ignore hidden, untouched additional pitch matrices so they
         // don’t count against progress.
         if (
@@ -1232,6 +1242,7 @@ export default function AssessmentSessionPage() {
     },
     [effectiveEvalType, visibleExtraPitchMetricKeySet, pitchMetricHasAnyValue]
   );
+
 
 
 
@@ -5976,7 +5987,7 @@ export default function AssessmentSessionPage() {
                                 <div className="mt-1 text-[10px] text-slate-400">
                                   Score:{" "}
                                   <span className="font-mono">
-                                    {totalPoints || "—"}
+                                    {totalPoints ?? "—"}
                                   </span>
                                 </div>
                               </div>
@@ -6108,53 +6119,39 @@ export default function AssessmentSessionPage() {
                               key={`${group.key}-infcatch-${metric.id}-${playerId}`}
                               className="px-2 py-2 align-top"
                             >
-                              <div className="flex flex-col gap-1">
-                                <div className="grid grid-cols-3 gap-1">
-                                  {events.map((code, repIndex) => (
-                                    <button
-                                      key={`${group.key}-infcatch-${metric.id}-${playerId}-${repIndex}`}
-                                      type="button"
-                                      className={[
-                                        "px-1 py-0.5 rounded text-[10px] border",
-                                        code === "catch"
-                                          ? "border-emerald-400 bg-emerald-500/10 text-emerald-100"
-                                          : code === "miss"
-                                          ? "border-rose-400 bg-rose-500/10 text-rose-100"
-                                          : "border-slate-700 bg-slate-900 text-slate-200",
-                                      ].join(" ")}
+                              <div className="grid grid-cols-3 gap-1">
+                                {events.map((code, repIndex) => (
+                                  <div
+                                    key={`${group.key}-infcatch-${metric.id}-${playerId}-${repIndex}`}
+                                    className="flex flex-col gap-0.5"
+                                  >
+                                    <div className="text-[10px] text-slate-400 text-center">
+                                      Rep {repIndex + 1}
+                                    </div>
+                                    <select
+                                      className="w-full rounded border border-slate-700 bg-slate-900 px-1 py-0.5 text-[10px]"
+                                      value={code}
                                       disabled={isFinalized}
-                                      onClick={() => {
-                                        const nextCode =
-                                          code === "catch"
-                                            ? "miss"
-                                            : code === "miss"
-                                            ? ""
-                                            : "catch";
+                                      onChange={(e) =>
                                         handleHittingMatrixSwingChange(
                                           metric.id,
                                           playerId,
                                           repIndex,
-                                          nextCode,
+                                          e.target.value,
                                           options,
                                           repCount
-                                        );
-                                      }}
+                                        )
+                                      }
                                     >
-                                      Rep {repIndex + 1}:{" "}
-                                      {code === "catch"
-                                        ? "Catch (2)"
-                                        : code === "miss"
-                                        ? "Miss (0)"
-                                        : "—"}
-                                    </button>
-                                  ))}
-                                </div>
-                                <div className="mt-1 text-[10px] text-slate-400">
-                                  Score:{" "}
-                                  <span className="font-mono">
-                                    {total || "—"}
-                                  </span>
-                                </div>
+                                      <option value="">—</option>
+                                      {options.map((opt) => (
+                                        <option key={opt.code} value={opt.code}>
+                                          {opt.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                ))}
                               </div>
                             </td>
                           );
