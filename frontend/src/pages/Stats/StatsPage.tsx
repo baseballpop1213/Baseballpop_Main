@@ -8,6 +8,7 @@ import {
   getTeamTrophies,
   getPlayerMedals,
   getTeamOffenseDrilldown,
+  getTeamDefenseDrilldown,
   getTeamEvaluations,
 } from "../../api/stats";
 import type {
@@ -18,6 +19,7 @@ import type {
   TrophyTier,
   PlayerMedalWithDefinition,
   TeamOffenseDrilldown,
+  TeamDefenseDrilldown,
   TeamWithRole,
   OffenseTestBreakdown,
   TeamEvaluationOption,
@@ -2332,6 +2334,11 @@ export default function StatsPage() {
   const [athleticViewMode, setAthleticViewMode] =
     useState<AthleticViewMode>("team");
 
+  const [defenseDrilldown, setDefenseDrilldown] =
+    useState<TeamDefenseDrilldown | null>(null);
+  const [defenseDrilldownLoading, setDefenseDrilldownLoading] =
+    useState(false);
+  
   // --- Player data (player / parent view, and for coach "self" view) ---
 
   const [playerStats, setPlayerStats] = useState<PlayerStatsOverview | null>(
@@ -2616,6 +2623,55 @@ export default function StatsPage() {
     };
   }, [selectedTeamId, isCoachLike, viewMode, selectedEvalOption]);
 
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDefenseDrilldown() {
+      if (!selectedTeamId || !isCoachLike) {
+        setDefenseDrilldown(null);
+        return;
+      }
+
+      setDefenseDrilldownLoading(true);
+      try {
+        const params =
+          selectedEvalOption?.scope && selectedEvalOption.scope !== "latest_eval"
+            ? {
+                evalScope: selectedEvalOption.scope,
+                assessmentDate: selectedEvalOption.assessmentDate ?? null,
+              }
+            : { evalScope: "latest_eval" as TeamEvalScope };
+
+        const data = await getTeamDefenseDrilldown(selectedTeamId, params);
+        if (!cancelled) {
+          setDefenseDrilldown(data);
+        }
+      } catch (err) {
+        console.error("Failed to load defense drilldown:", err);
+        if (!cancelled) {
+          setDefenseDrilldown(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setDefenseDrilldownLoading(false);
+        }
+      }
+    }
+
+    if (selectedTeamId && isCoachLike) {
+      loadDefenseDrilldown();
+    } else {
+      setDefenseDrilldown(null);
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedTeamId, isCoachLike, selectedEvalOption]);
+
+
+  
   // Load player stats & medals
   useEffect(() => {
     if (!playerId) return;

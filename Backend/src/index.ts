@@ -2672,6 +2672,65 @@ interface TeamOffenseDrilldown {
   tests_by_metric: OffenseTestsByMetric;
 }
 
+
+// ---------------------------------------------------------------------------
+// Defense drilldown types
+// ---------------------------------------------------------------------------
+
+type DefenseMetricCode = "defense" | "infield" | "outfield";
+
+interface DefenseDrilldownMetric {
+  code: DefenseMetricCode;
+  label: string;
+  /**
+   * All defense metrics are 0–50 on the engine scale.
+   * Frontend will convert to 0–150 for display, like other core metrics.
+   */
+  team_average: number | null;
+  /** Number of players contributing a non‑null value */
+  player_count: number;
+}
+
+interface DefenseDrilldownPlayerMetrics {
+  player_id: string;
+  player_name: string | null;
+  jersey_number: number | null;
+  defense_score: number | null;
+  infield_score: number | null;
+  outfield_score: number | null;
+}
+
+/**
+ * We reuse PositionCode for labels, but the underlying numbers come from
+ * ratings.breakdown.positions (PositionScores5U style object).
+ */
+interface DefensePositionPlayerRow {
+  player_id: string;
+  player_name: string | null;
+  jersey_number: number | null;
+  value: number | null;
+}
+
+interface DefensePositionBreakdown {
+  key: PositionCode; // 'pitcher', 'shortstop', 'left_field', etc.
+  label: string;
+  team_average: number | null; // 0–50
+  player_count: number;
+  per_player: DefensePositionPlayerRow[];
+}
+
+interface TeamDefenseDrilldown {
+  team_id: string;
+  team_name: string | null;
+  age_group_label: string | null;
+  level: string | null;
+  metrics: DefenseDrilldownMetric[];
+  players: DefenseDrilldownPlayerMetrics[];
+  positions: DefensePositionBreakdown[];
+}
+
+
+
 /**
  * Minimal shape we need to build per‑test breakdowns from ratings.
  */
@@ -3510,6 +3569,29 @@ function toNumberOrNull(value: any): number | null {
   const num = typeof value === "number" ? value : Number(value);
   return Number.isFinite(num) ? num : null;
 }
+
+function resolvePositionScoresFromBreakdown(
+  ratingBreakdown: any | null | undefined
+): PositionScores5U | null {
+  if (!ratingBreakdown || typeof ratingBreakdown !== "object") return null;
+
+  const anyBreakdown = ratingBreakdown as any;
+
+  // New scoring model: stored at breakdown.positions
+  const direct = anyBreakdown.positions;
+
+  // Old/legacy model: breakdown.derived.position_scores
+  const derived =
+    anyBreakdown.derived && typeof anyBreakdown.derived === "object"
+      ? (anyBreakdown.derived as any).position_scores
+      : undefined;
+
+  const src = direct ?? derived;
+  if (!src || typeof src !== "object") return null;
+
+  return src as PositionScores5U;
+}
+
 
 function maxNumeric(values: (number | null)[]): number | null {
   const nums = values.filter((v): v is number => v !== null && !Number.isNaN(v));
@@ -4838,6 +4920,378 @@ async function computeTeamOffenseDrilldown(
     tests_by_metric,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Team defense drilldown (for StatsPage Block 2: Defense)
+// ---------------------------------------------------------------------------
+
+async function computeTeamDefenseDrilldown(
+  teamId: string,
+  options: TeamEvalSelection
+): Promise<TeamDefenseDrilldown | null> {
+  // 1) Load team metadata
+  const { data: teamRow, error: teamErr } = await supabase
+    .from("teams")
+    .select("id, name, age_group_label, level")
+    .eq("id", teamId)
+    .single();
+
+  if (teamErr || !teamRow) {
+    console.error("Defense drilldown: error loading team:", teamErr);
+    return null;
+  }
+
+  // 2) Load all ratings for this team
+  const { data: ratingRowsRaw, error: ratingErr } = await supabase
+    .from("player_ratings")
+    .select(
+      "id, player_id, team_id, age_group_label, assessment_id, player_assessment_id, overall_score, offense_score, defense_score, pitching_score, breakdown, created_at"
+    )
+    .eq("team_id", teamId);
+
+  if (ratingErr) {
+    console.error("Defense drilldown: error loading player_ratings:", ratingErr);
+    return null;
+  }
+
+  const ratingRows = (ratingRowsRaw ?? []) as TeamRatingRow[];
+
+  // If literally no ratings, return an empty-but-valid payload
+  if (!ratingRows.length) {
+    return {
+      team_id: teamRow.id,
+      team_name: teamRow.name ?? null,
+      age_group_label: (teamRow as any).age_group_label ?? null,
+      level: (teamRow as any).level ?? null,
+      metrics: [],
+      players: [],
+      positions: [],
+    };
+  }
+
+  // 3) Apply eval selection (same semantics as offense / overview)
+  let filteredRows = ratingRows;
+
+  const assessmentMeta = await loadTeamAssessmentMeta(teamId);
+  const normalizedAssessmentDate = normalizeDateOnly(options.assessmentDate);
+
+  const targetAssessmentId =
+    typeof options.assessmentId === "number" &&
+    Number.isFinite(options.assessmentId)
+      ? options.assessmentId
+      : null;
+
+  let targetAssessmentDate: string | null = null;
+
+  if (targetAssessmentId != null) {
+    const fromMeta = assessmentMeta.byAssessmentId.get(targetAssessmentId);
+    if (fromMeta) {
+      targetAssessmentDate = fromMeta;
+    }
+  } else if (options.evalScope === "latest_eval") {
+    targetAssessmentDate = resolveLatestAssessmentDate(
+      assessmentMeta,
+      filteredRows
+    );
+  } else if (
+    (options.evalScope === "specific" || normalizedAssessmentDate) &&
+    normalizedAssessmentDate
+  ) {
+    targetAssessmentDate = normalizedAssessmentDate;
+  }
+
+  if (targetAssessmentDate) {
+    const targetDateOnly = normalizeDateOnly(targetAssessmentDate);
+    filteredRows = filteredRows.filter((row) => {
+      const rowDate = extractDatePart(
+        (row as any).created_at ||
+          (row as any).performed_at ||
+          null
+      );
+      return rowDate === targetDateOnly;
+    });
+  }
+
+  if (!filteredRows.length) {
+    return {
+      team_id: teamRow.id,
+      team_name: teamRow.name ?? null,
+      age_group_label: (teamRow as any).age_group_label ?? null,
+      level: (teamRow as any).level ?? null,
+      metrics: [],
+      players: [],
+      positions: [],
+    };
+  }
+
+  // 4) Collapse to one row per player.
+  //    - For evalScope === "all_star", we reuse the existing all‑star logic.
+  //    - Otherwise, we pick the latest row per player by created_at.
+  let latestRows: TeamRatingRow[] = [];
+
+  if (options.evalScope === "all_star") {
+    latestRows = buildAllStarRows(filteredRows);
+  } else {
+    const byPlayer = new Map<string, TeamRatingRow>();
+
+    for (const row of filteredRows) {
+      const pid = row.player_id;
+      if (!pid) continue;
+      const existing = byPlayer.get(pid);
+      if (!existing) {
+        byPlayer.set(pid, row);
+      } else {
+        const existingTs = (existing.created_at
+          ? new Date(existing.created_at)
+          : new Date(0)
+        ).getTime();
+        const rowTs = (row.created_at
+          ? new Date(row.created_at)
+          : new Date(0)
+        ).getTime();
+
+        if (rowTs > existingTs) {
+          byPlayer.set(pid, row);
+        }
+      }
+    }
+
+    latestRows = Array.from(byPlayer.values());
+  }
+
+  if (!latestRows.length) {
+    return {
+      team_id: teamRow.id,
+      team_name: teamRow.name ?? null,
+      age_group_label: (teamRow as any).age_group_label ?? null,
+      level: (teamRow as any).level ?? null,
+      metrics: [],
+      players: [],
+      positions: [],
+    };
+  }
+
+  // 5) Load basic roster info for names / jersey numbers
+  const { data: teamMembers, error: teamMembersErr } = await supabase
+    .from("team_players")
+    .select("player_id, jersey_number, profiles(full_name)")
+    .eq("team_id", teamId);
+
+  if (teamMembersErr) {
+    console.error(
+      "Defense drilldown: error loading team_players:",
+      teamMembersErr
+    );
+  }
+
+  const nameByPlayer = new Map<string, string | null>();
+  const jerseyByPlayer = new Map<string, number | null>();
+
+  for (const row of (teamMembers ?? []) as any[]) {
+    const pid = row.player_id as string;
+    if (!pid) continue;
+    nameByPlayer.set(
+      pid,
+      (row.profiles && row.profiles.full_name) || null
+    );
+    jerseyByPlayer.set(
+      pid,
+      typeof row.jersey_number === "number" ? row.jersey_number : null
+    );
+  }
+
+  // 6) Gather per‑player metrics + per‑position buckets
+  const players: DefenseDrilldownPlayerMetrics[] = [];
+  const byPosition = new Map<PositionCode, DefensePositionPlayerRow[]>();
+
+  const POSITION_KEYS: PositionCode[] = [
+    "pitcher",
+    "pitchers_helper",
+    "catcher",
+    "first_base",
+    "second_base",
+    "third_base",
+    "shortstop",
+    "left_field",
+    "right_field",
+    "left_center",
+    "right_center",
+    "center_field",
+  ];
+
+  for (const row of latestRows) {
+    const pid = row.player_id;
+    if (!pid) continue;
+
+    const playerName = nameByPlayer.get(pid) ?? pid;
+    const jerseyNumber = jerseyByPlayer.get(pid) ?? null;
+
+    const breakdown = row.breakdown ?? null;
+    const positions = resolvePositionScoresFromBreakdown(breakdown);
+
+    const defenseScore =
+      toNumberOrNull(row.defense_score) ??
+      (positions ? toNumberOrNull((positions as any).defense_score) : null);
+
+    const infieldScore =
+      positions ? toNumberOrNull(positions.infield_score) : null;
+    const outfieldScore =
+      positions ? toNumberOrNull(positions.outfield_score) : null;
+
+    players.push({
+      player_id: pid,
+      player_name: playerName,
+      jersey_number: jerseyNumber,
+      defense_score: defenseScore,
+      infield_score: infieldScore,
+      outfield_score: outfieldScore,
+    });
+
+    if (!positions) continue;
+
+    for (const key of POSITION_KEYS) {
+      const raw = (positions as any)[key];
+      const value = toNumberOrNull(raw);
+      if (value == null) continue;
+
+      const existing = byPosition.get(key) ?? [];
+
+      existing.push({
+        player_id: pid,
+        player_name: playerName,
+        jersey_number: jerseyNumber,
+        value,
+      });
+
+      byPosition.set(key, existing);
+    }
+  }
+
+  // If somehow nothing contributed, return empty payload
+  if (!players.length) {
+    return {
+      team_id: teamRow.id,
+      team_name: teamRow.name ?? null,
+      age_group_label: (teamRow as any).age_group_label ?? null,
+      level: (teamRow as any).level ?? null,
+      metrics: [],
+      players: [],
+      positions: [],
+    };
+  }
+
+  // Sort players by overall defense descending
+  players.sort((a, b) => {
+    const da = a.defense_score ?? -Infinity;
+    const db = b.defense_score ?? -Infinity;
+    if (da === db) {
+      return (a.player_name || "").localeCompare(b.player_name || "");
+    }
+    return db - da;
+  });
+
+  // 7) Team‑level metrics (defense / infield / outfield)
+  const metricDefs: { code: DefenseMetricCode; label: string }[] = [
+    { code: "defense", label: "Defense" },
+    { code: "infield", label: "Infield" },
+    { code: "outfield", label: "Outfield" },
+  ];
+
+  const metrics: DefenseDrilldownMetric[] = [];
+
+  for (const def of metricDefs) {
+    let values: (number | null)[] = [];
+
+    if (def.code === "defense") {
+      values = players.map((p) => p.defense_score);
+    } else if (def.code === "infield") {
+      values = players.map((p) => p.infield_score);
+    } else if (def.code === "outfield") {
+      values = players.map((p) => p.outfield_score);
+    }
+
+    const numeric = values.filter(
+      (v): v is number => typeof v === "number" && !Number.isNaN(v)
+    );
+
+    if (!numeric.length) continue;
+
+    const sum = numeric.reduce((acc, v) => acc + v, 0);
+    const team_average = sum / numeric.length;
+
+    metrics.push({
+      code: def.code,
+      label: def.label,
+      team_average,
+      player_count: numeric.length,
+    });
+  }
+
+  // 8) Per‑position breakdowns
+  const POSITION_LABELS: Record<PositionCode, string> = {
+    pitcher: "Pitcher",
+    pitchers_helper: "Pitcher's helper",
+    catcher: "Catcher",
+    first_base: "1B",
+    second_base: "2B",
+    third_base: "3B",
+    shortstop: "SS",
+    left_field: "LF",
+    right_field: "RF",
+    center_field: "CF",
+    left_center: "LC",
+    right_center: "RC",
+  };
+
+  const positions: DefensePositionBreakdown[] = [];
+
+  for (const key of POSITION_KEYS) {
+    const per_player = byPosition.get(key) ?? [];
+    if (!per_player.length) continue;
+
+    const numericValues = per_player
+      .map((r) =>
+        typeof r.value === "number" && !Number.isNaN(r.value)
+          ? r.value
+          : null
+      )
+      .filter((v): v is number => v !== null);
+
+    if (!numericValues.length) continue;
+
+    const sum = numericValues.reduce((acc, v) => acc + v, 0);
+    const team_average = sum / numericValues.length;
+
+    // Sort players for that position, best first
+    per_player.sort((a, b) => {
+      const av = a.value ?? -Infinity;
+      const bv = b.value ?? -Infinity;
+      if (av === bv) {
+        return (a.player_name || "").localeCompare(b.player_name || "");
+      }
+      return bv - av;
+    });
+
+    positions.push({
+      key,
+      label: POSITION_LABELS[key],
+      team_average,
+      player_count: numericValues.length,
+      per_player,
+    });
+  }
+
+  return {
+    team_id: teamRow.id,
+    team_name: teamRow.name ?? null,
+    age_group_label: (teamRow as any).age_group_label ?? null,
+    level: (teamRow as any).level ?? null,
+    metrics,
+    players,
+    positions,
+  };
+}
+
 
 
 async function computePlayerStatsOverview(
@@ -11701,6 +12155,65 @@ app.get(
     }
   }
 );
+
+app.get(
+  "/teams/:teamId/stats/defense-drilldown",
+  requireAuth,
+  async (req: AuthedRequest, res) => {
+    const { teamId } = req.params;
+
+    if (!teamId) {
+      return res.status(400).json({ error: "Missing teamId" });
+    }
+
+    const evalScopeRaw = req.query.eval_scope;
+    const assessmentDateRaw = req.query.assessment_date;
+
+    const evalScope =
+      typeof evalScopeRaw === "string" &&
+      ["latest_eval", "all_star", "specific"].includes(evalScopeRaw)
+        ? (evalScopeRaw as TeamEvalScope)
+        : null;
+
+    const assessmentDate =
+      typeof assessmentDateRaw === "string" && assessmentDateRaw
+        ? assessmentDateRaw
+        : null;
+
+    // Only coaches / assistants can see the full drilldown
+    const role = await assertTeamRoleOr403(
+      req,
+      res,
+      teamId,
+      COACH_AND_ASSISTANT
+    );
+    if (!role) return;
+
+    try {
+      const drilldown = await computeTeamDefenseDrilldown(teamId, {
+        evalScope,
+        assessmentDate,
+      });
+
+      if (!drilldown) {
+        return res
+          .status(404)
+          .json({ error: "Team not found or no defense ratings." });
+      }
+
+      return res.status(200).json(drilldown);
+    } catch (err) {
+      console.error(
+        "Unexpected error in GET /teams/:teamId/stats/defense-drilldown:",
+        err
+      );
+      return res
+        .status(500)
+        .json({ error: "Failed to load defense drilldown for team." });
+    }
+  }
+);
+
 
 
 app.post(

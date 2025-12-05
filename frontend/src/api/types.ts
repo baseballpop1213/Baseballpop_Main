@@ -299,6 +299,66 @@ export interface TeamOffenseDrilldown {
   players: OffenseDrilldownPlayerMetrics[];
 }
 
+export type DefenseMetricCode = "defense" | "infield" | "outfield";
+
+export interface DefenseDrilldownMetric {
+  code: DefenseMetricCode;
+  label: string;
+  /** 0–50 engine scale; frontend will show 0–150 */
+  team_average: number | null;
+  player_count: number;
+}
+
+export interface DefenseDrilldownPlayerMetrics {
+  player_id: string;
+  player_name: string | null;
+  jersey_number: number | null;
+  defense_score: number | null;
+  infield_score: number | null;
+  outfield_score: number | null;
+}
+
+export type PositionCode =
+  | "pitcher"
+  | "pitchers_helper"
+  | "catcher"
+  | "first_base"
+  | "second_base"
+  | "third_base"
+  | "shortstop"
+  | "left_field"
+  | "right_field"
+  | "center_field"
+  | "left_center"
+  | "right_center"; // you already have this union for lineup; reuse if exported there
+
+export interface DefensePositionPlayerRow {
+  player_id: string;
+  player_name: string | null;
+  jersey_number: number | null;
+  value: number | null;
+}
+
+export interface DefensePositionBreakdown {
+  key: PositionCode;
+  label: string;
+  team_average: number | null;
+  player_count: number;
+  per_player: DefensePositionPlayerRow[];
+}
+
+export interface TeamDefenseDrilldown {
+  team_id: string;
+  team_name: string | null;
+  age_group_label: string | null;
+  level: string | null;
+  metrics: DefenseDrilldownMetric[];
+  players: DefenseDrilldownPlayerMetrics[];
+  positions: DefensePositionBreakdown[];
+}
+
+
+
 /**
  * Shape of a single team trophy as returned from /teams/:teamId/trophies.
  * (Mirrors the backend TrophySummary type.)

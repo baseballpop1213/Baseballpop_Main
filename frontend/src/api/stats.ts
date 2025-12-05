@@ -8,7 +8,9 @@ import type {
   TeamOffenseDrilldown,
   TeamEvaluationListResponse,
   TeamEvalScope,
+  TeamDefenseDrilldown
 } from "./types";
+
 
 export interface TeamStatsQuery {
   evalScope?: TeamEvalScope;
@@ -63,6 +65,23 @@ export async function getTeamOffenseDrilldown(
   );
   return res.data;
 }
+
+
+
+/**
+ * Block 2B – Defense drilldown accordion:
+ * Backend route: GET /teams/:teamId/stats/defense-drilldown
+ */
+export async function getTeamDefenseDrilldown(
+  teamId: string,
+  params?: TeamStatsQuery
+): Promise<TeamDefenseDrilldown> {
+  const res = await api.get<TeamDefenseDrilldown>(
+    `/teams/${teamId}/stats/defense-drilldown${buildEvalQuery(params)}`
+  );
+  return res.data;
+}
+
 
 export async function getTeamEvaluations(
   teamId: string
