@@ -313,8 +313,8 @@ const ATHLETIC_HEADER_LABEL_BY_CODE: Record<AthleticCategoryCode, string> = {
 
 const TROPHY_TIER_ORDER: TrophyTier[] = ["bronze", "silver", "gold", "platinum"];
 
+// No "offense" tile – that score lives in the overview card
 const OFFENSE_METRIC_CODES: OffenseMetricCode[] = [
-  // No "offense" tile – that score lives in the overview card
   "contact",
   "power",
   "speed",
@@ -341,11 +341,22 @@ const ATHLETIC_POINTS_BASE_KEY_OVERRIDES: Record<string, string> = {
   sls_closed_right_seconds: "sls_closed",
 };
 
+// ------------------------ Helpers ------------------------
+
 function formatNumber(value: number | null | undefined, decimals: number = 1): string {
   if (value === null || value === undefined || !Number.isFinite(value)) {
     return "—";
   }
   return Number(value).toFixed(decimals);
+}
+
+function parseFiniteNumber(value: any): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const n = Number.parseFloat(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
 }
 
 // ------------------------ Strike chance helpers ------------------------
@@ -354,6 +365,7 @@ function normalizeStrikeChanceValue(raw: number | null | undefined): number | nu
   if (raw === null || raw === undefined || !Number.isFinite(raw)) return null;
   const n = Number(raw);
   if (n < 0) return null;
+  // If <= 1, assume fraction (0–1) and convert to percent
   return n <= 1 ? n * 100 : n;
 }
 
@@ -375,15 +387,6 @@ function computeStrikePercentFromContactScore(
   const contactPercent = (Number(contactScore50) / 50) * 100;
   const raw = (1 - contactPercent / 90) * 100;
   return Math.max(0, Math.min(100, raw));
-}
-
-function parseFiniteNumber(value: any): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
-    const n = Number.parseFloat(value);
-    return Number.isFinite(n) ? n : null;
-  }
-  return null;
 }
 
 // ------------------------ Trophies / medals / rubric ------------------------
@@ -569,7 +572,7 @@ function MetricCard({
           </div>
         </div>
         {showRubric && (
-          <RubricBar score={metric.score ?? null} showLabels={rubricShowLabels} />
+          <RubricBar score={metric.score} showLabels={rubricShowLabels} />
         )}
       </div>
       {trophy && (
@@ -2334,11 +2337,12 @@ export default function StatsPage() {
   const [athleticViewMode, setAthleticViewMode] =
     useState<AthleticViewMode>("team");
 
+  // Defense drilldown (loaded, not yet rendered here)
   const [defenseDrilldown, setDefenseDrilldown] =
     useState<TeamDefenseDrilldown | null>(null);
   const [defenseDrilldownLoading, setDefenseDrilldownLoading] =
     useState(false);
-  
+
   // --- Player data (player / parent view, and for coach "self" view) ---
 
   const [playerStats, setPlayerStats] = useState<PlayerStatsOverview | null>(
@@ -2623,12 +2627,12 @@ export default function StatsPage() {
     };
   }, [selectedTeamId, isCoachLike, viewMode, selectedEvalOption]);
 
-
+  // Load defense drilldown (for future defense drilldown UI)
   useEffect(() => {
     let cancelled = false;
 
     async function loadDefenseDrilldown() {
-      if (!selectedTeamId || !isCoachLike) {
+      if (!selectedTeamId || !isCoachLike || !selectedEvalOption) {
         setDefenseDrilldown(null);
         return;
       }
@@ -2636,9 +2640,9 @@ export default function StatsPage() {
       setDefenseDrilldownLoading(true);
       try {
         const params =
-          selectedEvalOption?.scope && selectedEvalOption.scope !== "latest_eval"
+          selectedEvalOption.evalScope && selectedEvalOption.evalScope !== "latest_eval"
             ? {
-                evalScope: selectedEvalOption.scope,
+                evalScope: selectedEvalOption.evalScope,
                 assessmentDate: selectedEvalOption.assessmentDate ?? null,
               }
             : { evalScope: "latest_eval" as TeamEvalScope };
@@ -2670,8 +2674,6 @@ export default function StatsPage() {
     };
   }, [selectedTeamId, isCoachLike, selectedEvalOption]);
 
-
-  
   // Load player stats & medals
   useEffect(() => {
     if (!playerId) return;
