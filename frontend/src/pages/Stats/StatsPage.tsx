@@ -256,6 +256,12 @@ type ViewMode = "team" | "player";
 type OffenseViewMode = "team" | "players";
 type AthleticViewMode = "team" | "players";
 
+// ➜ Defense drilldown types
+type DefenseCategoryCode = "infield" | "outfield" | "catcher" | "first_base";
+type DefenseMetricCode = "defense" | DefenseCategoryCode;
+type DefenseViewMode = "team" | "players";
+
+
 type EvaluationSelectOption = {
   key: string;
   label: string;
@@ -295,13 +301,7 @@ interface AthleticDrilldownData {
   players: AthleticPlayerRow[];
 }
 
-const METRIC_ORDER: CoreMetricCode[] = [
-  "bpoprating",
-  "offense",
-  "defense",
-  "pitching",
-  "athletic",
-];
+const METRIC_ORDER: CoreMetricCode[] = ["bpoprating", "offense", "defense", "pitching", "athletic"];
 
 const ATHLETIC_HEADER_LABEL_BY_CODE: Record<AthleticCategoryCode, string> = {
   speed: "Speed tests",
@@ -313,13 +313,17 @@ const ATHLETIC_HEADER_LABEL_BY_CODE: Record<AthleticCategoryCode, string> = {
 
 const TROPHY_TIER_ORDER: TrophyTier[] = ["bronze", "silver", "gold", "platinum"];
 
-// No "offense" tile – that score lives in the overview card
-const OFFENSE_METRIC_CODES: OffenseMetricCode[] = [
-  "contact",
-  "power",
-  "speed",
-  "strikechance",
+// Defense – categories in drilldown header (inside the Defense section)
+const DEFENSE_CATEGORY_ORDER: DefenseCategoryCode[] = [
+  "infield",
+  "outfield",
+  "catcher",
+  "first_base",
 ];
+
+
+// No "offense" tile – that score lives in the overview card
+const OFFENSE_METRIC_CODES: OffenseMetricCode[] = ["contact", "power", "speed", "strikechance"];
 
 const ATHLETIC_SUBMETRICS: AthleticSubmetricRow["code"][] = [
   "speed",
@@ -379,7 +383,7 @@ function formatStrikePercent(raw: number | null | undefined, decimals: number = 
 //   SC% = (1 - (ContactPercent / 90)) * 100
 // where ContactPercent is the contact score converted from 0–50 to 0–100.
 function computeStrikePercentFromContactScore(
-  contactScore50: number | null | undefined
+  contactScore50: number | null | undefined,
 ): number | null {
   if (contactScore50 === null || contactScore50 === undefined || !Number.isFinite(contactScore50)) {
     return null;
@@ -393,7 +397,7 @@ function computeStrikePercentFromContactScore(
 
 function pickBestTrophyForMetric(
   metric: CoreMetricCode,
-  trophies: TeamTrophyWithDefinition[]
+  trophies: TeamTrophyWithDefinition[],
 ): TeamTrophyWithDefinition | null {
   if (!trophies.length) return null;
 
@@ -571,9 +575,7 @@ function MetricCard({
               : "—"}
           </div>
         </div>
-        {showRubric && (
-          <RubricBar score={metric.score} showLabels={rubricShowLabels} />
-        )}
+        {showRubric && <RubricBar score={metric.score} showLabels={rubricShowLabels} />}
       </div>
       {trophy && (
         <div className="mt-1">
@@ -623,7 +625,7 @@ function isSpeedTest(testId: string, metricKey?: string | null) {
 }
 
 function getHumanizedTestMeta(
-  test: OffenseTestBreakdown
+  test: OffenseTestBreakdown,
 ): {
   label: string;
   metricKey?: string;
@@ -653,11 +655,7 @@ interface OffenseTestsForMetricProps {
  * Per‑metric test breakdown chip list + per‑test leaderboards.
  * Uses TeamOffenseDrilldown.tests_by_metric.
  */
-function OffenseTestsForMetric({
-  metricCode,
-  drilldown,
-  viewMode,
-}: OffenseTestsForMetricProps) {
+function OffenseTestsForMetric({ metricCode, drilldown, viewMode }: OffenseTestsForMetricProps) {
   if (!drilldown) return null;
 
   const rawTests =
@@ -737,16 +735,12 @@ function OffenseTestsForMetric({
               basePathFeet = parseNum(tAny.base_path_feet ?? tAny.base_feet ?? null);
 
               const explicitFps = parseNum(
-                tAny.team_avg_feet_per_second ?? tAny.avg_feet_per_second ?? null
+                tAny.team_avg_feet_per_second ?? tAny.avg_feet_per_second ?? null,
               );
 
               if (explicitFps !== null) {
                 avgFeetPerSecond = explicitFps;
-              } else if (
-                avgSeconds !== null &&
-                basePathFeet !== null &&
-                avgSeconds > 0
-              ) {
+              } else if (avgSeconds !== null && basePathFeet !== null && avgSeconds > 0) {
                 avgFeetPerSecond = basePathFeet / avgSeconds;
               }
 
@@ -970,7 +964,9 @@ function OffenseTestsForMetric({
                               {displayName}
                             </span>
                           </td>
-                          <td className="py-1 pl-2 text-right">{valueDisplay}</td>
+                          <td className="py-1 pl-2 text-right">
+                            {valueDisplay}
+                          </td>
                         </tr>
                       );
                     })}
@@ -1068,7 +1064,7 @@ function PlayerGridForMetric({
           <tbody>
             {players.map((p) => {
               const strikePercent = computeStrikePercentFromContactScore(
-                p.contact_score
+                p.contact_score,
               );
               const kPercent =
                 strikePercent == null ? "—" : `${strikePercent.toFixed(1)}%`;
@@ -1094,7 +1090,7 @@ function PlayerGridForMetric({
                   >
                     {formatNumber(
                       p.hitting_score != null ? p.hitting_score * 3 : null,
-                      0
+                      0,
                     )}
                   </td>
                   <td
@@ -1105,7 +1101,7 @@ function PlayerGridForMetric({
                   >
                     {formatNumber(
                       p.contact_score != null ? p.contact_score * 3 : null,
-                      0
+                      0,
                     )}
                   </td>
                   <td
@@ -1116,7 +1112,7 @@ function PlayerGridForMetric({
                   >
                     {formatNumber(
                       p.power_score != null ? p.power_score * 3 : null,
-                      0
+                      0,
                     )}
                   </td>
                   <td
@@ -1127,7 +1123,7 @@ function PlayerGridForMetric({
                   >
                     {formatNumber(
                       p.speed_score != null ? p.speed_score * 3 : null,
-                      0
+                      0,
                     )}
                   </td>
                   <td
@@ -1165,15 +1161,10 @@ function OffenseDrilldownSection({
   onViewModeChange: (mode: OffenseViewMode) => void;
 }) {
   // Start with contact as the default active metric (offense score lives above)
-  const [activeMetrics, setActiveMetrics] = useState<OffenseMetricCode[]>([
-    "contact",
-  ]);
+  const [activeMetrics, setActiveMetrics] = useState<OffenseMetricCode[]>(["contact"]);
 
   const metricsByCode = useMemo(() => {
-    const map = new Map<
-      OffenseMetricCode,
-      { label: string; value: number | null }
-    >();
+    const map = new Map<OffenseMetricCode, { label: string; value: number | null }>();
 
     if (drilldown?.metrics) {
       for (const m of drilldown.metrics as any[]) {
@@ -1186,9 +1177,7 @@ function OffenseDrilldownSection({
     // Derive StrikeChance from the contact score, using the 0–50 normalized contact value.
     const contactMetric = map.get("contact");
     if (contactMetric) {
-      const strikePercent = computeStrikePercentFromContactScore(
-        contactMetric.value
-      );
+      const strikePercent = computeStrikePercentFromContactScore(contactMetric.value);
       map.set("strikechance", {
         label: "Strikeout chance (lower is better)",
         value: strikePercent,
@@ -1395,10 +1384,1219 @@ function OffenseDrilldownSection({
   );
 }
 
+// ------------------------ Defense drilldown ------------------------
+
+/**
+ * Map a raw defense position key (like "shortstop" or "left_center")
+ * to a high-level defense category.
+ */
+function getDefensePositionCategory(
+  key: string | null | undefined,
+): DefenseCategoryCode | null {
+  if (!key) return null;
+  const k = String(key).toLowerCase();
+  if (DEFENSE_POSITION_INFIELD_KEYS.has(k)) return "infield";
+  if (DEFENSE_POSITION_OUTFIELD_KEYS.has(k)) return "outfield";
+  if (DEFENSE_POSITION_CATCHER_KEYS.has(k)) return "catcher";
+  if (DEFENSE_POSITION_FIRST_BASE_KEYS.has(k)) return "first_base";
+  return null;
+}
+
+/**
+ * Get a 0–50 engine-scale score for a given player + defense category/metric code.
+ */
+function getDefensePlayerScoreForCategory(
+  player: any,
+  code: DefenseMetricCode,
+): number | null {
+  if (!player) return null;
+
+  if (code === "defense") {
+    return typeof player.defense_score === "number"
+      ? player.defense_score
+      : null;
+  }
+  if (code === "infield") {
+    return typeof player.infield_score === "number"
+      ? player.infield_score
+      : null;
+  }
+  if (code === "outfield") {
+    return typeof player.outfield_score === "number"
+      ? player.outfield_score
+      : null;
+  }
+  if (code === "catcher") {
+    if (typeof player.catcher_score === "number") return player.catcher_score;
+    if (typeof player.catching_score === "number") return player.catching_score;
+    return null;
+  }
+  if (code === "first_base") {
+    if (typeof player.first_base_score === "number")
+      return player.first_base_score;
+    if (typeof player.firstbase_score === "number")
+      return player.firstbase_score;
+    return null;
+  }
+
+  return null;
+}
+
+const DEFENSE_CATEGORY_LABELS: Record<DefenseCategoryCode, string> = {
+  infield: "Infield score",
+  outfield: "Outfield score",
+  catcher: "Catcher score",
+  first_base: "First base score",
+};
+
+const DEFENSE_CATEGORY_HEADER_LABELS: Record<DefenseCategoryCode, string> = {
+  infield: "Infield defense",
+  outfield: "Outfield defense",
+  catcher: "Catcher defense",
+  first_base: "First base defense",
+};
+
+// Position key sets
+const DEFENSE_POSITION_INFIELD_KEYS = new Set<string>([
+  "pitcher",
+  "pitchers_helper",
+  "second_base",
+  "shortstop",
+  "second_shortstop",
+  "third_base",
+  "short_fielder",
+]);
+
+const DEFENSE_POSITION_CATCHER_KEYS = new Set<string>(["catcher"]);
+
+const DEFENSE_POSITION_FIRST_BASE_KEYS = new Set<string>([
+  "first_base",
+  "firstbase",
+]);
+
+const DEFENSE_POSITION_OUTFIELD_KEYS = new Set<string>([
+  "left_field",
+  "center_field",
+  "right_field",
+  "left_center",
+  "right_center",
+]);
+
+/**
+ * Try to infer a defense category from a metricMeta group string.
+ */
+function inferDefenseCategoryFromGroup(
+  groupRaw: string | null | undefined,
+): DefenseCategoryCode | null {
+  if (!groupRaw) return null;
+  const g = groupRaw.toLowerCase();
+
+  if (g.includes("first base") || g.includes("1b")) return "first_base";
+  if (g.includes("outfield")) return "outfield";
+  if (g.includes("catcher") || g.includes("catching")) return "catcher";
+  if (g.includes("infield")) return "infield";
+  if (g.includes("fielding")) return "infield";
+  return null;
+}
+
+/**
+ * Try to infer a defense category directly from a metric key.
+ */
+function inferDefenseCategoryFromMetricKey(
+  metricKeyRaw: string | null | undefined,
+): DefenseCategoryCode | null {
+  if (!metricKeyRaw) return null;
+  const k = metricKeyRaw.toLowerCase();
+
+  if (k.includes("first_base") || k.includes("1b_") || k.startsWith("c1b")) {
+    return "first_base";
+  }
+  if (
+    k.includes("outfield") ||
+    k.startsWith("throw_80ft") ||
+    k.startsWith("throw_100ft") ||
+    k.startsWith("throw_120ft") ||
+    k.startsWith("ofgbht")
+  ) {
+    return "outfield";
+  }
+  if (
+    k.includes("catcher") ||
+    k.includes("ct2bt") ||
+    k.includes("cttt2b") ||
+    k.startsWith("c5pcs") ||
+    k.startsWith("c10pcs") ||
+    k.startsWith("c20pcs") ||
+    k.startsWith("c15x15m") ||
+    k.startsWith("c20ft") ||
+    k.startsWith("c40ft")
+  ) {
+    return "catcher";
+  }
+  if (
+    k.includes("rlc2b") ||
+    k.includes("rlcss") ||
+    k.includes("rlc3b") ||
+    k.includes("grounders_") ||
+    k.includes("infield") ||
+    k.startsWith("ifss1bt") ||
+    k.startsWith("iff") ||
+    k.startsWith("cld")
+  ) {
+    return "infield";
+  }
+
+  return null;
+}
+
+type DefenseTestBreakdown = {
+  id: string;
+  label?: string;
+  team_average?: number | null;
+  player_count?: number;
+  per_player?: any[];
+};
+
+/**
+ * For a given test record, build display label / metricKey / unit and best‑guess category.
+ */
+function getDefenseTestDisplayMeta(test: any): {
+  label: string;
+  metricKey?: string;
+  unit?: string | null;
+  categoryGuess?: DefenseCategoryCode | null;
+} {
+  const metricKey: string | undefined =
+    (test?.metric_key as string | undefined) ??
+    (test?.metricKey as string | undefined) ??
+    (test?.id as string | undefined);
+
+  const meta = metricKey ? (getMetricMeta(metricKey) as any) : undefined;
+
+  const label: string =
+    (meta?.shortLabel as string | undefined) ??
+    (meta?.displayName as string | undefined) ??
+    (typeof test?.label === "string" && test.label.trim()
+      ? test.label
+      : metricKey ?? "Defense test");
+
+  let unit: string | null = null;
+  const metaUnit =
+    (meta?.unit as string | undefined) ??
+    (meta?.unitHint as string | undefined);
+  if (metaUnit) unit = metaUnit;
+
+  let categoryGuess: DefenseCategoryCode | null = null;
+  if (meta?.group) {
+    categoryGuess = inferDefenseCategoryFromGroup(meta.group);
+  }
+  if (!categoryGuess && metricKey) {
+    categoryGuess = inferDefenseCategoryFromMetricKey(metricKey);
+  }
+
+  return { label, metricKey, unit, categoryGuess };
+}
+
+/**
+ * Choose a list of outfield position keys to show as tiles based on whatever
+ * positions exist in the drilldown payload.
+ */
+function getOutfieldPositionKeysForTeam(
+  drilldown: TeamDefenseDrilldown | null,
+): string[] {
+  const positions = (drilldown?.positions ?? []) as any[];
+  if (!positions.length) return [];
+
+  const keys = positions.map((p) => String(p.key ?? "").toLowerCase());
+
+  const hasLeftCenter = keys.includes("left_center");
+  const hasRightCenter = keys.includes("right_center");
+
+  // If LC / RC exist, prefer LF / LC / RC / RF
+  if (hasLeftCenter || hasRightCenter) {
+    const preferred = [
+      "left_field",
+      "left_center",
+      "right_center",
+      "right_field",
+    ];
+    return preferred.filter((k) => keys.includes(k));
+  }
+
+  // Otherwise prefer the standard LF / CF / RF trio
+  const threePos = ["left_field", "center_field", "right_field"].filter((k) =>
+    keys.includes(k),
+  );
+  if (threePos.length) return threePos;
+
+  // Fallback: any outfield‑labeled positions we can find
+  return positions
+    .filter((p) =>
+      DEFENSE_POSITION_OUTFIELD_KEYS.has(String(p.key ?? "").toLowerCase()),
+    )
+    .map((p) => String(p.key));
+}
+
+/**
+ * Get tests for a given category / optional positionKey.
+ * This is intentionally defensive: it supports a few possible backend shapes.
+ */
+function getDefenseTestsForNode(
+  drilldown: TeamDefenseDrilldown | null,
+  category: DefenseCategoryCode,
+  positionKey?: string | null,
+): DefenseTestBreakdown[] {
+  if (!drilldown) return [];
+
+  const anyDr = drilldown as any;
+
+  const posKeyLower = positionKey ? String(positionKey).toLowerCase() : null;
+
+  const testsByPosition =
+    (anyDr.tests_by_position as Record<string, DefenseTestBreakdown[]> | undefined) ??
+    (anyDr.testsByPosition as Record<string, DefenseTestBreakdown[]> | undefined);
+
+  const testsByCategory =
+    (anyDr.tests_by_category as Record<string, DefenseTestBreakdown[]> | undefined) ??
+    (anyDr.testsByCategory as Record<string, DefenseTestBreakdown[]> | undefined);
+
+  // 1) Explicit mapping by position
+  if (posKeyLower && testsByPosition) {
+    for (const [key, list] of Object.entries(testsByPosition)) {
+      if (key.toLowerCase() === posKeyLower) {
+        return Array.isArray(list) ? list : [];
+      }
+    }
+  }
+
+  // 2) Explicit mapping by category
+  if (!posKeyLower && testsByCategory) {
+    const catKey = category.toLowerCase();
+    for (const [key, list] of Object.entries(testsByCategory)) {
+      if (key.toLowerCase() === catKey) {
+        return Array.isArray(list) ? list : [];
+      }
+    }
+  }
+
+  // 3) Fallback: a flat `tests` array – filter by category / position heuristics
+  const allTests: DefenseTestBreakdown[] = Array.isArray(anyDr.tests)
+    ? (anyDr.tests as DefenseTestBreakdown[])
+    : [];
+
+  if (!allTests.length) return [];
+
+  return allTests.filter((test: any) => {
+    const rawPos =
+      (test.position_key as string | undefined) ??
+      (test.position as string | undefined) ??
+      (test.position_code as string | undefined) ??
+      (test.pos_key as string | undefined);
+
+    if (posKeyLower) {
+      if (
+        rawPos &&
+        String(rawPos).toLowerCase() === posKeyLower
+      ) {
+        return true;
+      }
+    }
+
+    const metricKey: string | undefined =
+      (test.metric_key as string | undefined) ??
+      (test.metricKey as string | undefined) ??
+      (test.id as string | undefined);
+
+    const meta = metricKey ? (getMetricMeta(metricKey) as any) : undefined;
+
+    const group =
+      (meta?.group as string | undefined) ??
+      (test.group as string | undefined);
+    const catFromGroup = inferDefenseCategoryFromGroup(group);
+    const catFromMetric =
+      catFromGroup ?? inferDefenseCategoryFromMetricKey(metricKey);
+
+    return catFromMetric === category;
+  });
+}
+
+/**
+ * Human‑friendly position label (fallbacks if `positions` array doesn't include it).
+ */
+function humanizeDefensePositionLabel(
+  drilldown: TeamDefenseDrilldown | null,
+  positionKey: string,
+): string {
+  const pos = (drilldown?.positions ?? []).find(
+    (p: any) => String(p.key) === positionKey,
+  ) as any | undefined;
+
+  if (pos?.label) return String(pos.label);
+
+  return String(positionKey)
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/**
+ * Build a synthetic summary metric for a category if the backend didn't send one.
+ */
+function buildDefenseCategorySummary(
+  drilldown: TeamDefenseDrilldown | null,
+  category: DefenseCategoryCode,
+): { label: string; value: number | null; playerCount: number } | null {
+  if (!drilldown) return null;
+
+  const players = (drilldown.players ?? []) as any[];
+
+  let sum = 0;
+  let count = 0;
+
+  for (const p of players) {
+    const score = getDefensePlayerScoreForCategory(p, category);
+    if (typeof score === "number") {
+      sum += score;
+      count += 1;
+    }
+  }
+
+  if (count > 0) {
+    return {
+      label: DEFENSE_CATEGORY_LABELS[category],
+      value: sum / count,
+      playerCount: count,
+    };
+  }
+
+  const positions = (drilldown.positions ?? []) as any[];
+  let posSum = 0;
+  let posCount = 0;
+  let posPlayerCount = 0;
+
+  for (const pos of positions) {
+    const posCategory = getDefensePositionCategory(pos.key);
+    if (posCategory !== category) continue;
+
+    if (typeof pos.team_average === "number") {
+      posSum += pos.team_average;
+      posCount += 1;
+    }
+    if (typeof pos.player_count === "number") {
+      posPlayerCount += pos.player_count;
+    }
+  }
+
+  if (posCount > 0) {
+    return {
+      label: DEFENSE_CATEGORY_LABELS[category],
+      value: posSum / posCount,
+      playerCount: posPlayerCount,
+    };
+  }
+
+  return {
+    label: DEFENSE_CATEGORY_LABELS[category],
+    value: null,
+    playerCount: players.length || 0,
+  };
+}
+
+function DefensePlayerGrid({
+  drilldown,
+  focusMetric,
+  limit,
+}: {
+  drilldown: TeamDefenseDrilldown;
+  focusMetric: DefenseMetricCode;
+  /** Optional: only show top N players */
+  limit?: number;
+}) {
+  const labelMap: Record<DefenseMetricCode, string> = {
+    defense: "Overall defense score",
+    infield: "Infield defense score",
+    outfield: "Outfield defense score",
+    catcher: "Catcher defense score",
+    first_base: "First base defense score",
+  };
+
+  const players = [...((drilldown.players ?? []) as any[])];
+
+  players.sort((a, b) => {
+    const va = getDefensePlayerScoreForCategory(a, focusMetric);
+    const vb = getDefensePlayerScoreForCategory(b, focusMetric);
+
+    const nva = va ?? -Infinity;
+    const nvb = vb ?? -Infinity;
+
+    if (nva === nvb) {
+      return (a.player_name || "").localeCompare(b.player_name || "");
+    }
+    return nvb - nva; // higher is better
+  });
+
+  const rows =
+    typeof limit === "number" && limit > 0 ? players.slice(0, limit) : players;
+
+  const highlightClass = (target: DefenseMetricCode) =>
+    focusMetric === target ? "font-semibold text-amber-200" : "";
+
+  const to150 = (v: number | null) => (v != null ? v * 3 : null);
+
+  return (
+    <div className="rounded-lg bg-slate-950/40 border border-slate-800 p-3">
+      <div className="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-1">
+        <div className="text-xs uppercase tracking-wide text-slate-400">
+          {labelMap[focusMetric]} – player grid
+        </div>
+        <div className="text-[10px] text-slate-500">
+          Scores are on a 0–150 visual scale (0–50 engine scale × 3).
+        </div>
+      </div>
+
+      <div className="mt-2 overflow-x-auto">
+        <table className="min-w-full text-xs text-left">
+          <thead>
+            <tr className="border-b border-slate-700 text-slate-400">
+              <th className="px-2 py-1 font-semibold">Player</th>
+              <th className="px-2 py-1 font-semibold">#</th>
+              <th className="px-2 py-1 font-semibold text-right">Defense</th>
+              <th className="px-2 py-1 font-semibold text-right">Infield</th>
+              <th className="px-2 py-1 font-semibold text-right">Outfield</th>
+              <th className="px-2 py-1 font-semibold text-right">Catcher</th>
+              <th className="px-2 py-1 font-semibold text-right">1B</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((p: any) => {
+              const name =
+                p.player_name ?? `Player ${p.jersey_number ?? ""}`.trim();
+              const jersey = p.jersey_number ?? "—";
+
+              const defense50 = getDefensePlayerScoreForCategory(
+                p,
+                "defense",
+              );
+              const infield50 = getDefensePlayerScoreForCategory(
+                p,
+                "infield",
+              );
+              const outfield50 = getDefensePlayerScoreForCategory(
+                p,
+                "outfield",
+              );
+              const catcher50 = getDefensePlayerScoreForCategory(
+                p,
+                "catcher",
+              );
+              const firstBase50 = getDefensePlayerScoreForCategory(
+                p,
+                "first_base",
+              );
+
+              return (
+                <tr
+                  key={p.player_id}
+                  className="border-t border-slate-800 text-slate-100"
+                >
+                  <td className="px-2 py-1">{name}</td>
+                  <td className="px-2 py-1">{jersey}</td>
+                  <td
+                    className={[
+                      "px-2 py-1 text-right",
+                      highlightClass("defense"),
+                    ].join(" ")}
+                  >
+                    {formatNumber(to150(defense50), 0)}
+                  </td>
+                  <td
+                    className={[
+                      "px-2 py-1 text-right",
+                      highlightClass("infield"),
+                    ].join(" ")}
+                  >
+                    {formatNumber(to150(infield50), 0)}
+                  </td>
+                  <td
+                    className={[
+                      "px-2 py-1 text-right",
+                      highlightClass("outfield"),
+                    ].join(" ")}
+                  >
+                    {formatNumber(to150(outfield50), 0)}
+                  </td>
+                  <td
+                    className={[
+                      "px-2 py-1 text-right",
+                      highlightClass("catcher"),
+                    ].join(" ")}
+                  >
+                    {formatNumber(to150(catcher50), 0)}
+                  </td>
+                  <td
+                    className={[
+                      "px-2 py-1 text-right",
+                      highlightClass("first_base"),
+                    ].join(" ")}
+                  >
+                    {formatNumber(to150(firstBase50), 0)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {limit && (drilldown.players?.length ?? 0) > limit && (
+        <div className="mt-1 text-[10px] text-slate-500">
+          Showing top {limit} of {drilldown.players?.length ?? 0} players. Switch
+          to Player grid view to see all.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DefensePositionsGrid({
+  drilldown,
+  category,
+  activePositionKey,
+  onPositionChange,
+}: {
+  drilldown: TeamDefenseDrilldown;
+  category: DefenseCategoryCode;
+  activePositionKey: string | null;
+  onPositionChange: (key: string | null) => void;
+}) {
+  const allPositions = (drilldown.positions ?? []) as any[];
+
+  let filtered: any[] = [];
+
+  if (category === "infield") {
+    filtered = allPositions.filter((p) =>
+      DEFENSE_POSITION_INFIELD_KEYS.has(String(p.key ?? "").toLowerCase()),
+    );
+  } else if (category === "outfield") {
+    const keysInOrder = getOutfieldPositionKeysForTeam(drilldown);
+    const byKey = new Map(
+      allPositions.map((p) => [String(p.key), p] as [string, any]),
+    );
+    filtered = keysInOrder
+      .map((k) => byKey.get(k))
+      .filter((p): p is any => !!p);
+  } else if (category === "catcher") {
+    filtered = allPositions.filter((p) =>
+      DEFENSE_POSITION_CATCHER_KEYS.has(String(p.key ?? "").toLowerCase()),
+    );
+  } else if (category === "first_base") {
+    filtered = allPositions.filter((p) =>
+      DEFENSE_POSITION_FIRST_BASE_KEYS.has(String(p.key ?? "").toLowerCase()),
+    );
+  }
+
+  if (!filtered.length) {
+    // For catcher / 1B it's fine to have no explicit positions; we'll just show tests.
+    if (category === "infield" || category === "outfield") {
+      return (
+        <div className="rounded-lg bg-slate-950/40 border border-slate-800 p-3">
+          <p className="text-xs text-slate-400">
+            No position‑level breakdown yet for{" "}
+            {DEFENSE_CATEGORY_HEADER_LABELS[category].toLowerCase()}.
+          </p>
+        </div>
+      );
+    }
+    return null;
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="text-xs uppercase tracking-wide text-slate-400">
+        {DEFENSE_CATEGORY_HEADER_LABELS[category]} – positions
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+        {filtered.map((pos: any) => {
+          const key = String(pos.key);
+          const isActive = activePositionKey === key;
+          const score50 =
+            typeof pos.team_average === "number" ? pos.team_average : null;
+          const score150 = score50 != null ? score50 * 3 : null;
+          const playerCount =
+            typeof pos.player_count === "number" ? pos.player_count : 0;
+
+          const label =
+            typeof pos.label === "string" && pos.label.trim()
+              ? pos.label
+              : humanizeDefensePositionLabel(drilldown, key);
+
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => onPositionChange(isActive ? null : key)}
+              className={[
+                "text-left rounded-lg border px-3 py-2 bg-slate-950/60 transition",
+                isActive
+                  ? "border-amber-400 shadow-sm"
+                  : "border-slate-700 hover:border-amber-400/60",
+              ].join(" ")}
+            >
+              <div className="text-[11px] uppercase tracking-wide text-slate-400">
+                {label}
+              </div>
+              <div className="mt-1 text-lg font-semibold text-slate-50">
+                {formatNumber(score150, 0)}
+              </div>
+              <div className="mt-1">
+                <RubricBar score={score50} showLabels={false} />
+              </div>
+              <div className="mt-0.5 text-[10px] text-slate-500">
+                n={playerCount} {playerCount === 1 ? "player" : "players"}
+              </div>
+              <div className="mt-0.5 text-[10px] text-slate-500">
+                {isActive
+                  ? "Showing test breakdown"
+                  : "Tap to drill into tests"}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function DefenseTestsForNode({
+  drilldown,
+  category,
+  positionKey,
+  viewMode,
+}: {
+  drilldown: TeamDefenseDrilldown | null;
+  category: DefenseCategoryCode;
+  positionKey?: string | null;
+  viewMode: DefenseViewMode;
+}) {
+  if (!drilldown) return null;
+
+  const tests = getDefenseTestsForNode(drilldown, category, positionKey ?? null);
+
+  if (!tests.length) {
+    return (
+      <div className="rounded-lg bg-slate-950/40 border border-slate-800 p-3">
+        <p className="text-xs text-slate-400">
+          {positionKey
+            ? "No test‑level breakdown yet for this position."
+            : "No test‑level breakdown yet for this category."}
+        </p>
+      </div>
+    );
+  }
+
+  const scopeLabel = positionKey
+    ? humanizeDefensePositionLabel(drilldown, positionKey)
+    : DEFENSE_CATEGORY_HEADER_LABELS[category];
+
+  if (viewMode === "team") {
+    return (
+      <div className="rounded-lg bg-slate-950/40 border border-slate-800 p-3">
+        <div className="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-1">
+          <div className="text-xs uppercase tracking-wide text-slate-400">
+            {scopeLabel} – test breakdown
+          </div>
+          <div className="text-[10px] text-slate-500">
+            Scores are shown on a 0–150 visual scale (0–50 engine scale × 3).
+          </div>
+        </div>
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {tests.map((test: any) => {
+            const { label } = getDefenseTestDisplayMeta(test);
+
+            const score50 =
+              typeof test.team_average === "number"
+                ? test.team_average
+                : null;
+            const score150 = score50 != null ? score50 * 3 : null;
+            const playerCount =
+              typeof test.player_count === "number"
+                ? test.player_count
+                : 0;
+
+            return (
+              <div
+                key={test.id ?? label}
+                className="rounded-md bg-slate-900/60 border border-slate-800 px-3 py-2"
+              >
+                <div className="text-sm font-medium text-slate-100">
+                  {label}
+                </div>
+                <div className="mt-1 flex items-baseline justify-between gap-2">
+                  <div className="text-xs text-slate-300">
+                    Team avg score:{" "}
+                    <span className="font-mono text-slate-50">
+                      {formatNumber(score150, 0)}
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-slate-500">
+                    n={playerCount}
+                  </div>
+                </div>
+                {score50 != null && (
+                  <div className="mt-2 max-w-[140px]">
+                    <RubricBar score={score50} showLabels={false} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // Player‑grid view for tests
+  return (
+    <div className="rounded-lg bg-slate-950/40 border border-slate-800 p-3">
+      <div className="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-1">
+        <div className="text-xs uppercase tracking-wide text-slate-400">
+          {scopeLabel} – test leaderboards
+        </div>
+        <div className="text-[10px] text-slate-500">
+          One table per test; scores use the same 0–50 engine scale
+          (×3 for the 0–150 visual scale).
+        </div>
+      </div>
+      <div className="mt-3 space-y-3">
+        {tests.map((test: any) => {
+          const { label } = getDefenseTestDisplayMeta(test);
+          const perPlayer = Array.isArray(test.per_player)
+            ? [...test.per_player]
+            : [];
+
+          if (!perPlayer.length) {
+            return (
+              <div
+                key={test.id ?? label}
+                className="rounded-md bg-slate-900/60 border border-slate-800 px-3 py-2"
+              >
+                <div className="text-xs font-semibold text-slate-200">
+                  {label}
+                </div>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  No player‑level records yet for this test.
+                </p>
+              </div>
+            );
+          }
+
+          perPlayer.sort((a: any, b: any) => {
+            const va =
+              typeof a.value === "number" ? (a.value as number) : -Infinity;
+            const vb =
+              typeof b.value === "number" ? (b.value as number) : -Infinity;
+            if (va === vb) {
+              return (a.player_name || "").localeCompare(
+                b.player_name || "",
+              );
+            }
+            return vb - va;
+          });
+
+          return (
+            <div
+              key={test.id ?? label}
+              className="rounded-md bg-slate-900/60 border border-slate-800 px-3 py-2"
+            >
+              <div className="text-xs font-semibold text-slate-200 mb-2">
+                {label}
+              </div>
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-xs">
+                  <thead>
+                    <tr className="text-slate-400">
+                      <th className="text-left py-1 pr-2">Player</th>
+                      <th className="text-left py-1 pr-2">#</th>
+                      <th className="text-right py-1 pl-2">
+                        Score (0–150)
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {perPlayer.map((row: any) => {
+                      const value50 =
+                        typeof row.value === "number"
+                          ? (row.value as number)
+                          : null;
+                      const value150 =
+                        value50 != null ? value50 * 3 : null;
+
+                      const name =
+                        row.player_name ??
+                        `Player ${row.jersey_number ?? ""}`.trim();
+                      const jersey = row.jersey_number ?? "—";
+
+                      return (
+                        <tr
+                          key={row.player_id}
+                          className="border-t border-slate-800"
+                        >
+                          <td className="py-1 pr-2">
+                            <span className="font-medium text-slate-100">
+                              {name}
+                            </span>
+                          </td>
+                          <td className="py-1 pr-2">{jersey}</td>
+                          <td className="py-1 pl-2 text-right">
+                            {formatNumber(value150, 0)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function DefenseDrilldownSection({
+  drilldown,
+  loading,
+  error,
+  viewMode,
+  onViewModeChange,
+}: {
+  drilldown: TeamDefenseDrilldown | null;
+  loading: boolean;
+  error: string | null;
+  viewMode: DefenseViewMode;
+  onViewModeChange: (mode: DefenseViewMode) => void;
+}) {
+  const [activeCategory, setActiveCategory] =
+    useState<DefenseCategoryCode>("infield");
+  const [activePositionKey, setActivePositionKey] = useState<string | null>(
+    null,
+  );
+
+  const metricsByCode = useMemo(() => {
+    const map = new Map<
+      DefenseMetricCode,
+      { label: string; value: number | null; playerCount: number }
+    >();
+
+    if (drilldown?.metrics) {
+      for (const m of drilldown.metrics as any[]) {
+        const code = m.code as DefenseMetricCode;
+        if (
+          code !== "defense" &&
+          code !== "infield" &&
+          code !== "outfield" &&
+          code !== "catcher" &&
+          code !== "first_base"
+        ) {
+          continue;
+        }
+        map.set(code, {
+          label:
+            m.label ??
+            (code === "defense"
+              ? "Defense score"
+              : DEFENSE_CATEGORY_LABELS[code as DefenseCategoryCode]),
+          value:
+            typeof m.team_average === "number" ? m.team_average : null,
+          playerCount: m.player_count ?? 0,
+        });
+      }
+    }
+
+    return map;
+  }, [drilldown]);
+
+  useEffect(() => {
+    if (!drilldown) return;
+
+    const hasDataForCategory = (cat: DefenseCategoryCode) => {
+      if (metricsByCode.has(cat as DefenseMetricCode)) return true;
+
+      const positions = (drilldown.positions ?? []) as any[];
+      if (
+        positions.some((p) => getDefensePositionCategory(p.key) === cat)
+      ) {
+        return true;
+      }
+
+      const players = (drilldown.players ?? []) as any[];
+      if (
+        players.some(
+          (p) => getDefensePlayerScoreForCategory(p, cat) != null,
+        )
+      ) {
+        return true;
+      }
+
+      return false;
+    };
+
+    if (!hasDataForCategory(activeCategory)) {
+      for (const cat of DEFENSE_CATEGORY_ORDER) {
+        if (hasDataForCategory(cat)) {
+          setActiveCategory(cat);
+          setActivePositionKey(null);
+          break;
+        }
+      }
+    }
+  }, [drilldown, metricsByCode, activeCategory]);
+
+  const hasAnyData =
+    !!drilldown &&
+    (metricsByCode.size > 0 ||
+      (drilldown.positions?.length ?? 0) > 0 ||
+      (drilldown.players?.length ?? 0) > 0);
+
+  const activeSummary =
+    metricsByCode.get(activeCategory as DefenseMetricCode) ??
+    buildDefenseCategorySummary(drilldown, activeCategory);
+
+  const overallDefenseSummary = metricsByCode.get("defense") ?? null;
+
+  return (
+    <section className="mt-6">
+      <div className="rounded-xl bg-slate-900/70 border border-slate-700">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 py-3 border-b border-slate-700">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-50">
+              Defense drilldown
+            </h3>
+            <p className="text-xs text-slate-400">
+              Tap a category to see infield, outfield, catcher, and first
+              base defense broken all the way down to individual tests.
+            </p>
+          </div>
+          <div className="inline-flex rounded-full bg-slate-800/80 border border-slate-700 text-xs overflow-hidden">
+            <button
+              type="button"
+              onClick={() => onViewModeChange("team")}
+              className={[
+                "px-3 py-1",
+                viewMode === "team"
+                  ? "bg-amber-500 text-slate-900"
+                  : "text-slate-300",
+              ].join(" ")}
+            >
+              Team averages
+            </button>
+            <button
+              type="button"
+              onClick={() => onViewModeChange("players")}
+              className={[
+                "px-3 py-1",
+                viewMode === "players"
+                  ? "bg-amber-500 text-slate-900"
+                  : "text-slate-300",
+              ].join(" ")}
+            >
+              Player grid
+            </button>
+          </div>
+        </div>
+
+        <div className="px-4 py-3 space-y-4">
+          {loading && (
+            <p className="text-xs text-slate-400">
+              Loading defense details…
+            </p>
+          )}
+
+          {!loading && error && (
+            <p className="text-xs text-red-400">
+              Failed to load defense breakdown: {error}
+            </p>
+          )}
+
+          {!loading && !error && !hasAnyData && (
+            <p className="text-xs text-slate-400">
+              {drilldown
+                ? "No defense ratings yet for this team."
+                : "Select a team and evaluation to view defense details."}
+            </p>
+          )}
+
+          {!loading && !error && hasAnyData && drilldown && (
+            <>
+              {/* Overall defense summary (if available) */}
+              {overallDefenseSummary && (
+                <div className="rounded-lg bg-slate-950/40 border border-slate-800 p-3">
+                  <div className="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-1">
+                    <div className="text-xs uppercase tracking-wide text-slate-400">
+                      Overall defense score
+                    </div>
+                    <div className="text-xs text-slate-300">
+                      Team average:{" "}
+                      <span className="font-semibold text-slate-50">
+                        {formatNumber(
+                          overallDefenseSummary.value != null
+                            ? overallDefenseSummary.value * 3
+                            : null,
+                          0,
+                        )}
+                      </span>{" "}
+                      (0–150 scale)
+                    </div>
+                  </div>
+                  <div className="mt-2">
+                    <RubricBar
+                      score={overallDefenseSummary.value}
+                      showLabels
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Category tiles – Infield / OF / Catcher / 1B */}
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {DEFENSE_CATEGORY_ORDER.map((cat) => {
+                  const summary =
+                    metricsByCode.get(cat as DefenseMetricCode) ??
+                    buildDefenseCategorySummary(drilldown, cat)!;
+
+                  const score50 = summary.value;
+                  const score150 = score50 != null ? score50 * 3 : null;
+                  const isActive = activeCategory === cat;
+
+                  return (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => {
+                        setActiveCategory(cat);
+                        setActivePositionKey(null);
+                      }}
+                      className={[
+                        "text-left rounded-lg border px-3 py-2 bg-slate-950/60 transition",
+                        isActive
+                          ? "border-amber-400 shadow-sm"
+                          : "border-slate-700 hover:border-amber-400/60",
+                      ].join(" ")}
+                    >
+                      <div className="text-[11px] uppercase tracking-wide text-slate-400">
+                        {summary.label}
+                      </div>
+                      <div className="mt-1 text-lg font-semibold text-slate-50">
+                        {formatNumber(score150, 0)}
+                      </div>
+                      <div className="mt-1">
+                        <RubricBar score={score50} showLabels={false} />
+                      </div>
+                      <div className="mt-0.5 text-[10px] text-slate-500">
+                        n={summary.playerCount}{" "}
+                        {summary.playerCount === 1 ? "player" : "players"}
+                      </div>
+                      <div className="mt-0.5 text-[10px] text-slate-500">
+                        {isActive
+                          ? "Showing breakdown"
+                          : "Tap to show breakdown"}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Detail area for active category */}
+              {activeSummary && (
+                <div className="space-y-4 mt-4">
+                  <div className="rounded-lg bg-slate-950/40 border border-slate-800 p-3">
+                    <div className="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-1">
+                      <div className="text-xs uppercase tracking-wide text-slate-400">
+                        {DEFENSE_CATEGORY_HEADER_LABELS[activeCategory]}
+                      </div>
+                      <div className="text-xs text-slate-300">
+                        Team average:{" "}
+                        <span className="font-semibold text-slate-50">
+                          {formatNumber(
+                            activeSummary.value != null
+                              ? activeSummary.value * 3
+                              : null,
+                            0,
+                          )}
+                        </span>{" "}
+                        (0–150 scale)
+                      </div>
+                    </div>
+
+                    <div className="mt-3">
+                      <DefensePlayerGrid
+                        drilldown={drilldown}
+                        focusMetric={activeCategory}
+                        limit={viewMode === "team" ? 5 : undefined}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Positions for infield / outfield */}
+                  {(activeCategory === "infield" ||
+                    activeCategory === "outfield") && (
+                    <DefensePositionsGrid
+                      drilldown={drilldown}
+                      category={activeCategory}
+                      activePositionKey={activePositionKey}
+                      onPositionChange={setActivePositionKey}
+                    />
+                  )}
+
+                  {/* Test‑level breakdown */}
+                  {activeCategory === "catcher" ||
+                  activeCategory === "first_base" ? (
+                    <DefenseTestsForNode
+                      drilldown={drilldown}
+                      category={activeCategory}
+                      viewMode={viewMode}
+                    />
+                  ) : (
+                    (activeCategory === "infield" ||
+                      activeCategory === "outfield") && (
+                      <>
+                        {activePositionKey ? (
+                          <DefenseTestsForNode
+                            drilldown={drilldown}
+                            category={activeCategory}
+                            positionKey={activePositionKey}
+                            viewMode={viewMode}
+                          />
+                        ) : (
+                          <div className="rounded-lg bg-slate-950/40 border border-slate-800 p-3">
+                            <p className="text-xs text-slate-400">
+                              Tap a position above to see the exact tests
+                              that roll up into that position&apos;s{" "}
+                              {activeCategory === "infield"
+                                ? "infield"
+                                : "outfield"}{" "}
+                              score.
+                            </p>
+                          </div>
+                        )}
+                      </>
+                    )
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+
 // ------------------------ Athletic helpers ------------------------
 
 function getAthleticPlayerTestsObject(
-  row: AthleticPlayerRow | any
+  row: AthleticPlayerRow | any,
 ): Record<string, any> {
   if (!row) return {};
   if (row.tests && typeof row.tests === "object") return row.tests;
@@ -1416,14 +2614,14 @@ const DEEP_SQUAT_CODE_MAP: Record<string, string> = {
 };
 
 function describeDeepSquatFromPlayerTests(
-  tests: Record<string, any>
+  tests: Record<string, any>,
 ): { text: string | null; points: number | null } {
   const rawText =
     (tests["deep_squat_value_text"] as string | undefined) ??
     (tests["deep_squat_text"] as string | undefined);
 
   const points = parseFiniteNumber(
-    tests["deep_squat_points"] ?? tests["deep_squat_raw_points"]
+    tests["deep_squat_points"] ?? tests["deep_squat_raw_points"],
   );
 
   const labels: string[] = [];
@@ -1446,14 +2644,14 @@ function describeDeepSquatFromPlayerTests(
 }
 
 function describeToeTouchFromPlayerTests(
-  tests: Record<string, any>
+  tests: Record<string, any>,
 ): { text: string | null; points: number | null } {
   const rawText =
     (tests["toe_touch_value_text"] as string | undefined) ??
     (tests["toe_touch_text"] as string | undefined);
 
   const points = parseFiniteNumber(
-    tests["toe_touch_points"] ?? tests["toe_touch_raw_points"]
+    tests["toe_touch_points"] ?? tests["toe_touch_raw_points"],
   );
 
   let text: string | null = null;
@@ -1478,11 +2676,11 @@ function mapMsrPointsToText(points: number | null): string | null {
 
 function describeMsrFromPlayerTests(
   tests: Record<string, any>,
-  side: "left" | "right"
+  side: "left" | "right",
 ): { text: string | null; points: number | null } {
   const base = side === "left" ? "msr_left" : "msr_right";
   const points = parseFiniteNumber(
-    tests[`${base}_points`] ?? tests[`${base}_raw`]
+    tests[`${base}_points`] ?? tests[`${base}_raw`],
   );
   const text = mapMsrPointsToText(points);
   return { text, points };
@@ -1497,7 +2695,7 @@ function formatAthleticNumericValue(value: number, unit?: string | null): string
 
 function humanizeAthleticLabel(
   rawKey: string,
-  metricKeyOverride?: string
+  metricKeyOverride?: string,
 ): { label: string; unit?: string | null } {
   const cfg = ATHLETIC_TEST_KEY_CONFIG[rawKey];
   const metricKey = metricKeyOverride ?? cfg?.metricKey ?? rawKey;
@@ -1563,7 +2761,12 @@ function categorizeAthleticKey(key: string): AthleticCategoryCode | null {
     return "power";
   }
 
-  if (k.startsWith("sls_") || k.includes("single_leg") || k.includes("stance") || k.includes("balance")) {
+  if (
+    k.startsWith("sls_") ||
+    k.includes("single_leg") ||
+    k.includes("stance") ||
+    k.includes("balance")
+  ) {
     return "balance";
   }
 
@@ -1586,7 +2789,7 @@ function buildAthleticDrilldown(
   teamMetricsByCode: Map<
     CoreMetricCode,
     { label: string; score: number | null; percent: number | null }
-  >
+  >,
 ): AthleticDrilldownData {
   const breakdown = (teamStats as any)?.breakdown ?? {};
   const athleticSection =
@@ -1657,8 +2860,7 @@ function buildAthleticDrilldown(
     handledKeys.add(combo.fpsKey);
     handledKeys.add(combo.distanceKey);
 
-    const labelSourceKey =
-      combo.fpsKey in rawTests ? combo.fpsKey : combo.secondsKey;
+    const labelSourceKey = combo.fpsKey in rawTests ? combo.fpsKey : combo.secondsKey;
 
     const cfg = ATHLETIC_TEST_KEY_CONFIG[labelSourceKey];
     const { label } = humanizeAthleticLabel(labelSourceKey, cfg?.metricKey);
@@ -1737,7 +2939,7 @@ function buildAthleticDrilldown(
 
     const computedBaseKey = key.replace(
       /_(raw|raw_points|points|avg_seconds|seconds|fps|distance_ft)$/i,
-      ""
+      "",
     );
     const baseKey =
       ATHLETIC_POINTS_BASE_KEY_OVERRIDES[key] ?? computedBaseKey;
@@ -1762,10 +2964,10 @@ function buildAthleticDrilldown(
   const testsAny = rawTests as any;
 
   const totalPoints = parseFiniteNumber(
-    athleticSection.total_points ?? testsAny.total_points
+    athleticSection.total_points ?? testsAny.total_points,
   );
   const maxPoints = parseFiniteNumber(
-    athleticSection.max_points ?? testsAny.max_points
+    athleticSection.max_points ?? testsAny.max_points,
   );
 
   const pointsDerivedOverall =
@@ -1776,7 +2978,7 @@ function buildAthleticDrilldown(
   const derivedScore = parseFiniteNumber(
     athleticSection.overall_score ??
       testsAny.overall_score ??
-      pointsDerivedOverall
+      pointsDerivedOverall,
   );
 
   const overallScore =
@@ -1788,7 +2990,7 @@ function buildAthleticDrilldown(
   const submetrics: AthleticSubmetricRow[] = ATHLETIC_SUBMETRICS.map((code) => {
     const scoreKey = `${code}_score`;
     const score = parseFiniteNumber(
-      testsAny[scoreKey] ?? (athleticSection as any)[scoreKey]
+      testsAny[scoreKey] ?? (athleticSection as any)[scoreKey],
     );
 
     const label =
@@ -1806,7 +3008,6 @@ function buildAthleticDrilldown(
     };
   });
 
-  // Player rows for grid view (if backend supplies them).
   const rawPlayersSource =
     (athleticSection as any).players ??
     (athleticSection as any).athletic_players ??
@@ -1857,7 +3058,7 @@ function formatAthleticTestValue(test: AthleticTestDisplay): string {
 function formatAthleticPlayerCell(
   category: AthleticCategoryCode,
   test: AthleticTestDisplay,
-  testsObj: Record<string, any>
+  testsObj: Record<string, any>,
 ): string {
   const key = test.key;
   const lowerKey = key.toLowerCase();
@@ -2004,7 +3205,7 @@ function AthleticPlayerGridForCategory({
                       {formatAthleticPlayerCell(
                         category,
                         test,
-                        testsObj
+                        testsObj,
                       )}
                     </td>
                   ))}
@@ -2034,15 +3235,15 @@ function AthleticDrilldownSection({
 }) {
   const drilldown = useMemo(
     () => buildAthleticDrilldown(teamStats, teamMetricsByCode),
-    [teamStats, teamMetricsByCode]
+    [teamStats, teamMetricsByCode],
   );
 
-  const [activeSubmetrics, setActiveSubmetrics] = useState<
-    AthleticCategoryCode[]
-  >(["speed"]);
+  const [activeSubmetrics, setActiveSubmetrics] = useState<AthleticCategoryCode[]>([
+    "speed",
+  ]);
 
   const hasAnyTests = drilldown.submetrics.some(
-    (s) => s.tests.length > 0 || s.score !== null
+    (s) => s.tests.length > 0 || s.score !== null,
   );
 
   const athleticMetric = teamMetricsByCode.get("athletic") ?? null;
@@ -2157,9 +3358,7 @@ function AthleticDrilldownSection({
               {viewMode === "team" ? (
                 <div className="space-y-4 mt-4">
                   {activeSubmetrics.map((code) => {
-                    const sub = drilldown.submetrics.find(
-                      (s) => s.code === code
-                    );
+                    const sub = drilldown.submetrics.find((s) => s.code === code);
                     if (!sub) return null;
 
                     const headerLabel = ATHLETIC_HEADER_LABEL_BY_CODE[code];
@@ -2257,7 +3456,7 @@ function AthleticDrilldownSection({
                     drilldown.overallScore != null
                       ? drilldown.overallScore * 3
                       : athleticMetric?.score ?? null,
-                    0
+                    0,
                   )}
                 </div>
                 <div className="mt-2">
@@ -2285,21 +3484,15 @@ function AthleticDrilldownSection({
 export default function StatsPage() {
   const { profile } = useAuth();
   const role = profile?.role;
-  const isCoachLike =
-    role === "coach" || role === "assistant" || role === "admin";
+  const isCoachLike = role === "coach" || role === "assistant" || role === "admin";
 
-  const [hasPlayerProfile, setHasPlayerProfile] = useState<boolean>(
-    role === "player"
-  );
+  const [hasPlayerProfile, setHasPlayerProfile] = useState<boolean>(role === "player");
 
   const playerId = hasPlayerProfile ? profile?.id ?? null : null;
 
-  const [viewMode, setViewMode] = useState<ViewMode>(
-    isCoachLike ? "team" : "player"
-  );
+  const [viewMode, setViewMode] = useState<ViewMode>(isCoachLike ? "team" : "player");
 
-  const [activeCoreMetric, setActiveCoreMetric] =
-    useState<CoreMetricCode>("offense");
+  const [activeCoreMetric, setActiveCoreMetric] = useState<CoreMetricCode>("offense");
 
   // --- Team data (coach / admin view) --------------------------
 
@@ -2308,26 +3501,19 @@ export default function StatsPage() {
   const [teamsError, setTeamsError] = useState<string | null>(null);
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
 
-  const [teamEvaluations, setTeamEvaluations] = useState<
-    TeamEvaluationOption[]
-  >([]);
+  const [teamEvaluations, setTeamEvaluations] = useState<TeamEvaluationOption[]>([]);
   const [teamEvaluationsLoading, setTeamEvaluationsLoading] = useState(false);
-  const [teamEvaluationsError, setTeamEvaluationsError] = useState<string | null>(
-    null
-  );
+  const [teamEvaluationsError, setTeamEvaluationsError] = useState<string | null>(null);
   const [selectedEvalKey, setSelectedEvalKey] = useState<string>("all_star");
 
   const [teamStats, setTeamStats] = useState<TeamStatsOverview | null>(null);
   const [teamStatsLoading, setTeamStatsLoading] = useState(false);
   const [teamStatsError, setTeamStatsError] = useState<string | null>(null);
 
-  const [teamTrophies, setTeamTrophies] = useState<TeamTrophyWithDefinition[]>(
-    []
-  );
+  const [teamTrophies, setTeamTrophies] = useState<TeamTrophyWithDefinition[]>([]);
 
   // Offense drilldown
-  const [offenseViewMode, setOffenseViewMode] =
-    useState<OffenseViewMode>("team");
+  const [offenseViewMode, setOffenseViewMode] = useState<OffenseViewMode>("team");
   const [offenseDrilldown, setOffenseDrilldown] =
     useState<TeamOffenseDrilldown | null>(null);
   const [offenseLoading, setOffenseLoading] = useState(false);
@@ -2337,23 +3523,22 @@ export default function StatsPage() {
   const [athleticViewMode, setAthleticViewMode] =
     useState<AthleticViewMode>("team");
 
-  // Defense drilldown (loaded, not yet rendered here)
+  // Defense drilldown
   const [defenseDrilldown, setDefenseDrilldown] =
     useState<TeamDefenseDrilldown | null>(null);
-  const [defenseDrilldownLoading, setDefenseDrilldownLoading] =
-    useState(false);
+  const [defenseDrilldownLoading, setDefenseDrilldownLoading] = useState(false);
+  const [defenseError, setDefenseError] = useState<string | null>(null);
+  const [defenseViewMode, setDefenseViewMode] =
+    useState<DefenseViewMode>("team");
+
 
   // --- Player data (player / parent view, and for coach "self" view) ---
 
-  const [playerStats, setPlayerStats] = useState<PlayerStatsOverview | null>(
-    null
-  );
+  const [playerStats, setPlayerStats] = useState<PlayerStatsOverview | null>(null);
   const [playerStatsLoading, setPlayerStatsLoading] = useState(false);
   const [playerStatsError, setPlayerStatsError] = useState<string | null>(null);
 
-  const [playerMedals, setPlayerMedals] = useState<PlayerMedalWithDefinition[]>(
-    []
-  );
+  const [playerMedals, setPlayerMedals] = useState<PlayerMedalWithDefinition[]>([]);
 
   useEffect(() => {
     if (!hasPlayerProfile && viewMode === "player") {
@@ -2390,7 +3575,7 @@ export default function StatsPage() {
         setTeamsError(
           err?.response?.data?.error ||
             err?.message ||
-            "Failed to load your teams."
+            "Failed to load your teams.",
         );
       })
       .finally(() => {
@@ -2425,7 +3610,7 @@ export default function StatsPage() {
         setTeamEvaluationsError(
           err?.response?.data?.error ||
             err?.message ||
-            "Failed to load team evaluations."
+            "Failed to load team evaluations.",
         );
       })
       .finally(() => {
@@ -2505,9 +3690,7 @@ export default function StatsPage() {
 
   useEffect(() => {
     if (!evaluationSelectOptions.length) return;
-    const exists = evaluationSelectOptions.some(
-      (opt) => opt.key === selectedEvalKey
-    );
+    const exists = evaluationSelectOptions.some((opt) => opt.key === selectedEvalKey);
     if (!exists) {
       setSelectedEvalKey(evaluationSelectOptions[0].key);
     }
@@ -2559,7 +3742,7 @@ export default function StatsPage() {
         setTeamStatsError(
           err?.response?.data?.error ||
             err?.message ||
-            "Failed to load team stats."
+            "Failed to load team stats.",
         );
       } finally {
         if (cancelled) return;
@@ -2606,10 +3789,7 @@ export default function StatsPage() {
           err?.message ||
           "Failed to load team offense breakdown.";
 
-        if (
-          typeof msg === "string" &&
-          msg.toLowerCase().includes("no offense")
-        ) {
+        if (typeof msg === "string" && msg.toLowerCase().includes("no offense")) {
           setOffenseDrilldown(null);
           setOffenseError(null);
         } else {
@@ -2627,52 +3807,114 @@ export default function StatsPage() {
     };
   }, [selectedTeamId, isCoachLike, viewMode, selectedEvalOption]);
 
-  // Load defense drilldown (for future defense drilldown UI)
+  // Load defense drilldown (used by DefenseDrilldownSection)
   useEffect(() => {
     let cancelled = false;
 
-    async function loadDefenseDrilldown() {
-      if (!selectedTeamId || !isCoachLike || !selectedEvalOption) {
-        setDefenseDrilldown(null);
+    async function run() {
+      // If we don't have the basics, reset and bail
+      if (!selectedTeamId || !isCoachLike || viewMode !== "team" || !selectedEvalOption) {
+        if (!cancelled) {
+          setDefenseDrilldown(null);
+          setDefenseError(null);
+          setDefenseDrilldownLoading(false);
+        }
         return;
       }
 
       setDefenseDrilldownLoading(true);
-      try {
-        const params =
-          selectedEvalOption.evalScope && selectedEvalOption.evalScope !== "latest_eval"
-            ? {
-                evalScope: selectedEvalOption.evalScope,
-                assessmentDate: selectedEvalOption.assessmentDate ?? null,
-              }
-            : { evalScope: "latest_eval" as TeamEvalScope };
+      setDefenseError(null);
 
-        const data = await getTeamDefenseDrilldown(selectedTeamId, params);
-        if (!cancelled) {
+      type DefenseQueryParams = {
+        evalScope?: TeamEvalScope;
+        assessmentDate?: string | null;
+      };
+
+      // 1) Primary attempt: whatever the user selected in the dropdown
+      const attempts: DefenseQueryParams[] = [
+        {
+          evalScope: selectedEvalOption.evalScope,
+          assessmentDate: selectedEvalOption.assessmentDate ?? null,
+        },
+      ];
+
+      // 2) Fallback: if All-Star / specific returns "no defense ratings"
+      //    we fall back to latest_eval so at least *some* defense data shows.
+      if (selectedEvalOption.evalScope !== "latest_eval") {
+        attempts.push({ evalScope: "latest_eval" as TeamEvalScope });
+      }
+
+      let success = false;
+      let lastError: string | null = null;
+
+      for (const params of attempts) {
+        try {
+          const data = await getTeamDefenseDrilldown(selectedTeamId, params);
+          if (cancelled) return;
+
           setDefenseDrilldown(data);
+          setDefenseError(null);
+          success = true;
+          break;
+        } catch (err: any) {
+          if (cancelled) return;
+
+          console.error(
+            "Failed to load defense drilldown with params",
+            params,
+            err,
+          );
+
+          const msg: string =
+            err?.response?.data?.error ||
+            err?.message ||
+            "Failed to load team defense breakdown.";
+          lastError = msg;
+
+          const lower = msg.toLowerCase();
+          const isNoDefense =
+            lower.includes("no defense ratings") ||
+            lower.includes("no defense") ||
+            lower.includes("no defensive ratings");
+
+          // If this looks like a "no defense ratings" case and we still have a
+          // fallback attempt left, continue the loop; otherwise stop trying.
+          const isLastAttempt = params === attempts[attempts.length - 1];
+          if (!isNoDefense || isLastAttempt) {
+            break;
+          }
         }
-      } catch (err) {
-        console.error("Failed to load defense drilldown:", err);
-        if (!cancelled) {
-          setDefenseDrilldown(null);
+      }
+
+      if (!cancelled && !success) {
+        setDefenseDrilldown(null);
+
+        // If the last error was "no defense ratings", treat it as "no data yet"
+        // instead of a big red error.
+        if (
+          lastError &&
+          lastError.toLowerCase().includes("no defense")
+        ) {
+          setDefenseError(null);
+        } else {
+          setDefenseError(
+            lastError ?? "Failed to load team defense breakdown.",
+          );
         }
-      } finally {
-        if (!cancelled) {
-          setDefenseDrilldownLoading(false);
-        }
+      }
+
+      if (!cancelled) {
+        setDefenseDrilldownLoading(false);
       }
     }
 
-    if (selectedTeamId && isCoachLike) {
-      loadDefenseDrilldown();
-    } else {
-      setDefenseDrilldown(null);
-    }
+    run();
 
     return () => {
       cancelled = true;
     };
-  }, [selectedTeamId, isCoachLike, selectedEvalOption]);
+  }, [selectedTeamId, isCoachLike, viewMode, selectedEvalOption]);
+
 
   // Load player stats & medals
   useEffect(() => {
@@ -2699,7 +3941,7 @@ export default function StatsPage() {
         setPlayerStatsError(
           err?.response?.data?.error ||
             err?.message ||
-            "Failed to load your stats."
+            "Failed to load your stats.",
         );
       } finally {
         if (cancelled) return;
@@ -2741,10 +3983,10 @@ export default function StatsPage() {
         {}) as Record<string, any>;
 
       const totalPoints = parseFiniteNumber(
-        athleticSection.total_points ?? testsAny.total_points
+        athleticSection.total_points ?? testsAny.total_points,
       );
       const maxPoints = parseFiniteNumber(
-        athleticSection.max_points ?? testsAny.max_points
+        athleticSection.max_points ?? testsAny.max_points,
       );
 
       const fromPoints =
@@ -2758,7 +4000,7 @@ export default function StatsPage() {
         athleticSection.overall_score ??
           testsAny.overall_score ??
           (breakdown as any)?.athletic_score ??
-          fromPoints
+          fromPoints,
       );
 
       const existing = map.get("athletic");
@@ -2781,9 +4023,8 @@ export default function StatsPage() {
   }, [teamStats]);
 
   const bestTrophiesByMetric = useMemo(() => {
-    const result: Partial<
-      Record<CoreMetricCode, TeamTrophyWithDefinition | null>
-    > = {};
+    const result: Partial<Record<CoreMetricCode, TeamTrophyWithDefinition | null>> =
+      {};
     if (!teamTrophies?.length) return result;
 
     for (const code of METRIC_ORDER) {
@@ -2848,7 +4089,7 @@ export default function StatsPage() {
           <h1 className="text-2xl font-semibold text-slate-50">Stats</h1>
           <p className="text-sm text-slate-300">
             {isCoachLike
-              ? "View BPOP ratings, trophies, and offense & athletic breakdowns for your teams."
+              ? "View BPOP ratings, trophies, and offense, defense & athletic breakdowns for your teams."
               : "See how you stack up from your BPOP evaluations."}
           </p>
         </div>
@@ -2985,7 +4226,7 @@ export default function StatsPage() {
                   {/* Core categories */}
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                     {(METRIC_ORDER.filter(
-                      (code) => code !== "bpoprating"
+                      (code) => code !== "bpoprating",
                     ) as CoreMetricCode[]).map((code) => {
                       const metric = teamMetricsByCode.get(code);
                       if (!metric) return null;
@@ -3018,6 +4259,14 @@ export default function StatsPage() {
               viewMode={offenseViewMode}
               onViewModeChange={setOffenseViewMode}
             />
+          ) : activeCoreMetric === "defense" ? (
+            <DefenseDrilldownSection
+              drilldown={defenseDrilldown}
+              loading={defenseDrilldownLoading}
+              error={defenseError}
+              viewMode={defenseViewMode}
+              onViewModeChange={setDefenseViewMode}
+            />
           ) : activeCoreMetric === "athletic" ? (
             <AthleticDrilldownSection
               teamStats={teamStats}
@@ -3040,6 +4289,10 @@ export default function StatsPage() {
                   drilldowns here in a later block. For now, select{" "}
                   <span className="font-semibold text-amber-400">
                     Offense
+                  </span>
+                  ,{" "}
+                  <span className="font-semibold text-amber-400">
+                    Defense
                   </span>{" "}
                   or{" "}
                   <span className="font-semibold text-amber-400">
@@ -3092,7 +4345,7 @@ export default function StatsPage() {
                         <div className="mt-1 flex items-baseline gap-2">
                           <div className="text-2xl font-semibold text-slate-50">
                             {formatNumber(
-                              metric.score != null ? metric.score * 3 : null
+                              metric.score != null ? metric.score * 3 : null,
                             )}
                           </div>
                           <div className="text-xs text-slate-400">

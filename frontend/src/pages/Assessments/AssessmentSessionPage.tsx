@@ -4752,8 +4752,9 @@ export default function AssessmentSessionPage() {
                 return <Fragment key={group.key}>{rows}</Fragment>;
               }
 
-              // Special layout: Youth Fielding (5U–6U simple grounders FG2B/FG3B/FGSS/FGP)
-              // These use metric_keys: grounders_2b, grounders_ss, grounders_3b, grounders_pitcher
+              // Special layout: Youth Fielding / 7U–8U RLC fielding
+              // - 7U–8U use rlc_grounder_1–6_(direction|points)
+              // - 5U–6U use grounders_2b / ss / 3b / pitcher
               if (effectiveEvalType === "fielding") {
                 const byKey = new Map<string, AssessmentMetric>();
                 for (const m of group.metrics) {
@@ -4763,6 +4764,360 @@ export default function AssessmentSessionPage() {
                   }
                 }
 
+                // NEW: 7U–8U Fielding with position-specific RLC grounders
+                // (2B / SS / 3B / P) – same UI as the infield RLC tests.
+                const hasPositionalRlc = [
+                  "rlc2b_grounder",
+                  "rlcss_grounder",
+                  "rlc3b_grounder",
+                  "rlcp_grounder",
+                ].some((prefix) =>
+                  [1, 2, 3, 4, 5, 6].some((rep) => {
+                    const dirKey = `${prefix}_${rep}_direction`;
+                    const ptsKey = `${prefix}_${rep}_points`;
+                    return byKey.has(dirKey) || byKey.has(ptsKey);
+                  })
+                );
+
+                if (hasPositionalRlc) {
+                  const renderRlcGrounders = (prefix: string, label: string) => {
+                    type RlcGrounderSpec = {
+                      repIndex: number;
+                      directionMetric?: AssessmentMetric;
+                      pointsMetric?: AssessmentMetric;
+                    };
+
+                    const specs: RlcGrounderSpec[] = [];
+
+                    for (let rep = 1; rep <= 6; rep++) {
+                      const directionMetric = byKey.get(`${prefix}_${rep}_direction`);
+                      const pointsMetric = byKey.get(`${prefix}_${rep}_points`);
+                      if (!directionMetric && !pointsMetric) continue;
+
+                      specs.push({
+                        repIndex: rep,
+                        directionMetric,
+                        pointsMetric,
+                      });
+                    }
+
+                    if (specs.length === 0) return;
+
+                    rows.push(
+                      <tr
+                        key={`${group.key}-${prefix}`}
+                        className="border-b border-slate-800"
+                      >
+                        <td className="align-top px-2 py-2">
+                          <div className="font-medium text-slate-100">{label}</div>
+                          <div className="text-[10px] text-slate-500 mt-0.5">
+                            Hit 6 ground balls to this position: 2 at the fielder, 2 to the
+                            right, and 2 to the left. For each rep, record direction and
+                            result — 0 = didn&apos;t field, 1 = fielded but missed target, 2 =
+                            fielded and hit the target at 1B.
+                          </div>
+                          <div className="text-[10px] text-slate-500 mt-0.5">
+                            Direction is stored for reporting only and doesn&apos;t affect the
+                            score.
+                          </div>
+                        </td>
+                        {gridColumns.map((col) => {
+                          const playerId = col.id;
+                          const perPlayer =
+                            (sessionData?.values as any)?.[playerId] || {};
+
+                          let totalPoints = 0;
+
+                          return (
+                            <td
+                              key={`${group.key}-${prefix}-${playerId}`}
+                              className="px-2 py-2 align-top"
+                            >
+                              <div className="flex flex-col gap-1">
+                                {specs.map((g) => {
+                                  const dirMetric = g.directionMetric;
+                                  const ptsMetric = g.pointsMetric;
+
+                                  const dirValue =
+                                    dirMetric && perPlayer[dirMetric.id]?.value_text;
+
+                                  const rawPoints =
+                                    ptsMetric && perPlayer[ptsMetric.id]?.value_numeric;
+
+                                  const numericPoints =
+                                    typeof rawPoints === "number" &&
+                                    !Number.isNaN(rawPoints)
+                                      ? rawPoints
+                                      : null;
+
+                                  if (numericPoints !== null) {
+                                    totalPoints += numericPoints;
+                                  }
+
+                                  return (
+                                    <div
+                                      key={`${group.key}-${prefix}-${playerId}-${g.repIndex}`}
+                                      className="flex flex-wrap items-center gap-1"
+                                    >
+                                      <span className="w-10 text-[10px] text-slate-400">
+                                        Rep {g.repIndex}
+                                      </span>
+                                      {dirMetric && (
+                                        <select
+                                          className="rounded border border-slate-700 bg-slate-900 px-1 py-0.5 text-[10px]"
+                                          disabled={isFinalized}
+                                          value={dirValue ?? ""}
+                                          onChange={(e) =>
+                                            handleTextValueChange(
+                                              dirMetric.id,
+                                              playerId,
+                                              e.target.value || null
+                                            )
+                                          }
+                                        >
+                                          <option value="">Dir</option>
+                                          <option value="center">Center</option>
+                                          <option value="right">Right</option>
+                                          <option value="left">Left</option>
+                                        </select>
+                                      )}
+                                      {ptsMetric && (
+                                        <select
+                                          className="rounded border border-slate-700 bg-slate-900 px-1 py-0.5 text-[10px]"
+                                          disabled={isFinalized}
+                                          value={
+                                            numericPoints !== null
+                                              ? String(numericPoints)
+                                              : ""
+                                          }
+                                          onChange={(e) =>
+                                            handleValueChange(
+                                              ptsMetric.id,
+                                              playerId,
+                                              e.target.value
+                                            )
+                                          }
+                                        >
+                                          <option value="">Result</option>
+                                          <option value="0">Didn&apos;t field (0)</option>
+                                          <option value="1">
+                                            Fielded / missed target (1)
+                                          </option>
+                                          <option value="2">
+                                            Fielded &amp; hit target (2)
+                                          </option>
+                                        </select>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                                <div className="mt-1 text-[10px] text-slate-400">
+                                  Score:{" "}
+                                  <span className="font-mono">
+                                    {specs.length ? totalPoints : "—"}
+                                  </span>
+                                </div>
+                              </div>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  };
+
+                  // 7U/8U fielding: show 2B / SS / 3B / P RLC tests
+                  renderRlcGrounders(
+                    "rlc2b_grounder",
+                    "RLC Grounders – 2B (6 reps)"
+                  );
+                  renderRlcGrounders(
+                    "rlcss_grounder",
+                    "RLC Grounders – SS (6 reps)"
+                  );
+                  renderRlcGrounders(
+                    "rlc3b_grounder",
+                    "RLC Grounders – 3B (6 reps)"
+                  );
+                  renderRlcGrounders(
+                    "rlcp_grounder",
+                    "RLC Grounders – P (6 reps)"
+                  );
+
+                  if (rows.length > 0) {
+                    return <Fragment key={group.key}>{rows}</Fragment>;
+                  }
+                }
+
+
+                
+                // -------------------------------------------------------------------
+                // 7U–8U Fielding: RLC Grounders (single generic set of 6 reps)
+                // metric_keys:
+                //   rlc_grounder_1_direction / rlc_grounder_1_points
+                //   ...
+                //   rlc_grounder_6_direction / rlc_grounder_6_points
+                // -------------------------------------------------------------------
+                const hasAnyRlcGrounder = [1, 2, 3, 4, 5, 6].some((rep) => {
+                  const dirKey = `rlc_grounder_${rep}_direction`;
+                  const ptsKey = `rlc_grounder_${rep}_points`;
+                  return byKey.has(dirKey) || byKey.has(ptsKey);
+                });
+
+                if (hasAnyRlcGrounder) {
+                  type RlcGrounderSpec = {
+                    repIndex: number;
+                    directionMetric?: AssessmentMetric;
+                    pointsMetric?: AssessmentMetric;
+                  };
+
+                  const rlcGrounders: RlcGrounderSpec[] = [];
+                  for (let rep = 1; rep <= 6; rep++) {
+                    const directionMetric = byKey.get(`rlc_grounder_${rep}_direction`);
+                    const pointsMetric = byKey.get(`rlc_grounder_${rep}_points`);
+                    if (!directionMetric && !pointsMetric) continue;
+
+                    rlcGrounders.push({
+                      repIndex: rep,
+                      directionMetric,
+                      pointsMetric,
+                    });
+                  }
+
+                  if (rlcGrounders.length > 0) {
+                    rows.push(
+                      <tr
+                        key={`${group.key}-rlc-grounders`}
+                        className="border-b border-slate-800"
+                      >
+                        <td className="align-top px-2 py-2">
+                          <div className="font-medium text-slate-100">
+                            RLC Grounders (6 reps)
+                          </div>
+                          <div className="text-[10px] text-slate-500 mt-0.5">
+                            Hit 6 ground balls: 2 center, 2 right, 2 left. For each rep,
+                            record the direction and result:
+                            0 = didn&apos;t field, 1 = fielded but missed the target,
+                            2 = fielded and hit the target at 1B.
+                          </div>
+                          <div className="text-[10px] text-slate-500 mt-0.5">
+                            Direction is stored for reporting only and doesn&apos;t affect
+                            the score.
+                          </div>
+                        </td>
+                        {gridColumns.map((col) => {
+                          const playerId = col.id;
+                          const perPlayer =
+                            (sessionData?.values as any)?.[playerId] || {};
+
+                          let totalPoints = 0;
+                          let hasAnyPoints = false;
+
+                          return (
+                            <td
+                              key={`${group.key}-rlc-${playerId}`}
+                              className="px-2 py-2 align-top"
+                            >
+                              <div className="flex flex-col gap-1">
+                                {rlcGrounders.map((g) => {
+                                  const dirMetric = g.directionMetric;
+                                  const ptsMetric = g.pointsMetric;
+
+                                  const dirValue =
+                                    dirMetric && perPlayer[dirMetric.id]?.value_text;
+
+                                  const rawPoints =
+                                    ptsMetric && perPlayer[ptsMetric.id]?.value_numeric;
+
+                                  const numericPoints =
+                                    typeof rawPoints === "number" &&
+                                    !Number.isNaN(rawPoints)
+                                      ? rawPoints
+                                      : null;
+
+                                  if (numericPoints !== null) {
+                                    hasAnyPoints = true;
+                                    totalPoints += numericPoints;
+                                  }
+
+                                  return (
+                                    <div
+                                      key={`${group.key}-rlc-${playerId}-${g.repIndex}`}
+                                      className="flex flex-wrap items-center gap-1"
+                                    >
+                                      <span className="w-10 text-[10px] text-slate-400">
+                                        Rep {g.repIndex}
+                                      </span>
+                                      {dirMetric && (
+                                        <select
+                                          className="rounded border border-slate-700 bg-slate-900 px-1 py-0.5 text-[10px]"
+                                          disabled={isFinalized}
+                                          value={dirValue ?? ""}
+                                          onChange={(e) =>
+                                            handleTextValueChange(
+                                              dirMetric.id,
+                                              playerId,
+                                              e.target.value || null
+                                            )
+                                          }
+                                        >
+                                          <option value="">Dir</option>
+                                          <option value="center">Center</option>
+                                          <option value="right">Right</option>
+                                          <option value="left">Left</option>
+                                        </select>
+                                      )}
+                                      {ptsMetric && (
+                                        <select
+                                          className="rounded border border-slate-700 bg-slate-900 px-1 py-0.5 text-[10px]"
+                                          disabled={isFinalized}
+                                          value={
+                                            numericPoints !== null
+                                              ? String(numericPoints)
+                                              : ""
+                                          }
+                                          onChange={(e) =>
+                                            handleValueChange(
+                                              ptsMetric.id,
+                                              playerId,
+                                              e.target.value
+                                            )
+                                          }
+                                        >
+                                          <option value="">Result</option>
+                                          <option value="0">Didn&apos;t field (0)</option>
+                                          <option value="1">
+                                            Fielded / missed target (1)
+                                          </option>
+                                          <option value="2">
+                                            Fielded &amp; hit target (2)
+                                          </option>
+                                        </select>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                                <div className="mt-1 text-[10px] text-slate-400">
+                                  Score:{" "}
+                                  <span className="font-mono">
+                                    {hasAnyPoints ? totalPoints : "—"}
+                                  </span>
+                                </div>
+                              </div>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+
+                    // We fully handled this group as "RLC Grounders"
+                    return <Fragment key={group.key}>{rows}</Fragment>;
+                  }
+                }
+
+                // -------------------------------------------------------------------
+                // 5U–6U Youth Fielding: simple FG2B / FGSS / FG3B / FGP
+                // (unchanged from your existing implementation)
+                // -------------------------------------------------------------------
                 type GrounderKey =
                   | "grounders_2b"
                   | "grounders_ss"
@@ -4824,11 +5179,8 @@ export default function AssessmentSessionPage() {
                   const cfg = grounderConfigs[metricKey];
 
                   const displayName =
-                    meta?.displayName ||
-                    (metric as any).label ||
-                    cfg.defaultLabel;
-                  const description =
-                    meta?.instructions || cfg.defaultDescription;
+                    meta?.displayName || (metric as any).label || cfg.defaultLabel;
+                  const description = meta?.instructions || cfg.defaultDescription;
 
                   const pointsMap = new Map<string, number>();
                   options.forEach((opt) => pointsMap.set(opt.code, opt.points));
@@ -4839,9 +5191,7 @@ export default function AssessmentSessionPage() {
                       className="border-b border-slate-800"
                     >
                       <td className="align-top px-2 py-2">
-                        <div className="font-medium text-slate-100">
-                          {displayName}
-                        </div>
+                        <div className="font-medium text-slate-100">{displayName}</div>
                         <div className="text-[10px] text-slate-500 mt-0.5">
                           {description}
                         </div>
@@ -4852,10 +5202,7 @@ export default function AssessmentSessionPage() {
                         const perPlayer =
                           (sessionData?.values as any)?.[playerId] || {};
                         const v = perPlayer[metric.id];
-                        const storedText = v?.value_text as
-                          | string
-                          | null
-                          | undefined;
+                        const storedText = v?.value_text as string | null | undefined;
                         const numericValue = v?.value_numeric as
                           | number
                           | null
@@ -4863,10 +5210,7 @@ export default function AssessmentSessionPage() {
 
                         let events: string[] = new Array(repCount).fill("");
 
-                        if (
-                          typeof storedText === "string" &&
-                          storedText.trim() !== ""
-                        ) {
+                        if (typeof storedText === "string" && storedText.trim() !== "") {
                           try {
                             const parsed = JSON.parse(storedText);
                             if (Array.isArray(parsed)) {
@@ -4926,10 +5270,7 @@ export default function AssessmentSessionPage() {
                                       >
                                         <option value="">—</option>
                                         {options.map((opt) => (
-                                          <option
-                                            key={opt.code}
-                                            value={opt.code}
-                                          >
+                                          <option key={opt.code} value={opt.code}>
                                             {opt.label}
                                           </option>
                                         ))}
@@ -4952,21 +5293,14 @@ export default function AssessmentSessionPage() {
                   );
                 };
 
-                // Order: 2B, SS, 3B, P — only rows whose metrics actually exist will render
-                (
-                  [
-                    "grounders_2b",
-                    "grounders_ss",
-                    "grounders_3b",
-                    "grounders_pitcher",
-                  ] as GrounderKey[]
-                ).forEach((key) => pushYouthGroundersRow(key));
+                (["grounders_2b", "grounders_ss", "grounders_3b", "grounders_pitcher"] as GrounderKey[])
+                  .forEach((key) => pushYouthGroundersRow(key));
 
-                // Only take over rendering for this group if we actually found any of the youth grounder metrics
                 if (usedIds.size > 0) {
                   return <Fragment key={group.key}>{rows}</Fragment>;
                 }
               }
+
 
 
               
@@ -5824,7 +6158,7 @@ export default function AssessmentSessionPage() {
                 }
 
                 // -----------------------
-                // Fielding: RLCG 2B / SS / 3B
+                // Fielding: RLCG 2B / SS / 3B /PH (if used 7U)
                 // -----------------------
                 if (isInfieldFieldingGroup) {
                   const renderRlcGrounders = (

@@ -4932,20 +4932,21 @@ async function computeTeamDefenseDrilldown(
   // 1) Load team metadata
   const { data: teamRow, error: teamErr } = await supabase
     .from("teams")
-    .select("id, name, age_group_label, level")
+    .select("id, name, age_group_label:age_group, level")
     .eq("id", teamId)
-    .single();
+    .maybeSingle(); // optional, but matches the pattern elsewhere
 
   if (teamErr || !teamRow) {
     console.error("Defense drilldown: error loading team:", teamErr);
     return null;
   }
 
+
   // 2) Load all ratings for this team
   const { data: ratingRowsRaw, error: ratingErr } = await supabase
     .from("player_ratings")
     .select(
-      "id, player_id, team_id, age_group_label, assessment_id, player_assessment_id, overall_score, offense_score, defense_score, pitching_score, breakdown, created_at"
+      "id, player_id, team_id, age_group_id, assessment_id, player_assessment_id, overall_score, offense_score, defense_score, pitching_score, breakdown, created_at"
     )
     .eq("team_id", teamId);
 
