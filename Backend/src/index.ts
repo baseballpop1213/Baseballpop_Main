@@ -180,8 +180,7 @@ function getMetricPercentFromRatings(metricCodeRaw: string, ratings: RatingResul
   const throwingTests = throwing.tests || {};
   const catching = b.catching || {};
   const fielding = b.fielding || {};
-  const positionScores =
-    resolvePositionScoresFromBreakdown(b) || derived.position_scores || {};
+  const positionScores = derived.position_scores || {};
 
   switch (metric) {
     // Overall BPOP rating
@@ -8570,31 +8569,16 @@ app.post("/assessments", requireAuth, async (req: AuthedRequest, res) => {
   );
 
   if (positionScores) {
-    // Ensure we have a mutable object for the breakdown
-    const anyBreakdown = (ratings.breakdown ?? {}) as any;
+    // Store under breakdown.positions so the stats layer can aggregate it
+    (ratings.breakdown as any).positions = positionScores;
 
-    // 1) Store under `breakdown.positions` (used by defense drill-down helper)
-    anyBreakdown.positions = positionScores;
-
-    // 2) Also mirror into `breakdown.derived.position_scores`
-    //    so all existing readers that look in derived keep working.
-    if (!anyBreakdown.derived || typeof anyBreakdown.derived !== "object") {
-      anyBreakdown.derived = {};
-    }
-    anyBreakdown.derived.position_scores = positionScores;
-
-    // Re-assign in case `ratings.breakdown` was undefined/null before
-    ratings.breakdown = anyBreakdown;
-
-    // 3) If overall defense_score is missing or invalid, default it
-    //    from the composite defense position score.
+    // If the rating engine didn't set a defense_score yet, fall back to the
+    // composite defense_score from the positional model.
     if (
-      ratings.defense_score == null ||
-      !Number.isFinite(ratings.defense_score)
+      (ratings.defense_score == null || Number.isNaN(ratings.defense_score)) &&
+      typeof positionScores.defense_score === "number"
     ) {
-      if (typeof positionScores.defense_score === "number") {
-        ratings.defense_score = positionScores.defense_score;
-      }
+      ratings.defense_score = positionScores.defense_score;
     }
   }
 
@@ -12457,8 +12441,7 @@ app.post(
 
       const breakdown = (ratingRow?.breakdown as any) || {};
       const derived = breakdown.derived || {};
-      const positionScores =
-        resolvePositionScoresFromBreakdown(breakdown) || {};
+      const positionScores = derived.position_scores || {};
 
       const displayName =
         profile?.display_name ||
